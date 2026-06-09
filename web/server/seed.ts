@@ -113,6 +113,15 @@ export function seed(): void {
     );
   `);
 
+  sqlite.exec(`
+    CREATE TABLE IF NOT EXISTS qualitative_events (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      channel TEXT NOT NULL,
+      payload TEXT NOT NULL,
+      timestamp INTEGER NOT NULL
+    );
+  `);
+
   // ── Seed players ───────────────────────────────────────────────────────────
   const playerCount = sqlite.prepare('SELECT COUNT(*) as cnt FROM players').get() as { cnt: number };
   if (playerCount.cnt === 0) {
@@ -232,6 +241,83 @@ export function seed(): void {
     console.log('✓ Seeded default settings');
   } else {
     console.log(`⏭ Settings already seeded (${settingsCount.cnt} rows)`);
+  }
+
+  // ── Seed qualitative events ──────────────────────────────────────────────
+  const qualitativeCount = sqlite.prepare('SELECT COUNT(*) as cnt FROM qualitative_events').get() as { cnt: number };
+  if (qualitativeCount.cnt === 0) {
+    const insert = sqlite.prepare(`
+      INSERT INTO qualitative_events (channel, payload, timestamp)
+      VALUES (?, ?, ?)
+    `);
+    const now = Date.now();
+    const dayMs = 86400000;
+
+    const sampleEvents = [
+      {
+        channel: 'channel_roster_updates',
+        payload: JSON.stringify({
+          player: "A'ja Wilson",
+          team: 'LVA',
+          status: 'INJURED',
+          injury: 'Right ankle sprain',
+          source: 'Twitter/X Beat Writer',
+          details: 'Seen in walking boot at morning shootaround.'
+        }),
+        timestamp: now - 5 * dayMs
+      },
+      {
+        channel: 'channel_referee_context',
+        payload: JSON.stringify({
+          source: "Agent 5",
+          game_id: "LVA_NYL",
+          crew: "Crew_A",
+          tendencies: { fouls_per_40: 38.5, pace_effect: -1.2, ou_hit_rate: "Under_Heavy" }
+        }),
+        timestamp: now - 3 * dayMs
+      },
+      {
+        channel: 'channel_sentiment_context',
+        payload: JSON.stringify({
+          team: 'LVA',
+          sentiment_score: -0.6,
+          summary: 'Coach Hammon expressed severe frustration with travel density and fatigue after 3 road games in 5 days.'
+        }),
+        timestamp: now - 2 * dayMs
+      },
+      {
+        channel: 'channel_roster_updates',
+        payload: JSON.stringify({
+          player: 'Alyssa Thomas',
+          team: 'CON',
+          status: 'ACTIVE',
+          injury: 'Knee soreness cleared',
+          source: 'Team Practice Report',
+          details: 'Fully participated in contact drills, starting tonight.'
+        }),
+        timestamp: now - dayMs
+      },
+      {
+        channel: 'channel_referee_context',
+        payload: JSON.stringify({
+          source: "Agent 5",
+          game_id: "IND_CHI",
+          crew: "Crew_B",
+          tendencies: { fouls_per_40: 30.1, pace_effect: 2.5, ou_hit_rate: "Over_Heavy" }
+        }),
+        timestamp: now - 12 * 3600000
+      }
+    ];
+
+    const tx = sqlite.transaction(() => {
+      for (const e of sampleEvents) {
+        insert.run(e.channel, e.payload, e.timestamp);
+      }
+    });
+    tx();
+    console.log(`✓ Seeded ${sampleEvents.length} sample qualitative events`);
+  } else {
+    console.log(`⏭ Qualitative events already seeded (${qualitativeCount.cnt} rows)`);
   }
 
   sqlite.close();

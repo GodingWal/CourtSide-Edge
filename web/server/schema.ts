@@ -37,3 +37,11 @@ export const settings = sqliteTable('settings', {
   key: text('key').primaryKey(),
   value: text('value').notNull(),
 });
+
+export const qualitative_events = sqliteTable('qualitative_events', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  channel: text('channel').notNull(),
+  payload: text('payload').notNull(), // JSON payload string
+  timestamp: integer('timestamp').notNull(),
+});
+

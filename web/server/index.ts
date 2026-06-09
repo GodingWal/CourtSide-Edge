@@ -2,7 +2,7 @@ import express from 'express';
 import { createClient } from 'redis';
 import cors from 'cors';
 import { db } from './db';
-import { players, bankroll_history, bets, settings } from './schema';
+import { players, bankroll_history, bets, settings, qualitative_events } from './schema';
 import { desc, eq } from 'drizzle-orm';
 import { seed } from './seed';
 import { createServer } from 'http';
@@ -317,7 +317,9 @@ app.get('/api/stream/alerts', async (req, res) => {
       'channel_ev_alerts', 
       'channel_steam_alerts', 
       'channel_approved_edges',
-      'channel_roster_updates'
+      'channel_roster_updates',
+      'channel_referee_context',
+      'channel_sentiment_context'
     ];
 
     for (const channel of channels) {
@@ -358,11 +360,32 @@ async function start() {
         'channel_ev_alerts', 
         'channel_steam_alerts', 
         'channel_approved_edges',
-        'channel_roster_updates'
+        'channel_roster_updates',
+        'channel_referee_context',
+        'channel_sentiment_context'
       ];
       for (const channel of channels) {
-        await subscriber.subscribe(channel, (message) => {
+        await subscriber.subscribe(channel, async (message) => {
+          // Broadcast to WS clients
           broadcast({ channel, message });
+
+          // Save to SQLite if it is a qualitative channel
+          if (
+            channel === 'channel_roster_updates' ||
+            channel === 'channel_referee_context' ||
+            channel === 'channel_sentiment_context'
+          ) {
+            try {
+              await db.insert(qualitative_events).values({
+                channel,
+                payload: message,
+                timestamp: Date.now()
+              });
+              console.log(`[Redis Bridge] Permanently logged event on ${channel} to SQLite.`);
+            } catch (dbErr) {
+              console.error(`Failed to log qualitative event from ${channel}:`, dbErr);
+            }
+          }
         });
       }
     } catch (err) {
