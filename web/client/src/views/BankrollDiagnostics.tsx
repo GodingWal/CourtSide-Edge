@@ -160,7 +160,7 @@ export default function BankrollDiagnostics() {
                     color: '#fff',
                     fontSize: '12px',
                   }}
-                  formatter={(value: number) => [`${value}%`, 'CLV']}
+                  formatter={(value: any) => [`${value}%`, 'CLV']}
                 />
                 <Area
                   type="monotone"

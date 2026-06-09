@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Settings as SettingsIcon, Save, Bell, Monitor, Cpu, Volume2, ShieldAlert } from 'lucide-react';
 import { useToast } from '../components/ToastProvider';
-import { Skeleton, SkeletonCard } from '../components/Skeleton';
+import { SkeletonCard } from '../components/Skeleton';
 
 interface AgentHealth {
   id: string;
@@ -92,7 +92,8 @@ export default function Settings() {
     { id: '8', name: 'Bankroll Sizer', status: 'online', port: null },
     { id: '9', name: 'News Sentiment', status: 'online', port: null },
     { id: '10', name: 'Game Total Projector', status: 'online', port: null },
-    { id: '11', name: 'Market Value Detector', status: 'online', port: null }
+    { id: '11', name: 'Market Value Detector', status: 'online', port: null },
+    { id: '13', name: 'Matchup Oracle / Parlay Gen', status: 'online', port: 8009 }
   ];
 
   useEffect(() => {

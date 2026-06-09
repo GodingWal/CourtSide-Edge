@@ -16,12 +16,14 @@ export const bankroll_history = sqliteTable('bankroll_history', {
 
 export const bets = sqliteTable('bets', {
   id: integer('id').primaryKey({ autoIncrement: true }),
-  player: text('player').notNull(),
-  stat: text('stat').notNull(),
-  line: real('line').notNull(),
-  over_under: text('over_under').notNull(), // 'OVER' or 'UNDER'
-  book_odds: integer('book_odds').notNull(), // e.g. -110
-  true_odds: real('true_odds'), // our calculated probability
+  parent_id: integer('parent_id'), // Reference to parent bet if this is a leg
+  is_parlay: integer('is_parlay'), // 1 if this is a parlay container, 0 otherwise
+  player: text('player'), // Nullable for parlay containers
+  stat: text('stat'), // Nullable for parlay containers
+  line: real('line'), // Nullable for parlay containers
+  over_under: text('over_under'), // Nullable for parlay containers
+  book_odds: integer('book_odds').notNull(), // e.g. -110 or +260
+  true_odds: real('true_odds'),
   edge_pct: real('edge_pct'),
   stake: real('stake').notNull(),
   result: text('result'), // 'WIN', 'LOSS', 'PUSH', null=pending

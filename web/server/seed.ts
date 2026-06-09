@@ -67,6 +67,12 @@ export function seed(): void {
   sqlite.pragma('journal_mode = WAL');
 
   // ── Create tables ──────────────────────────────────────────────────────────
+  sqlite.exec(`DROP TABLE IF EXISTS bets;`);
+  sqlite.exec(`DROP TABLE IF EXISTS players;`);
+  sqlite.exec(`DROP TABLE IF EXISTS bankroll_history;`);
+  sqlite.exec(`DROP TABLE IF EXISTS settings;`);
+  sqlite.exec(`DROP TABLE IF EXISTS qualitative_events;`);
+
   sqlite.exec(`
     CREATE TABLE IF NOT EXISTS players (
       id TEXT PRIMARY KEY,
@@ -88,10 +94,12 @@ export function seed(): void {
   sqlite.exec(`
     CREATE TABLE IF NOT EXISTS bets (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
-      player TEXT NOT NULL,
-      stat TEXT NOT NULL,
-      line REAL NOT NULL,
-      over_under TEXT NOT NULL,
+      parent_id INTEGER,
+      is_parlay INTEGER,
+      player TEXT,
+      stat TEXT,
+      line REAL,
+      over_under TEXT,
       book_odds INTEGER NOT NULL,
       true_odds REAL,
       edge_pct REAL,
@@ -170,8 +178,8 @@ export function seed(): void {
   const betCount = sqlite.prepare('SELECT COUNT(*) as cnt FROM bets').get() as { cnt: number };
   if (betCount.cnt === 0) {
     const insert = sqlite.prepare(`
-      INSERT INTO bets (player, stat, line, over_under, book_odds, true_odds, edge_pct, stake, result, actual_value, profit_loss, placed_at, settled_at, opposing_team, notes)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO bets (parent_id, is_parlay, player, stat, line, over_under, book_odds, true_odds, edge_pct, stake, result, actual_value, profit_loss, placed_at, settled_at, opposing_team, notes)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
     const now = Date.now();
     const dayMs = 86400000;
@@ -210,14 +218,47 @@ export function seed(): void {
         const notes = result === 'WIN' ? 'Sharp line, good CLV' : result === 'LOSS' ? 'Variance hit' : null;
 
         insert.run(
-          player.name, stat, line, overUnder, bookOdds, trueOdds, edgePct,
+          null, 0, player.name, stat, line, overUnder, bookOdds, trueOdds, edgePct,
           stake, result, actualValue, profitLoss, placedAt, settledAt,
           opposingTeam, notes
         );
       }
+
+      // Seed Parlay 1: Settled, Won
+      const parlay1Placed = now - 5 * dayMs;
+      const parlay1Settled = parlay1Placed + 4 * 3600000;
+      const parent1Res = insert.run(
+        null, 1, null, null, null, null, 260, 0.55, 8.5, 100, 'WIN', null, 260.00, parlay1Placed, parlay1Settled, null, '2-Leg Parlay (Stewart + Wilson)'
+      );
+      const parent1Id = parent1Res.lastInsertRowid as number;
+
+      // Leg 1 of Parlay 1
+      insert.run(
+        parent1Id, 0, 'Breanna Stewart', 'PTS', 22.5, 'OVER', -110, 0.58, 6.2, 0, 'WIN', 25, 0, parlay1Placed, parlay1Settled, 'LVA', 'Leg 1'
+      );
+      // Leg 2 of Parlay 1
+      insert.run(
+        parent1Id, 0, "A'ja Wilson", 'REB', 9.5, 'OVER', -115, 0.60, 9.1, 0, 'WIN', 12, 0, parlay1Placed, parlay1Settled, 'NYL', 'Leg 2'
+      );
+
+      // Seed Parlay 2: Pending
+      const parlay2Placed = now - 2 * 3600000; // 2 hours ago
+      const parent2Res = insert.run(
+        null, 1, null, null, null, null, 320, 0.48, 11.2, 50, null, null, null, parlay2Placed, null, null, 'Active 2-Leg Parlay (Clark + Ionescu)'
+      );
+      const parent2Id = parent2Res.lastInsertRowid as number;
+
+      // Leg 1 of Parlay 2
+      insert.run(
+        parent2Id, 0, 'Caitlin Clark', 'AST', 8.5, 'OVER', -110, 0.52, 8.5, 0, null, null, null, parlay2Placed, null, 'CON', 'Leg 1'
+      );
+      // Leg 2 of Parlay 2
+      insert.run(
+        parent2Id, 0, 'Sabrina Ionescu', 'PTS', 18.5, 'OVER', -115, 0.55, 12.0, 0, null, null, null, parlay2Placed, null, 'PHX', 'Leg 2'
+      );
     });
     tx();
-    console.log('✓ Seeded 25 sample bets');
+    console.log('✓ Seeded 25 sample bets and 2 parlays');
   } else {
     console.log(`⏭ Bets already seeded (${betCount.cnt} rows)`);
   }

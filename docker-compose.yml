@@ -126,6 +126,19 @@ services:
     ports:
       - "8001:8001"
 
+  agent_13_parlay_generator:
+    build:
+      context: .
+      dockerfile: agents/13_parlay_generator/Dockerfile
+    volumes:
+      - ./data:/app/data
+    depends_on:
+      - redis
+    restart: unless-stopped
+    ports:
+      - "8009:8009"
+
+
 
   web_server:
     build:

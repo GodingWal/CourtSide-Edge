@@ -21,7 +21,7 @@ const pageTitles: Record<string, string> = {
   "/sandbox": "Alpha Sandbox",
   "/diagnostics": "Bankroll Diagnostics",
   "/intelligence": "Intelligence Feed",
-  "/bets": "Bet Tracker",
+  "/bets": "Bet Terminal",
   "/settings": "Settings",
 };
 

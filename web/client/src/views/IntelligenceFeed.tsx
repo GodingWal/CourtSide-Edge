@@ -1,4 +1,4 @@
-import { Database, AlertTriangle, MessageSquare, Users, Shield, Activity } from 'lucide-react';
+import { Database, AlertTriangle, Users, Shield, Activity } from 'lucide-react';
 
 /* ── Mock Data ── */
 

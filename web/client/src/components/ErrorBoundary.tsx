@@ -1,4 +1,4 @@
-import React, { Component, type ComponentType, type ErrorInfo, type ReactNode } from 'react';
+import { Component, type ComponentType, type ErrorInfo, type ReactNode } from 'react';
 import { AlertTriangle } from 'lucide-react';
 
 interface ErrorBoundaryProps {

@@ -19,7 +19,7 @@ const navItems = [
 ];
 
 const secondaryNavItems = [
-  { path: "/bets", label: "Bet Tracker", icon: Receipt },
+  { path: "/bets", label: "Bet Terminal", icon: Receipt },
 ];
 
 export default function Sidebar() {
