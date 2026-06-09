@@ -5,7 +5,6 @@ import {
   Search,
   Activity,
   Cpu,
-  Wrench,
   PieChart,
   Database,
   Download,
@@ -54,24 +53,17 @@ export function CommandPalette() {
         action: () => navigate('/alpha'),
       },
       {
-        id: 'props',
-        label: 'Props',
-        icon: Wrench,
-        shortcut: '3',
-        action: () => navigate('/props'),
-      },
-      {
         id: 'bankroll',
         label: 'Bankroll',
         icon: PieChart,
-        shortcut: '4',
+        shortcut: '3',
         action: () => navigate('/bankroll'),
       },
       {
         id: 'intel',
         label: 'Intel',
         icon: Database,
-        shortcut: '5',
+        shortcut: '4',
         action: () => navigate('/intel'),
       },
       {
@@ -147,7 +139,7 @@ export function CommandPalette() {
         )
       ) {
         const num = parseInt(e.key, 10);
-        if (num >= 1 && num <= 5) {
+        if (num >= 1 && num <= 4) {
           const match = commands.find((c) => c.shortcut === String(num));
           if (match) {
             e.preventDefault();

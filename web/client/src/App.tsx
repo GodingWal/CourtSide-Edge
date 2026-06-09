@@ -8,7 +8,6 @@ import {
 import Sidebar from "./components/Sidebar";
 import MarketDivergence from "./views/MarketDivergence";
 import AlphaSandbox from "./views/AlphaSandbox";
-import PropBuilder from "./views/PropBuilder";
 import BankrollDiagnostics from "./views/BankrollDiagnostics";
 import IntelligenceFeed from "./views/IntelligenceFeed";
 import BetTracker from "./views/BetTracker";
@@ -20,7 +19,6 @@ import ErrorBoundary from "./components/ErrorBoundary";
 const pageTitles: Record<string, string> = {
   "/": "Market Divergence",
   "/sandbox": "Alpha Sandbox",
-  "/prop-builder": "Prop Builder",
   "/diagnostics": "Bankroll Diagnostics",
   "/intelligence": "Intelligence Feed",
   "/bets": "Bet Tracker",
@@ -136,7 +134,6 @@ function AppShell() {
           <Routes>
             <Route path="/" element={<MarketDivergence />} />
             <Route path="/sandbox" element={<AlphaSandbox />} />
-            <Route path="/prop-builder" element={<PropBuilder />} />
             <Route path="/diagnostics" element={<BankrollDiagnostics />} />
             <Route path="/intelligence" element={<IntelligenceFeed />} />
             <Route path="/bets" element={<BetTracker />} />

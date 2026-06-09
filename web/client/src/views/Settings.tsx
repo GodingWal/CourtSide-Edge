@@ -92,8 +92,7 @@ export default function Settings() {
     { id: '8', name: 'Bankroll Sizer', status: 'online', port: null },
     { id: '9', name: 'News Sentiment', status: 'online', port: null },
     { id: '10', name: 'Game Total Projector', status: 'online', port: null },
-    { id: '11', name: 'Market Value Detector', status: 'online', port: null },
-    { id: '13', name: 'Matchup Oracle', status: 'online', port: 8009 }
+    { id: '11', name: 'Market Value Detector', status: 'online', port: null }
   ];
 
   useEffect(() => {

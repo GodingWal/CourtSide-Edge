@@ -3,7 +3,6 @@ import { Link, useLocation } from "react-router-dom";
 import {
   Activity,
   Cpu,
-  Wrench,
   PieChart,
   Database,
   Receipt,
@@ -15,7 +14,6 @@ import {
 const navItems = [
   { path: "/", label: "Market Divergence", icon: Activity },
   { path: "/sandbox", label: "Alpha Sandbox", icon: Cpu },
-  { path: "/prop-builder", label: "Prop Builder", icon: Wrench },
   { path: "/diagnostics", label: "Bankroll", icon: PieChart },
   { path: "/intelligence", label: "Intelligence", icon: Database },
 ];
