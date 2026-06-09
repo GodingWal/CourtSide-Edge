@@ -8,7 +8,7 @@ import IntelligenceFeed from './views/IntelligenceFeed';
 function App() {
   return (
     <Router>
-      <div className="min-h-screen bg-slate-950 flex font-sans text-slate-100">
+      <div className="min-h-screen bg-zinc-950 flex font-sans text-zinc-100">
         <Sidebar />
         <main className="flex-1 overflow-auto">
            <Routes>
