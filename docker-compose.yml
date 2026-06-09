@@ -75,3 +75,53 @@ services:
     depends_on:
       - redis
     restart: unless-stopped
+
+  agent_5_referee_engine:
+    build:
+      context: .
+      dockerfile: agents/5_referee_engine/Dockerfile
+    depends_on:
+      - redis
+    restart: unless-stopped
+
+  agent_6_steam_detector:
+    build:
+      context: .
+      dockerfile: agents/6_steam_detector/Dockerfile
+    depends_on:
+      - redis
+    restart: unless-stopped
+
+  agent_2_5_game_flow_oracle:
+    build:
+      context: .
+      dockerfile: agents/2.5_game_flow_oracle/Dockerfile
+    depends_on:
+      - redis
+    restart: unless-stopped
+
+  agent_7_correlation_guard:
+    build:
+      context: .
+      dockerfile: agents/7_correlation_guard/Dockerfile
+    depends_on:
+      - redis
+    restart: unless-stopped
+
+  agent_8_bankroll_sizer:
+    build:
+      context: .
+      dockerfile: agents/8_bankroll_sizer/Dockerfile
+    depends_on:
+      - redis
+    restart: unless-stopped
+
+  agent_4_execution_oracle:
+    build:
+      context: .
+      dockerfile: agents/4_execution_oracle/Dockerfile
+    depends_on:
+      - redis
+    restart: unless-stopped
+    ports:
+      - "8001:8001"
