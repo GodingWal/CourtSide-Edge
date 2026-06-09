@@ -1,5 +1,5 @@
 import { Link, useLocation } from 'react-router-dom';
-import { Activity, ShieldAlert, Cpu, Database, PieChart } from 'lucide-react';
+import { Activity, ShieldAlert, Cpu, Database, PieChart, Wrench } from 'lucide-react';
 
 export default function Sidebar() {
   const location = useLocation();
@@ -7,6 +7,7 @@ export default function Sidebar() {
   const links = [
     { name: 'Market Divergence', path: '/', icon: Activity },
     { name: 'Alpha Sandbox', path: '/sandbox', icon: Cpu },
+    { name: 'Prop Builder', path: '/prop-builder', icon: Wrench },
     { name: 'Bankroll & CLV', path: '/diagnostics', icon: PieChart },
     { name: 'Intelligence Feed', path: '/intelligence', icon: Database },
   ];

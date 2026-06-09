@@ -125,3 +125,14 @@ services:
     restart: unless-stopped
     ports:
       - "8001:8001"
+
+  agent_13_matchup_oracle:
+    build:
+      context: .
+      dockerfile: agents/13_matchup_oracle/Dockerfile
+    container_name: courtside_agent_13
+    ports:
+      - "8009:8009"
+    restart: unless-stopped
+    depends_on:
+      - redis

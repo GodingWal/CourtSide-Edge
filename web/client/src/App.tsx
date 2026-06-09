@@ -4,6 +4,7 @@ import MarketDivergence from './views/MarketDivergence';
 import AlphaSandbox from './views/AlphaSandbox';
 import BankrollDiagnostics from './views/BankrollDiagnostics';
 import IntelligenceFeed from './views/IntelligenceFeed';
+import PropBuilder from './views/PropBuilder';
 
 function App() {
   return (
@@ -16,6 +17,7 @@ function App() {
               <Route path="/sandbox" element={<AlphaSandbox />} />
               <Route path="/diagnostics" element={<BankrollDiagnostics />} />
               <Route path="/intelligence" element={<IntelligenceFeed />} />
+              <Route path="/prop-builder" element={<PropBuilder />} />
            </Routes>
         </main>
       </div>

@@ -40,6 +40,32 @@ app.get('/api/players/active', async (req, res) => {
     }
 });
 
+// Agent 13 Proxy Routes
+app.get('/api/matchup/:player/:team', async (req, res) => {
+    try {
+        // Proxy to Agent 13 container (assuming localhost:8009 for local dev)
+        const response = await fetch(`http://localhost:8009/api/matchup/${req.params.player}/${req.params.team}`);
+        const data = await response.json();
+        res.json(data);
+    } catch (err) {
+        res.status(500).json({ error: 'Failed to reach Agent 13' });
+    }
+});
+
+app.post('/api/custom_prop', express.json(), async (req, res) => {
+    try {
+        const response = await fetch(`http://localhost:8009/api/custom_prop`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(req.body)
+        });
+        const data = await response.json();
+        res.json(data);
+    } catch (err) {
+        res.status(500).json({ error: 'Failed to reach Agent 13' });
+    }
+});
+
 // SSE Endpoint for Alerts
 app.get('/api/stream/alerts', async (req, res) => {
     res.setHeader('Content-Type', 'text/event-stream');
