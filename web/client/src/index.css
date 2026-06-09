@@ -1,25 +1,79 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600&display=swap');
 
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
 @layer base {
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: #222222 transparent;
+  }
+  *::-webkit-scrollbar {
+    width: 6px;
+  }
+  *::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  *::-webkit-scrollbar-thumb {
+    background: #222222;
+    border-radius: 3px;
+  }
+  *::-webkit-scrollbar-thumb:hover {
+    background: #333333;
+  }
   body {
-    @apply bg-background text-slate-200 font-sans antialiased min-h-screen overflow-x-hidden;
-    background: radial-gradient(circle at top right, #1e293b 0%, #0f172a 100%);
+    background-color: #0a0a0a;
+    color: #ffffff;
+    font-family: 'Inter', system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    overflow-x: hidden;
+  }
+  ::selection {
+    background: rgba(220, 38, 38, 0.3);
+    color: white;
   }
 }
 
 @layer components {
-  .glass-card {
-    @apply bg-surface backdrop-blur-md border border-slate-700/50 rounded-xl shadow-lg relative overflow-hidden transition-transform duration-200;
+  .cs-card {
+    @apply bg-cs-card/80 backdrop-blur-xl border border-cs-border/50 rounded-2xl shadow-card;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
   }
-  .glass-card:hover {
-    @apply -translate-y-1 shadow-xl;
+  .cs-card:hover {
+    @apply border-cs-border shadow-glow-red-sm;
   }
-  .glass-card::before {
-    content: '';
-    @apply absolute top-0 left-0 w-full h-[1px] bg-gradient-to-r from-transparent via-white/10 to-transparent;
+  .cs-input {
+    @apply w-full bg-cs-dark border border-cs-border/50 rounded-xl px-4 py-3 text-white text-sm
+           placeholder:text-cs-muted/60 outline-none transition-all duration-300
+           focus:border-cs-red/50 focus:shadow-glow-red-sm focus:ring-1 focus:ring-cs-red/20;
+  }
+  .cs-btn-primary {
+    @apply bg-cs-red hover:bg-cs-red-bright text-white font-semibold py-3 px-6 rounded-xl
+           transition-all duration-300 hover:shadow-glow-red active:scale-[0.98]
+           disabled:opacity-40 disabled:pointer-events-none;
+  }
+  .cs-label {
+    @apply text-[10px] text-cs-muted uppercase tracking-[0.15em] font-semibold mb-1.5 block;
+  }
+  .cs-badge {
+    @apply inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold
+           bg-cs-red/10 text-cs-red-bright border border-cs-red/20;
+  }
+  .cs-stat {
+    @apply text-3xl font-bold tracking-tight;
+  }
+  .cs-stat-label {
+    @apply text-[11px] text-cs-muted uppercase tracking-[0.12em] font-medium;
+  }
+}
+
+@layer utilities {
+  .text-gradient-red {
+    @apply bg-clip-text text-transparent bg-gradient-to-r from-cs-red to-rose-400;
+  }
+  .border-gradient {
+    border-image: linear-gradient(to right, transparent, rgba(220,38,38,0.3), transparent) 1;
   }
 }

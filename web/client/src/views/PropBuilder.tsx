@@ -1,160 +1,294 @@
 import { useState } from 'react';
-import { Wrench, ChevronRight, Activity } from 'lucide-react';
-import { LineChart, Line, XAxis, Tooltip, ResponsiveContainer, ReferenceLine } from 'recharts';
+import { Wrench, ChevronRight, Activity, Target } from 'lucide-react';
+import {
+  AreaChart,
+  Area,
+  XAxis,
+  YAxis,
+  Tooltip,
+  ResponsiveContainer,
+  ReferenceLine,
+} from 'recharts';
+
+interface MatchupData {
+  summary: string;
+  pace: number;
+  offRating: number;
+  defRating: number;
+  projTotal: number;
+}
+
+interface DistPoint {
+  x: number;
+  y: number;
+}
+
+interface PropResult {
+  distribution: DistPoint[];
+  trueOdds: number;
+  edge: number;
+  median: number;
+}
 
 export default function PropBuilder() {
-  const [player, setPlayer] = useState('Breanna Stewart');
-  const [team, setTeam] = useState('LVA');
+  const [player, setPlayer] = useState('');
   const [stat, setStat] = useState('Points');
-  const [line, setLine] = useState(25.5);
-  
-  const [matchupData, setMatchupData] = useState<any>(null);
-  const [projectionData, setProjectionData] = useState<any>(null);
+  const [line, setLine] = useState('');
+  const [opponent, setOpponent] = useState('');
   const [loading, setLoading] = useState(false);
+  const [matchup, setMatchup] = useState<MatchupData | null>(null);
+  const [propResult, setPropResult] = useState<PropResult | null>(null);
 
   const handleBuild = async () => {
+    if (!player || !line || !opponent) return;
     setLoading(true);
+
     try {
-      // 1. Fetch Qualitative Matchup Summary
-      const matchupRes = await fetch(`http://localhost:3000/api/matchup/${encodeURIComponent(player)}/${encodeURIComponent(team)}`);
-      const mData = await matchupRes.json();
-      setMatchupData(mData);
-      
-      // 2. Fetch Quantitative Mathematical Distribution
-      const projRes = await fetch(`http://localhost:3000/api/custom_prop`, {
+      const matchupRes = await fetch('http://localhost:3000/api/matchup', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ player, stat, line, opposing_team: team })
+        body: JSON.stringify({ player, opponent }),
       });
-      const pData = await projRes.json();
-      setProjectionData(pData);
-      
+      const matchupData = await matchupRes.json();
+      setMatchup(matchupData);
+
+      const propRes = await fetch('http://localhost:3000/api/custom_prop', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ player, stat, line: parseFloat(line), opponent }),
+      });
+      const propData = await propRes.json();
+      setPropResult(propData);
     } catch (err) {
-      console.error(err);
+      console.error('Build failed:', err);
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   };
 
-  return (
-    <div className="p-8 space-y-6 max-w-7xl mx-auto w-full h-screen flex flex-col">
-      <h1 className="text-3xl font-bold text-white flex items-center gap-3 shrink-0">
-         <Wrench className="text-red-500" />
-         Interactive Prop Builder
-      </h1>
+  const statOptions = ['Points', 'Rebounds', 'Assists', 'PRA', '3PM', 'Steals', 'Blocks'];
 
-      <div className="flex-1 grid grid-cols-1 lg:grid-cols-3 gap-6 min-h-0">
-        
-        {/* Left Column: The Form */}
-        <div className="glass-panel p-6 rounded-2xl flex flex-col gap-6 col-span-1">
-          <h2 className="text-xl font-bold text-zinc-300">Custom Configuration</h2>
-          
-          <div className="space-y-4 flex-1">
+  return (
+    <div className="min-h-screen bg-cs-black p-6 animate-fade-in">
+      {/* Header */}
+      <div className="flex items-center gap-3 mb-8">
+        <div className="w-10 h-10 rounded-xl bg-cs-red/10 border border-cs-red/20 flex items-center justify-center shadow-glow-red-sm">
+          <Wrench className="w-5 h-5 text-cs-red" />
+        </div>
+        <div>
+          <h1 className="text-2xl font-bold text-white tracking-tight">Prop Builder</h1>
+          <p className="text-sm text-cs-muted">Custom projection engine powered by Nemotron</p>
+        </div>
+      </div>
+
+      {/* 3-Column Grid */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        {/* Column 1: Form */}
+        <div className="cs-card p-6 space-y-5 animate-slide-up">
+          <div className="flex items-center gap-2 mb-1">
+            <Target className="w-4 h-4 text-cs-red" />
+            <h2 className="text-sm font-semibold text-white uppercase tracking-wider">Build Prop</h2>
+          </div>
+
+          <div className="space-y-4">
             <div>
-               <label className="text-xs text-zinc-500 uppercase tracking-wider font-bold">Player Name</label>
-               <input value={player} onChange={e => setPlayer(e.target.value)} className="w-full mt-1 bg-zinc-900 border border-zinc-700 rounded-lg px-4 py-2 text-white focus:border-red-500 outline-none" />
+              <label className="cs-label">Player Name</label>
+              <input
+                type="text"
+                className="cs-input"
+                placeholder="e.g. A'ja Wilson"
+                value={player}
+                onChange={(e) => setPlayer(e.target.value)}
+              />
             </div>
+
             <div>
-               <label className="text-xs text-zinc-500 uppercase tracking-wider font-bold">Opposing Team</label>
-               <input value={team} onChange={e => setTeam(e.target.value)} className="w-full mt-1 bg-zinc-900 border border-zinc-700 rounded-lg px-4 py-2 text-white focus:border-red-500 outline-none" />
+              <label className="cs-label">Stat Category</label>
+              <select
+                className="cs-input"
+                value={stat}
+                onChange={(e) => setStat(e.target.value)}
+              >
+                {statOptions.map((s) => (
+                  <option key={s} value={s}>
+                    {s}
+                  </option>
+                ))}
+              </select>
             </div>
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                 <label className="text-xs text-zinc-500 uppercase tracking-wider font-bold">Stat</label>
-                 <select value={stat} onChange={e => setStat(e.target.value)} className="w-full mt-1 bg-zinc-900 border border-zinc-700 rounded-lg px-4 py-2 text-white focus:border-red-500 outline-none">
-                    <option>Points</option>
-                    <option>Rebounds</option>
-                    <option>Assists</option>
-                 </select>
-              </div>
-              <div>
-                 <label className="text-xs text-zinc-500 uppercase tracking-wider font-bold">Line</label>
-                 <input type="number" step="0.5" value={line} onChange={e => setLine(parseFloat(e.target.value))} className="w-full mt-1 bg-zinc-900 border border-zinc-700 rounded-lg px-4 py-2 text-white focus:border-red-500 outline-none" />
-              </div>
+
+            <div>
+              <label className="cs-label">Line</label>
+              <input
+                type="number"
+                className="cs-input"
+                placeholder="e.g. 22.5"
+                value={line}
+                onChange={(e) => setLine(e.target.value)}
+              />
+            </div>
+
+            <div>
+              <label className="cs-label">Opponent</label>
+              <input
+                type="text"
+                className="cs-input"
+                placeholder="e.g. Las Vegas Aces"
+                value={opponent}
+                onChange={(e) => setOpponent(e.target.value)}
+              />
             </div>
           </div>
-          
-          <button 
-             onClick={handleBuild} 
-             disabled={loading}
-             className="w-full bg-red-600 hover:bg-red-500 text-white font-bold py-3 rounded-lg flex items-center justify-center gap-2 transition-colors disabled:opacity-50"
+
+          <button
+            className="cs-btn-primary w-full group"
+            onClick={handleBuild}
+            disabled={loading || !player || !line || !opponent}
           >
-             {loading ? 'Building...' : 'Generate Prop'}
-             <ChevronRight className="w-5 h-5" />
+            {loading ? (
+              <span className="flex items-center justify-center gap-2">
+                <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                </svg>
+                Processing…
+              </span>
+            ) : (
+              <span className="flex items-center justify-center gap-2">
+                Build Projection
+                <ChevronRight className="w-4 h-4 transition-transform group-hover:translate-x-0.5" />
+              </span>
+            )}
           </button>
         </div>
 
-        {/* Right Column: Output */}
-        <div className="col-span-2 flex flex-col gap-6">
-           
-           {/* Qualitative Matchup Oracle */}
-           <div className="glass-panel p-6 rounded-2xl">
-              <h2 className="text-xl font-bold text-zinc-300 mb-4 flex items-center gap-2">
-                 <Activity className="text-red-500 w-5 h-5" /> Matchup Oracle (Nemotron)
-              </h2>
-              {matchupData ? (
-                 <div className="space-y-4">
-                    <p className="text-zinc-300 leading-relaxed text-sm bg-zinc-900/50 p-4 rounded-lg border border-zinc-800">
-                       {matchupData.summary}
-                    </p>
-                    <div className="grid grid-cols-3 gap-4">
-                       <div className="bg-zinc-900/50 p-3 rounded-lg border border-zinc-800 text-center">
-                          <span className="text-xs text-zinc-500 block">Def Rating</span>
-                          <span className="font-bold text-white">{matchupData.metrics.defensive_rating}</span>
-                       </div>
-                       <div className="bg-zinc-900/50 p-3 rounded-lg border border-zinc-800 text-center">
-                          <span className="text-xs text-zinc-500 block">Pace</span>
-                          <span className="font-bold text-white">{matchupData.metrics.pace}</span>
-                       </div>
-                       <div className="bg-zinc-900/50 p-3 rounded-lg border border-zinc-800 text-center">
-                          <span className="text-xs text-zinc-500 block">Reb Rate</span>
-                          <span className="font-bold text-white">{matchupData.metrics.rebound_rate}%</span>
-                       </div>
-                    </div>
-                 </div>
-              ) : (
-                 <div className="h-24 flex items-center justify-center text-zinc-600 border border-zinc-800/50 rounded-lg border-dashed">
-                    Waiting for input...
-                 </div>
-              )}
-           </div>
-           
-           {/* Quantitative Distribution */}
-           <div className="glass-panel p-6 rounded-2xl flex-1 flex flex-col min-h-0">
-              <h2 className="text-xl font-bold text-zinc-300 mb-4">Probability Distribution (Agent 3)</h2>
-              {projectionData ? (
-                 <div className="flex-1 flex flex-col">
-                    <div className="flex justify-between items-end mb-4">
-                       <div>
-                          <span className="text-xs text-zinc-500 block uppercase">True Odds (Over)</span>
-                          <span className="text-2xl font-bold text-red-500">{projectionData.true_odds}%</span>
-                       </div>
-                       <div className="text-right">
-                          <span className="text-xs text-zinc-500 block uppercase">Projected {stat}</span>
-                          <span className="text-2xl font-bold text-white">{projectionData.projection.toFixed(1)}</span>
-                       </div>
-                    </div>
-                    <div className="flex-1 min-h-[200px]">
-                       <ResponsiveContainer width="100%" height="100%">
-                          <LineChart data={projectionData.distribution}>
-                             <XAxis dataKey="value" stroke="#52525b" fontSize={12} tickLine={false} />
-                             <Tooltip 
-                                contentStyle={{ backgroundColor: '#18181b', borderColor: '#27272a', color: '#fff' }} 
-                                itemStyle={{ color: '#ef4444' }} 
-                             />
-                             <ReferenceLine x={line} stroke="#fff" strokeDasharray="3 3" label={{ position: 'top', value: 'Book Line', fill: '#fff', fontSize: 10 }} />
-                             <ReferenceLine x={projectionData.projection} stroke="#ef4444" label={{ position: 'top', value: 'Proj', fill: '#ef4444', fontSize: 10 }} />
-                             <Line type="monotone" dataKey="probability" stroke="#ef4444" strokeWidth={3} dot={false} activeDot={{ r: 6 }} />
-                          </LineChart>
-                       </ResponsiveContainer>
-                    </div>
-                 </div>
-              ) : (
-                 <div className="flex-1 flex items-center justify-center text-zinc-600 border border-zinc-800/50 rounded-lg border-dashed">
-                    Run projection to view curve
-                 </div>
-              )}
-           </div>
+        {/* Column 2: Matchup Oracle */}
+        <div className="cs-card p-6 animate-slide-up" style={{ animationDelay: '80ms' }}>
+          <div className="flex items-center gap-2 mb-5">
+            <Activity className="w-4 h-4 text-cs-red" />
+            <h2 className="text-sm font-semibold text-white uppercase tracking-wider">Matchup Oracle</h2>
+          </div>
 
+          {matchup ? (
+            <div className="space-y-5">
+              <p className="text-sm text-gray-300 leading-relaxed border-l-2 border-cs-red/40 pl-4">
+                {matchup.summary}
+              </p>
+
+              <div className="grid grid-cols-2 gap-3">
+                {[
+                  { label: 'Pace', value: matchup.pace?.toFixed(1) },
+                  { label: 'Off Rating', value: matchup.offRating?.toFixed(1) },
+                  { label: 'Def Rating', value: matchup.defRating?.toFixed(1) },
+                  { label: 'Proj Total', value: matchup.projTotal?.toFixed(1) },
+                ].map((item) => (
+                  <div
+                    key={item.label}
+                    className="bg-cs-black/60 border border-cs-border/50 rounded-xl p-3 text-center"
+                  >
+                    <div className="cs-stat">{item.value ?? '—'}</div>
+                    <div className="cs-stat-label">{item.label}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : (
+            <div className="flex flex-col items-center justify-center h-52 text-cs-muted">
+              <Activity className="w-8 h-8 mb-3 opacity-30" />
+              <p className="text-sm">Build a prop to see matchup intelligence</p>
+            </div>
+          )}
+        </div>
+
+        {/* Column 3: Distribution Chart */}
+        <div className="cs-card p-6 animate-slide-up" style={{ animationDelay: '160ms' }}>
+          <div className="flex items-center justify-between mb-5">
+            <div className="flex items-center gap-2">
+              <Target className="w-4 h-4 text-cs-red" />
+              <h2 className="text-sm font-semibold text-white uppercase tracking-wider">Distribution</h2>
+            </div>
+            {propResult && (
+              <span className="cs-badge">
+                Edge: {propResult.edge > 0 ? '+' : ''}
+                {propResult.edge?.toFixed(1)}%
+              </span>
+            )}
+          </div>
+
+          {propResult ? (
+            <div className="space-y-5">
+              <div className="text-center">
+                <span className="text-xs text-cs-muted uppercase tracking-wider">True Odds</span>
+                <div className="text-3xl font-black text-gradient-red mt-1">
+                  {propResult.trueOdds > 0 ? '+' : ''}
+                  {propResult.trueOdds}
+                </div>
+              </div>
+
+              <div className="h-52">
+                <ResponsiveContainer width="100%" height="100%">
+                  <AreaChart data={propResult.distribution}>
+                    <defs>
+                      <linearGradient id="redGradient" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="0%" stopColor="#dc2626" stopOpacity={0.35} />
+                        <stop offset="100%" stopColor="#dc2626" stopOpacity={0} />
+                      </linearGradient>
+                    </defs>
+                    <XAxis
+                      dataKey="x"
+                      stroke="#444"
+                      tick={{ fill: '#666', fontSize: 11 }}
+                      axisLine={{ stroke: '#333' }}
+                    />
+                    <YAxis
+                      stroke="#444"
+                      tick={{ fill: '#666', fontSize: 11 }}
+                      axisLine={{ stroke: '#333' }}
+                    />
+                    <Tooltip
+                      contentStyle={{
+                        backgroundColor: '#111111',
+                        border: '1px solid #333',
+                        borderRadius: '12px',
+                        color: '#fff',
+                        fontSize: '12px',
+                      }}
+                    />
+                    <ReferenceLine
+                      x={parseFloat(line)}
+                      stroke="#ffffff"
+                      strokeDasharray="4 4"
+                      strokeWidth={1.5}
+                      label={{ value: 'Line', fill: '#888', fontSize: 11 }}
+                    />
+                    {propResult.median && (
+                      <ReferenceLine
+                        x={propResult.median}
+                        stroke="#dc2626"
+                        strokeDasharray="4 4"
+                        strokeWidth={1.5}
+                        label={{ value: 'Median', fill: '#dc2626', fontSize: 11 }}
+                      />
+                    )}
+                    <Area
+                      type="monotone"
+                      dataKey="y"
+                      stroke="#dc2626"
+                      strokeWidth={2}
+                      fill="url(#redGradient)"
+                      dot={false}
+                      activeDot={{ r: 4, fill: '#dc2626', stroke: '#fff', strokeWidth: 2 }}
+                    />
+                  </AreaChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+          ) : (
+            <div className="flex flex-col items-center justify-center h-52 text-cs-muted">
+              <Target className="w-8 h-8 mb-3 opacity-30" />
+              <p className="text-sm">Distribution will appear here</p>
+            </div>
+          )}
         </div>
       </div>
     </div>

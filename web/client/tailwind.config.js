@@ -7,15 +7,39 @@ export default {
   theme: {
     extend: {
       colors: {
-        background: '#0f172a', 
-        surface: 'rgba(30, 41, 59, 0.7)', 
-        primary: '#3b82f6', 
-        success: '#22c55e', 
-        danger: '#ef4444', 
+        'cs-black': '#0a0a0a',
+        'cs-dark': '#111111',
+        'cs-card': '#161616',
+        'cs-border': '#222222',
+        'cs-muted': '#555555',
+        'cs-red': '#dc2626',
+        'cs-red-bright': '#ef4444',
+        'cs-red-glow': 'rgba(220, 38, 38, 0.15)',
       },
       fontFamily: {
-        sans: ['Inter', 'sans-serif'],
-      }
+        sans: ['Inter', 'system-ui', 'sans-serif'],
+        mono: ['JetBrains Mono', 'Fira Code', 'monospace'],
+      },
+      boxShadow: {
+        'glow-red': '0 0 20px rgba(220, 38, 38, 0.15), 0 0 60px rgba(220, 38, 38, 0.05)',
+        'glow-red-sm': '0 0 10px rgba(220, 38, 38, 0.1)',
+        'card': '0 4px 30px rgba(0, 0, 0, 0.3)',
+      },
+      animation: {
+        'pulse-slow': 'pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite',
+        'fade-in': 'fadeIn 0.5s ease-out',
+        'slide-up': 'slideUp 0.4s ease-out',
+      },
+      keyframes: {
+        fadeIn: {
+          '0%': { opacity: '0' },
+          '100%': { opacity: '1' },
+        },
+        slideUp: {
+          '0%': { opacity: '0', transform: 'translateY(10px)' },
+          '100%': { opacity: '1', transform: 'translateY(0)' },
+        },
+      },
     },
   },
   plugins: [],
