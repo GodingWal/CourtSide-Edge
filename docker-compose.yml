@@ -136,3 +136,27 @@ services:
     restart: unless-stopped
     depends_on:
       - redis
+
+  web_server:
+    build:
+      context: ./web/server
+      dockerfile: Dockerfile
+    container_name: courtside_web_server
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./data:/app/data
+    depends_on:
+      - redis
+    restart: unless-stopped
+
+  web_client:
+    build:
+      context: ./web/client
+      dockerfile: Dockerfile
+    container_name: courtside_web_client
+    ports:
+      - "5173:5173"
+    depends_on:
+      - web_server
+    restart: unless-stopped
