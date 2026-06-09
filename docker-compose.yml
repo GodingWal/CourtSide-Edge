@@ -1,0 +1,77 @@
+version: '3.8'
+
+services:
+  redis:
+    image: redis:alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - ./infrastructure/redis/data:/data
+    command: redis-server --appendonly yes
+    restart: unless-stopped
+
+  agent_0_historical_etl:
+    build:
+      context: .
+      dockerfile: agents/0_historical_etl/Dockerfile
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped
+
+  agent_1_market_scraper:
+    build:
+      context: .
+      dockerfile: agents/1_market_scraper/Dockerfile
+    env_file:
+      - .env
+    depends_on:
+      - redis
+    restart: unless-stopped
+
+  agent_2_news_sentinel:
+    build:
+      context: .
+      dockerfile: agents/2_news_sentinel/Dockerfile
+    env_file:
+      - .env
+    depends_on:
+      - redis
+    restart: unless-stopped
+
+  agent_9_news_sentiment:
+    build:
+      context: .
+      dockerfile: agents/9_news_sentiment/Dockerfile
+    env_file:
+      - .env
+    depends_on:
+      - redis
+    restart: unless-stopped
+
+  agent_3_projection_engine:
+    build:
+      context: .
+      dockerfile: agents/3_projection_engine/Dockerfile
+    env_file:
+      - .env
+    depends_on:
+      - redis
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+
+  agent_10_game_total_projector:
+    build:
+      context: .
+      dockerfile: agents/10_game_total_projector/Dockerfile
+    depends_on:
+      - redis
+    restart: unless-stopped
+
+  agent_11_market_value_detector:
+    build:
+      context: .
+      dockerfile: agents/11_market_value_detector/Dockerfile
+    depends_on:
+      - redis
+    restart: unless-stopped

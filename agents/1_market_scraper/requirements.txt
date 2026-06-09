@@ -1,0 +1,2 @@
+redis==5.0.3
+curl_cffi==0.7.1
