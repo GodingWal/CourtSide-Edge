@@ -1,6 +1,7 @@
 import time
 import schedule
 import logging
+import concurrent.futures
 from database import init_db
 
 logging.basicConfig(level=logging.INFO)
@@ -26,8 +27,15 @@ def calculate_rolling_baselines():
 
 def nightly_etl_job():
     logger.info("Starting Nightly ETL Job...")
-    fetch_pbpstats()
-    fetch_wnba_stats()
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+        future_pbp = executor.submit(fetch_pbpstats)
+        future_wnba = executor.submit(fetch_wnba_stats)
+
+        # Calling .result() ensures any exceptions raised in the threads are propagated
+        future_pbp.result()
+        future_wnba.result()
+
     calculate_rolling_baselines()
     logger.info("Nightly ETL Job completed.")
 
