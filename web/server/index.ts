@@ -817,11 +817,13 @@ app.get('/api/stream/alerts', async (req, res) => {
       'channel_sentiment_context'
     ];
 
-    for (const channel of channels) {
-      await subscriber.subscribe(channel, (message) => {
-        res.write(`data: ${JSON.stringify({ channel, message })}\n\n`);
-      });
-    }
+    await Promise.all(
+      channels.map((channel) =>
+        subscriber.subscribe(channel, (message) => {
+          res.write(`data: ${JSON.stringify({ channel, message })}\n\n`);
+        })
+      )
+    );
 
     req.on('close', () => {
       subscriber.unsubscribe();
@@ -860,30 +862,32 @@ async function start() {
         'channel_referee_context',
         'channel_sentiment_context'
       ];
-      for (const channel of channels) {
-        await subscriber.subscribe(channel, async (message) => {
-          // Broadcast to WS clients
-          broadcast({ channel, message });
+      await Promise.all(
+        channels.map((channel) =>
+          subscriber.subscribe(channel, async (message) => {
+            // Broadcast to WS clients
+            broadcast({ channel, message });
 
-          // Save to SQLite if it is a qualitative channel
-          if (
-            channel === 'channel_roster_updates' ||
-            channel === 'channel_referee_context' ||
-            channel === 'channel_sentiment_context'
-          ) {
-            try {
-              await db.insert(qualitative_events).values({
-                channel,
-                payload: message,
-                timestamp: Date.now()
-              });
-              logger.info({ channel }, 'Permanently logged qualitative event to SQLite');
-            } catch (dbErr) {
-              logger.error({ err: dbErr, channel }, 'Failed to log qualitative event');
+            // Save to SQLite if it is a qualitative channel
+            if (
+              channel === 'channel_roster_updates' ||
+              channel === 'channel_referee_context' ||
+              channel === 'channel_sentiment_context'
+            ) {
+              try {
+                await db.insert(qualitative_events).values({
+                  channel,
+                  payload: message,
+                  timestamp: Date.now()
+                });
+                logger.info({ channel }, 'Permanently logged qualitative event to SQLite');
+              } catch (dbErr) {
+                logger.error({ err: dbErr, channel }, 'Failed to log qualitative event');
+              }
             }
-          }
-        });
-      }
+          })
+        )
+      );
     } catch (err) {
       logger.warn('Redis is running offline. WebSocket pub/sub stream disabled.');
     }
