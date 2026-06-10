@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Activity, TrendingUp, Zap, CircleDot } from 'lucide-react';
+import { Activity, TrendingUp, Zap, CircleDot, ArrowUpRight, ArrowDownRight, Sparkles } from 'lucide-react';
 
 /* ── mock data ─────────────────────────────────────────────────────── */
 const MOCK_EDGES = [
@@ -45,6 +45,7 @@ function RadarPulse() {
 /* ═══════════════════════════════════════════════════════════════════ */
 export default function MarketDivergence() {
   const [messages, setMessages] = useState<any[]>([]);
+  const [velocityAlerts, setVelocityAlerts] = useState<any[]>([]);
 
   /* SSE listener */
   useEffect(() => {
@@ -60,6 +61,24 @@ export default function MarketDivergence() {
       }
     };
     return () => sse.close();
+  }, []);
+
+  /* Fetch velocity alerts */
+  useEffect(() => {
+    const fetchVelocity = async () => {
+      try {
+        const res = await fetch('http://localhost:3000/api/velocity/alerts');
+        if (res.ok) {
+          const data = await res.json();
+          setVelocityAlerts(data);
+        }
+      } catch (err) {
+        console.error("Failed to fetch velocity:", err);
+      }
+    };
+    fetchVelocity();
+    const interval = setInterval(fetchVelocity, 5000);
+    return () => clearInterval(interval);
   }, []);
 
   /* ── render ─────────────────────────────────────────────────────── */
@@ -186,6 +205,51 @@ export default function MarketDivergence() {
                 ))}
               </tbody>
             </table>
+          </div>
+        </div>
+
+        {/* New Line Velocity Anomalies (Agent 17) */}
+        <div className="lg:col-span-2 cs-card p-6 space-y-4 animate-slide-up" style={{ animationDelay: '350ms' }}>
+          <div className="border-b border-cs-border/40 pb-3 flex items-center justify-between">
+            <h2 className="text-base font-bold text-white flex items-center gap-2">
+              <Sparkles className="w-4 h-4 text-cs-red" />
+              Agent 17: Line Movement Velocity Feed
+            </h2>
+            <span className="text-[10px] bg-cs-red/20 text-cs-red-bright px-2 py-0.5 rounded font-mono font-bold">
+              REAL-TIME VOLATILITY
+            </span>
+          </div>
+
+          <div className="space-y-3">
+            {velocityAlerts.length === 0 ? (
+              <p className="text-xs text-cs-muted font-mono text-center py-4">No velocity anomalies detected in this cycle.</p>
+            ) : (
+              velocityAlerts.map((item, idx) => (
+                <div key={idx} className="bg-cs-dark/30 border border-cs-border/30 rounded-xl p-3.5 flex flex-col md:flex-row justify-between md:items-center gap-3 hover:border-cs-border/60 transition-colors">
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="font-bold text-white text-sm">{item.player}</span>
+                      <span className="text-[10px] text-cs-muted bg-cs-dark px-1.5 py-0.2 rounded font-mono">{item.stat}</span>
+                    </div>
+                    <div className="text-xs text-cs-muted mt-1">{item.reason}</div>
+                  </div>
+                  
+                  <div className="flex items-center gap-4 text-right">
+                    <div>
+                      <div className="text-[10px] text-cs-muted uppercase font-mono">Shift Velocity</div>
+                      <div className={`text-xs font-mono font-bold flex items-center gap-0.5 justify-end ${item.direction === 'UP' ? 'text-emerald-400' : 'text-cs-red-bright'}`}>
+                        {item.direction === 'UP' ? <ArrowUpRight className="w-3.5 h-3.5" /> : <ArrowDownRight className="w-3.5 h-3.5" />}
+                        {item.delta} lines / {item.odds_delta} odds
+                      </div>
+                    </div>
+                    <div>
+                      <div className="text-[10px] text-cs-muted uppercase font-mono">Time Window</div>
+                      <div className="text-xs font-mono text-white font-bold">{item.duration_seconds}s</div>
+                    </div>
+                  </div>
+                </div>
+              ))
+            )}
           </div>
         </div>
 

@@ -1,6 +1,6 @@
 # CourtSideEdge: Real-Time WNBA Quantitative Analytics & Wager Terminal
 
-CourtSideEdge is an agentic quantitative sports-betting system built for real-time edge detection, portfolio risk sizers, referee telemetry analysis, and high-EV parlay formulation. It orchestrates a **14-agent decoupled microservice architecture** communicating via Redis Pub/Sub and Redis Streams, backing up to SQLite, and exposing live data via WebSockets and SSE to a premium dashboard.
+CourtSideEdge is an agentic sports-betting system built for real-time edge detection, portfolio risk sizers, referee telemetry analysis, and high-EV parlay formulation. It orchestrates a **17-agent decoupled microservice architecture** communicating via Redis Pub/Sub and Redis Streams, backing up to SQLite, and exposing live data via WebSockets and SSE to a premium dashboard.
 
 ---
 
@@ -84,6 +84,9 @@ graph TD
 | 11 | **Market Value Detector** | Scans book pricing discrepancies with **confidence scoring** | `stream_market_intelligence` | **Streams** |
 | 13 | **Parlay Gen & Matchup Oracle** | FastAPI service generating 2-leg EV parlays with qualitative summaries | `/api/parlay/generate` | REST |
 | 14 | **CLV Tracker** | Measures Closing-Line Value — the gold standard for betting sharpness | `channel_live_odds` + `/api/clv/*` | Pub/Sub + REST |
+| 15 | **Drift Monitor** | Calculates rolling projection error (MAE/bias) and writes offset context | `/api/drift/status` | REST + Context |
+| 16 | **Hedge Oracle** | Computes locked-in EV hedging and arbitrage middle actions | `/api/hedges` | REST + SQL |
+| 17 | **Velocity Agent** | Monitors rate-of-change velocity anomalies in lines/odds | `channel_live_odds` | Pub/Sub |
 
 ---
 
@@ -116,6 +119,19 @@ Agent 8 queries the last 50 settled bets from SQLite to compute realized win rat
 
 ### Closing-Line Value (CLV) Tracker
 Agent 14 records the closing odds at game time and calculates CLV percentage for every bet. The `/api/clv/summary` endpoint provides aggregate CLV statistics broken down by stat category and result type.
+
+---
+
+## 2.1 Architecture Improvements (v5.1)
+
+### Projection Drift & Calibration (Agent 15)
+Agent 15 monitors settled bet outcomes from the SQLite ledger to compute Mean Absolute Error (MAE) and bias. It saves calibration multipliers into the context store, which Agent 3 reads to dynamically shift points, assists, and rebounds projections.
+
+### Dynamic Hedging & Arbitrage (Agent 16)
+Agent 16 scans active bets against live lines to detect middle and lock-in profit hedging windows. Recommendations are saved to the `hedging_opportunities` table and surfaced on the diagnostics dashboard.
+
+### Line Movement Velocity (Agent 17)
+Agent 17 calculates odds/line velocity delta per minute. Real-time anomalies are pushed to `channel_steam_alerts` and rendered on the market divergence feed.
 
 ---
 

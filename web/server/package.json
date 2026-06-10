@@ -3,8 +3,8 @@
   "version": "1.0.0",
   "main": "index.ts",
   "scripts": {
-    "start": "ts-node index.ts",
-    "dev": "nodemon index.ts"
+    "start": "tsx index.ts",
+    "dev": "nodemon --exec tsx index.ts"
   },
   "dependencies": {
     "better-sqlite3": "^12.10.0",

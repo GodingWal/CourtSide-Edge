@@ -150,7 +150,39 @@ services:
     ports:
       - "8010:8010"
 
+  agent_15_drift_monitor:
+    build:
+      context: .
+      dockerfile: agents/15_drift_monitor/Dockerfile
+    volumes:
+      - ./data:/app/data
+    depends_on:
+      - redis
+    restart: unless-stopped
+    ports:
+      - "8011:8011"
 
+  agent_16_hedge_oracle:
+    build:
+      context: .
+      dockerfile: agents/16_hedge_oracle/Dockerfile
+    volumes:
+      - ./data:/app/data
+    depends_on:
+      - redis
+    restart: unless-stopped
+    ports:
+      - "8012:8012"
+
+  agent_17_velocity_agent:
+    build:
+      context: .
+      dockerfile: agents/17_velocity_agent/Dockerfile
+    depends_on:
+      - redis
+    restart: unless-stopped
+    ports:
+      - "8013:8013"
 
   web_server:
     build:

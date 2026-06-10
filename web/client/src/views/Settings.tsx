@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Settings as SettingsIcon, Save, Bell, Monitor, Cpu, Volume2, ShieldAlert } from 'lucide-react';
+import { Settings as SettingsIcon, Save, Bell, Monitor, Cpu, Volume2, ShieldAlert, Sparkles, Scale } from 'lucide-react';
 import { useToast } from '../components/ToastProvider';
 import { SkeletonCard } from '../components/Skeleton';
 
@@ -27,6 +27,14 @@ export default function Settings() {
 
   // Agents status
   const [agents, setAgents] = useState<AgentHealth[]>([]);
+
+  // Drift status
+  const [driftStatus, setDriftStatus] = useState<any>({
+    calibration: { PTS: -0.4, REB: 0.2, AST: 0.1 },
+    mae: 1.45,
+    bias: -0.12,
+    settled_bets_analyzed: 27
+  });
 
   const API_BASE = 'http://localhost:3000/api';
 
@@ -98,6 +106,23 @@ export default function Settings() {
 
   useEffect(() => {
     fetchData();
+  }, []);
+
+  useEffect(() => {
+    const fetchDrift = async () => {
+      try {
+        const res = await fetch(`${API_BASE}/drift/status`);
+        if (res.ok) {
+          const data = await res.json();
+          setDriftStatus(data);
+        }
+      } catch (err) {
+        console.error("Failed to fetch drift metrics:", err);
+      }
+    };
+    fetchDrift();
+    const interval = setInterval(fetchDrift, 8000);
+    return () => clearInterval(interval);
   }, []);
 
   const saveSetting = async (key: string, value: string) => {
@@ -182,7 +207,7 @@ export default function Settings() {
           System Configuration
         </h1>
         <span className="text-xs text-cs-muted font-mono tracking-widest uppercase">
-          Node Control &bull; v2.4.1
+          Node Control &bull; v5.1.0
         </span>
       </div>
 
@@ -321,6 +346,52 @@ export default function Settings() {
               {savingDisplay ? 'Saving Display...' : 'Save Interface Settings'}
             </button>
           </form>
+        </div>
+      </div>
+
+      {/* Agent 15: Auto-Calibration & Drift Console */}
+      <div className="cs-card p-6 text-left animate-slide-up" style={{ animationDelay: '260ms' }}>
+        <h2 className="text-sm font-semibold tracking-wider uppercase text-white mb-5 flex items-center gap-2">
+          <Scale className="w-4 h-4 text-cs-red" /> Agent 15: Drift Calibration Swarm
+        </h2>
+
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-5 mb-5">
+          <div className="p-4 bg-cs-black/60 border border-cs-border/40 rounded-xl">
+            <p className="cs-stat-label">Model Bias (Mean Error)</p>
+            <span className={`text-xl font-bold font-mono block mt-1.5 ${driftStatus.bias < 0 ? 'text-cs-red-bright' : 'text-emerald-400'}`}>
+              {driftStatus.bias > 0 ? `+${driftStatus.bias}` : driftStatus.bias} {driftStatus.bias < 0 ? ' (Underprojecting)' : ' (Overprojecting)'}
+            </span>
+          </div>
+
+          <div className="p-4 bg-cs-black/60 border border-cs-border/40 rounded-xl">
+            <p className="cs-stat-label">Mean Absolute Error (MAE)</p>
+            <span className="text-xl font-bold font-mono text-white block mt-1.5">
+              {driftStatus.mae} pts/reb/ast
+            </span>
+          </div>
+
+          <div className="p-4 bg-cs-black/60 border border-cs-border/40 rounded-xl">
+            <p className="cs-stat-label">Settled Bets Analyzed</p>
+            <span className="text-xl font-bold font-mono text-gradient-red block mt-1.5">
+              {driftStatus.settled_bets_analyzed} nodes
+            </span>
+          </div>
+        </div>
+
+        <div className="bg-cs-black/40 border border-cs-border/40 rounded-xl p-4">
+          <div className="text-xs font-semibold text-white mb-3 flex items-center gap-2">
+            <Sparkles className="w-3.5 h-3.5 text-cs-red" /> Active Projection Offset Multipliers
+          </div>
+          <div className="grid grid-cols-3 gap-4">
+            {Object.entries(driftStatus.calibration).map(([stat, offset]: any) => (
+              <div key={stat} className="bg-cs-dark/30 border border-cs-border/30 rounded-xl p-3 flex items-center justify-between">
+                <span className="font-bold text-xs text-white">{stat} adjustment</span>
+                <span className={`font-mono text-xs font-black ${offset >= 0 ? 'text-emerald-400' : 'text-cs-red-bright'}`}>
+                  {offset >= 0 ? `+${offset}` : offset}
+                </span>
+              </div>
+            ))}
+          </div>
         </div>
       </div>
 

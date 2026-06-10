@@ -74,6 +74,7 @@ export function seed(): void {
   sqlite.exec(`DROP TABLE IF EXISTS qualitative_events;`);
   sqlite.exec(`DROP TABLE IF EXISTS agent_context_store;`);
   sqlite.exec(`DROP TABLE IF EXISTS decision_audit;`);
+  sqlite.exec(`DROP TABLE IF EXISTS hedging_opportunities;`);
 
   sqlite.exec(`
     CREATE TABLE IF NOT EXISTS players (
@@ -159,6 +160,21 @@ export function seed(): void {
       output_payload TEXT,
       confidence REAL,
       timestamp INTEGER NOT NULL
+    );
+  `);
+
+  sqlite.exec(`
+    CREATE TABLE IF NOT EXISTS hedging_opportunities (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      bet_id INTEGER NOT NULL,
+      hedged_player TEXT NOT NULL,
+      original_line REAL NOT NULL,
+      original_odds INTEGER NOT NULL,
+      live_line REAL NOT NULL,
+      live_odds INTEGER NOT NULL,
+      potential_profit REAL NOT NULL,
+      hedge_instructions TEXT NOT NULL,
+      created_at INTEGER NOT NULL
     );
   `);
 
@@ -467,6 +483,43 @@ export function seed(): void {
     console.log(`✓ Seeded ${sampleAudits.length} decision audit entries`);
   } else {
     console.log(`⏭ Decision audit already seeded (${auditCount.cnt} rows)`);
+  }
+
+  // ── Seed hedging opportunities ───────────────────────────────────────────
+  const hedgeCount = sqlite.prepare('SELECT COUNT(*) as cnt FROM hedging_opportunities').get() as { cnt: number };
+  if (hedgeCount.cnt === 0) {
+    const insertHedge = sqlite.prepare(`
+      INSERT INTO hedging_opportunities (bet_id, hedged_player, original_line, original_odds, live_line, live_odds, potential_profit, hedge_instructions, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    const tx = sqlite.transaction(() => {
+      insertHedge.run(
+        27, // Bet ID
+        "Caitlin Clark",
+        8.5,
+        -110,
+        9.5,
+        +110,
+        14.50,
+        "Bet UNDER 9.5 AST @ +110 to lock in a middle opportunity between 8.5 and 9.5 AST.",
+        Date.now() - 3600000
+      );
+      insertHedge.run(
+        1, // Bet ID
+        "A'ja Wilson",
+        22.5,
+        -110,
+        20.5,
+        +200,
+        28.00,
+        "Bet UNDER 20.5 PTS @ +200 to establish an arbitrage middle with +28.00 EV.",
+        Date.now() - 1800000
+      );
+    });
+    tx();
+    console.log(`✓ Seeded 2 hedging opportunities`);
+  } else {
+    console.log(`⏭ Hedging opportunities already seeded (${hedgeCount.cnt} rows)`);
   }
 
   sqlite.close();

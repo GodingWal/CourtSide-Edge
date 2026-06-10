@@ -78,3 +78,18 @@ export const decision_audit = sqliteTable('decision_audit', {
   timestamp: integer('timestamp').notNull(),
 });
 
+// ── Hedging Opportunities (Agent 16 Dynamic Hedging Oracle) ───────────────────
+export const hedging_opportunities = sqliteTable('hedging_opportunities', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  bet_id: integer('bet_id').notNull(),
+  hedged_player: text('hedged_player').notNull(),
+  original_line: real('original_line').notNull(),
+  original_odds: integer('original_odds').notNull(),
+  live_line: real('live_line').notNull(),
+  live_odds: integer('live_odds').notNull(),
+  potential_profit: real('potential_profit').notNull(),
+  hedge_instructions: text('hedge_instructions').notNull(),
+  created_at: integer('created_at').notNull(),
+});
+
+

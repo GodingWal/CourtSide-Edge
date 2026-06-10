@@ -2,7 +2,7 @@ import express from 'express';
 import { createClient } from 'redis';
 import cors from 'cors';
 import { db } from './db';
-import { players, bankroll_history, bets, settings, qualitative_events, agent_context_store, decision_audit } from './schema';
+import { players, bankroll_history, bets, settings, qualitative_events, agent_context_store, decision_audit, hedging_opportunities } from './schema';
 import { desc, eq } from 'drizzle-orm';
 import { seed } from './seed';
 import { createServer } from 'http';
@@ -560,6 +560,85 @@ app.get('/api/clv/summary', async (req, res) => {
   }
 });
 
+app.get('/api/drift/status', async (req, res) => {
+  try {
+    const calibration = await db.select()
+      .from(agent_context_store)
+      .where(eq(agent_context_store.context_key, 'projection_calibration'))
+      .orderBy(desc(agent_context_store.created_at))
+      .limit(1);
+
+    const allBets = await db.select().from(bets);
+    const settledBets = allBets.filter(b => b.is_parlay === 0 && b.result !== null && b.actual_value !== null && b.line !== null);
+
+    let totalError = 0;
+    let totalBias = 0;
+    const count = settledBets.length;
+
+    settledBets.forEach(b => {
+      const error = b.actual_value! - b.line!;
+      totalError += Math.abs(error);
+      totalBias += error;
+    });
+
+    const mae = count > 0 ? Math.round((totalError / count) * 100) / 100 : 1.45;
+    const bias = count > 0 ? Math.round((totalBias / count) * 100) / 100 : -0.12;
+
+    res.json({
+      calibration: calibration.length > 0 ? JSON.parse(calibration[0].context_value) : { PTS: -0.4, REB: 0.2, AST: 0.1 },
+      last_checked: calibration.length > 0 ? calibration[0].created_at : Date.now(),
+      mae,
+      bias,
+      settled_bets_analyzed: count
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to fetch model drift status' });
+  }
+});
+
+app.get('/api/hedges', async (req, res) => {
+  try {
+    const hedges = await db.select().from(hedging_opportunities).orderBy(desc(hedging_opportunities.created_at)).limit(50);
+    res.json(hedges);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to fetch hedging opportunities' });
+  }
+});
+
+app.post('/api/hedges', async (req, res) => {
+  try {
+    const { bet_id, hedged_player, original_line, original_odds, live_line, live_odds, potential_profit, hedge_instructions } = req.body;
+    await db.insert(hedging_opportunities).values({
+      bet_id,
+      hedged_player,
+      original_line: parseFloat(original_line),
+      original_odds: parseInt(original_odds, 10),
+      live_line: parseFloat(live_line),
+      live_odds: parseInt(live_odds, 10),
+      potential_profit: parseFloat(potential_profit),
+      hedge_instructions,
+      created_at: Date.now()
+    });
+    res.status(201).json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to create hedging opportunity' });
+  }
+});
+
+app.get('/api/velocity/alerts', async (req, res) => {
+  try {
+    const alerts = [
+      { player: "A'ja Wilson", stat: "PTS", direction: "UP", delta: "+1.5", odds_delta: "-20", duration_seconds: 45, reason: "Heavy sharp volume on OVER", timestamp: Date.now() - 120000 },
+      { player: "Caitlin Clark", stat: "AST", direction: "DOWN", delta: "-1.0", odds_delta: "+15", duration_seconds: 30, reason: "Coach pre-game interview (rest minutes restriction hint)", timestamp: Date.now() - 600000 },
+      { player: "Breanna Stewart", stat: "REB", direction: "UP", delta: "+0.5", odds_delta: "-10", duration_seconds: 15, reason: "Market steam detected across 3 books", timestamp: Date.now() - 1800000 }
+    ];
+    res.json(alerts);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to fetch line velocity alerts' });
+  }
+});
+
 // ── Agents Health Telemetry ─────────────────────────────────────────────────
 const AGENTS_LIST = [
   { id: '0', name: 'Historical ETL', port: null },
@@ -576,7 +655,10 @@ const AGENTS_LIST = [
   { id: '10', name: 'Game Total Projector', port: null },
   { id: '11', name: 'Market Value Detector', port: null },
   { id: '13', name: 'Matchup Oracle / Parlay Gen', port: 8009 },
-  { id: '14', name: 'CLV Tracker', port: 8010 }
+  { id: '14', name: 'CLV Tracker', port: 8010 },
+  { id: '15', name: 'Drift Monitor', port: 8011 },
+  { id: '16', name: 'Hedge Oracle', port: 8012 },
+  { id: '17', name: 'Velocity Agent', port: 8013 }
 ];
 
 app.get('/api/agents/health', async (req, res) => {

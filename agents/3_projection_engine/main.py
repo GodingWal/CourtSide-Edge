@@ -54,21 +54,31 @@ def on_live_odds(message):
             enrichments["roster_impact"] = value.get("impact", "") if isinstance(value, dict) else ""
             logger.info(f"  → Context from {agent}: Roster alert - {enrichments['roster_impact']}")
     
+    # Read global calibration from Agent 15 (Drift Monitor)
+    global_calib = context.read_context_key("GLOBAL", "Agent_15", "projection_calibration")
+    calib_offset = 0.0
+    if global_calib and isinstance(global_calib, dict) and "value" in global_calib:
+        calib_offset = global_calib["value"].get("PTS", 0.0)
+        logger.info(f"  → Applied Agent 15 global calibration offset for PTS: {calib_offset}")
+
     # Run full ensemble with enriched context
     game_context = {**message, **enrichments}
     proj = ensemble.run_projection("player_mock_id", "LVA", game_context)
+    
+    if calib_offset != 0.0:
+        proj["projected_points"] = round(proj["projected_points"] + calib_offset, 2)
     
     response = {
         "source": "Agent 3",
         "type": "true_projection",
         "data": proj,
-        "context_used": list(enrichments.keys()),
+        "context_used": list(enrichments.keys()) + (["global_calibration"] if calib_offset != 0.0 else []),
         "confidence": 0.85 if len(enrichments) > 0 else 0.70,
         "sample_size": len(shared_context),
         "decay_seconds": 600,
         "timestamp": time.time()
     }
-    logger.info(f"Publishing to channel_true_projections (used {len(enrichments)} context enrichments)...")
+    logger.info(f"Publishing to channel_true_projections (used {len(enrichments)} context enrichments + calibration={calib_offset})...")
     if pubsub:
         pubsub.publish("channel_true_projections", response)
 

@@ -106,7 +106,7 @@ function AppShell() {
             </h1>
             <span className="hidden h-4 w-px bg-cs-border/40 sm:block" />
             <span className="hidden text-xs text-cs-muted sm:block">
-              v2.4.1
+              v5.0.0
             </span>
           </div>
 
