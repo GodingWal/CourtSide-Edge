@@ -115,7 +115,8 @@ export function seed(): void {
       opposing_team TEXT,
       notes TEXT,
       closing_odds INTEGER,
-      clv_pct REAL
+      clv_pct REAL,
+      is_hedge INTEGER
     );
   `);
 
@@ -226,8 +227,8 @@ export function seed(): void {
   const betCount = sqlite.prepare('SELECT COUNT(*) as cnt FROM bets').get() as { cnt: number };
   if (betCount.cnt === 0) {
     const insert = sqlite.prepare(`
-      INSERT INTO bets (parent_id, is_parlay, player, stat, line, over_under, book_odds, true_odds, edge_pct, stake, result, actual_value, profit_loss, placed_at, settled_at, opposing_team, notes, closing_odds, clv_pct)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO bets (parent_id, is_parlay, player, stat, line, over_under, book_odds, true_odds, edge_pct, stake, result, actual_value, profit_loss, placed_at, settled_at, opposing_team, notes, closing_odds, clv_pct, is_hedge)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
     const now = Date.now();
     const dayMs = 86400000;
@@ -282,7 +283,7 @@ export function seed(): void {
         insert.run(
           null, 0, player.name, stat, line, overUnder, bookOdds, trueOdds, edgePct,
           stake, result, actualValue, profitLoss, placedAt, settledAt,
-          opposingTeam, notes, closingOdds, clvPct
+          opposingTeam, notes, closingOdds, clvPct, 0
         );
       }
 
@@ -290,33 +291,58 @@ export function seed(): void {
       const parlay1Placed = now - 5 * dayMs;
       const parlay1Settled = parlay1Placed + 4 * 3600000;
       const parent1Res = insert.run(
-        null, 1, null, null, null, null, 260, 0.55, 8.5, 100, 'WIN', null, 260.00, parlay1Placed, parlay1Settled, null, '2-Leg Parlay (Stewart + Wilson)', 280, 3.5
+        null, 1, null, null, null, null, 260, 0.55, 8.5, 100, 'WIN', null, 260.00, parlay1Placed, parlay1Settled, null, '2-Leg Parlay (Stewart + Wilson)', 280, 3.5, 0
       );
       const parent1Id = parent1Res.lastInsertRowid as number;
 
       // Leg 1 of Parlay 1
       insert.run(
-        parent1Id, 0, 'Breanna Stewart', 'PTS', 22.5, 'OVER', -110, 0.58, 6.2, 0, 'WIN', 25, 0, parlay1Placed, parlay1Settled, 'LVA', 'Leg 1', -118, 4.1
+        parent1Id, 0, 'Breanna Stewart', 'PTS', 22.5, 'OVER', -110, 0.58, 6.2, 0, 'WIN', 25, 0, parlay1Placed, parlay1Settled, 'LVA', 'Leg 1', -118, 4.1, 0
       );
       // Leg 2 of Parlay 1
       insert.run(
-        parent1Id, 0, "A'ja Wilson", 'REB', 9.5, 'OVER', -115, 0.60, 9.1, 0, 'WIN', 12, 0, parlay1Placed, parlay1Settled, 'NYL', 'Leg 2', -125, 5.2
+        parent1Id, 0, "A'ja Wilson", 'REB', 9.5, 'OVER', -115, 0.60, 9.1, 0, 'WIN', 12, 0, parlay1Placed, parlay1Settled, 'NYL', 'Leg 2', -125, 5.2, 0
       );
 
       // Seed Parlay 2: Pending
       const parlay2Placed = now - 2 * 3600000; // 2 hours ago
       const parent2Res = insert.run(
-        null, 1, null, null, null, null, 320, 0.48, 11.2, 50, null, null, null, parlay2Placed, null, null, 'Active 2-Leg Parlay (Clark + Ionescu)', null, null
+        null, 1, null, null, null, null, 320, 0.48, 11.2, 50, null, null, null, parlay2Placed, null, null, 'Active 2-Leg Parlay (Clark + Ionescu)', null, null, 0
       );
       const parent2Id = parent2Res.lastInsertRowid as number;
 
       // Leg 1 of Parlay 2
       insert.run(
-        parent2Id, 0, 'Caitlin Clark', 'AST', 8.5, 'OVER', -110, 0.52, 8.5, 0, null, null, null, parlay2Placed, null, 'CON', 'Leg 1', null, null
+        parent2Id, 0, 'Caitlin Clark', 'AST', 8.5, 'OVER', -110, 0.52, 8.5, 0, null, null, null, parlay2Placed, null, 'CON', 'Leg 1', null, null, 0
       );
       // Leg 2 of Parlay 2
       insert.run(
-        parent2Id, 0, 'Sabrina Ionescu', 'PTS', 18.5, 'OVER', -115, 0.55, 12.0, 0, null, null, null, parlay2Placed, null, 'PHX', 'Leg 2', null, null
+        parent2Id, 0, 'Sabrina Ionescu', 'PTS', 18.5, 'OVER', -115, 0.55, 12.0, 0, null, null, null, parlay2Placed, null, 'PHX', 'Leg 2', null, null, 0
+      );
+
+      // Seed a sample hedge wager (placed by Agent 20 for Bet ID 25/Clark)
+      const clarkHedgePlaced = now - 1 * 3600000;
+      insert.run(
+        25, // parent_id: reference to original Clark bet
+        0,
+        'Caitlin Clark',
+        'AST',
+        9.5,
+        'UNDER',
+        110,
+        0.45,
+        5.2,
+        85.00, // stake
+        null, // result: pending
+        null,
+        null,
+        clarkHedgePlaced,
+        null,
+        'CON',
+        'Agent 20: Auto-Hedge placed to lock in middle opportunity',
+        null,
+        null,
+        1 // is_hedge
       );
     });
     tx();

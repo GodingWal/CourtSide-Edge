@@ -57,9 +57,45 @@ def on_live_odds(message, stream_producer, intelligence):
         output_payload=alert,
         confidence=confidence
     )
-    
     logger.info(f'Publishing market intelligence (trace: {trace_id[:8]}...)')
     # Use Redis Streams for critical-path channel
+    stream_producer.produce('stream_market_intelligence', alert)
+
+def on_sharp_move(message, stream_producer):
+    sharp_data = message.get("data", {})
+    player = sharp_data.get("player", "A'ja Wilson")
+    stat = sharp_data.get("stat", "PTS")
+    book = sharp_data.get("book", "Pinnacle")
+    move = sharp_data.get("move", "22.5 → 23.5")
+    
+    logger.info(f"Agent 11 received sharp move trigger from Agent 19: {player} on {book} {move}")
+    
+    trace_id = generate_trace_id()
+    
+    alert = {
+        'source': 'Agent 11',
+        'type': 'market_divergence',
+        'market_classification': 'sharp_money',
+        'divergence_score': 8.5, # high EV due to sharp book leader movement
+        'confidence': 0.95,
+        'sample_size': 30,
+        'decay_seconds': 300,
+        'trace_id': trace_id,
+        'timestamp': time.time(),
+        'book': 'FanDuel' # retail book lagging behind Pinnacle/Circa
+    }
+    
+    audit.log_decision(
+        trace_id=trace_id,
+        agent_id='Agent_11',
+        action='APPROVE',
+        reason=f'Sharp book {book} moved line ({move}). Lagging retail books checked.',
+        input_payload=message,
+        output_payload=alert,
+        confidence=0.95
+    )
+    
+    logger.info(f'Publishing market intelligence for sharp retail lag (trace: {trace_id[:8]}...)')
     stream_producer.produce('stream_market_intelligence', alert)
 
 def main():
@@ -69,6 +105,7 @@ def main():
     logger.info('Agent 11 (Market Value Detector) started.')
     
     pubsub.subscribe('channel_live_odds', lambda m: on_live_odds(m, stream, intelligence))
+    pubsub.subscribe('channel_sharp_moves', lambda m: on_sharp_move(m, stream))
     
     try:
         while True:

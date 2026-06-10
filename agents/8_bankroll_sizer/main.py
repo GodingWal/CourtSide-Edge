@@ -89,7 +89,30 @@ class BankrollSizer:
         if bet_fraction <= 0:
             return 0.0, 'NEGATIVE_EV'
             
-        return round(self.bankroll * bet_fraction, 2), regime
+        base_size = round(self.bankroll * bet_fraction, 2)
+        
+        # Cap based on Agent 18 (Liquidity Oracle) limits if available
+        book = edge_data.get('book', 'FanDuel')
+        max_book_limit = 250.0 # default fallback
+        import urllib.request
+        import json
+        try:
+            with urllib.request.urlopen("http://localhost:8014/limits", timeout=1) as response:
+                limits = json.loads(response.read().decode())
+                if book in limits:
+                    max_book_limit = limits[book].get("max_limit", 250.0)
+                    logger.info(f"  → Fetched limit for {book} from Agent 18: ${max_book_limit}")
+        except Exception:
+            # Fallback to local default limits if Agent 18 is offline
+            logger.warning("Agent 18 limits offline. Using default book limits.")
+            local_limits = {"Pinnacle": 2000.0, "Circa": 1500.0, "FanDuel": 250.0, "DraftKings": 200.0}
+            max_book_limit = local_limits.get(book, 250.0)
+
+        final_size = min(base_size, max_book_limit)
+        if final_size < base_size:
+            logger.info(f"  → Sizing capped by book limit from ${base_size} to ${final_size} on {book}")
+            
+        return final_size, regime
 
 
 def on_approved_edge(msg_id, message, stream_producer, sizer):

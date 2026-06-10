@@ -639,6 +639,32 @@ app.get('/api/velocity/alerts', async (req, res) => {
   }
 });
 
+app.get('/api/liquidity/limits', async (req, res) => {
+  res.json([
+    { book: 'Pinnacle', type: 'SHARP_MAKER', limit: 2000 },
+    { book: 'Circa', type: 'SHARP_MAKER', limit: 1500 },
+    { book: 'FanDuel', type: 'RETAIL_TAKER', limit: 250 },
+    { book: 'DraftKings', type: 'RETAIL_TAKER', limit: 200 },
+    { book: 'BetMGM', type: 'RETAIL_TAKER', limit: 150 }
+  ]);
+});
+
+app.get('/api/sharp/consensus', async (req, res) => {
+  res.json([
+    { player: "A'ja Wilson", stat: "PTS", book: "Pinnacle", move: "22.5 → 23.5", direction: "UP", timestamp: Date.now() - 30000 },
+    { player: "Caitlin Clark", stat: "AST", book: "Circa", move: "8.5 → 7.5", direction: "DOWN", timestamp: Date.now() - 150000 },
+    { player: "Breanna Stewart", stat: "REB", book: "Pinnacle", move: "9.5 → 10.5", direction: "UP", timestamp: Date.now() - 600000 }
+  ]);
+});
+
+app.get('/api/live/rotations', async (req, res) => {
+  res.json([
+    { player: "A'ja Wilson", fouls: 3, period: "2nd Quarter", adjustment: "-4.5 min", status: "FOUL_TROUBLE" },
+    { player: "Angel Reese", fouls: 4, period: "3rd Quarter", adjustment: "-6.0 min", status: "SEVERE_FOUL_TROUBLE" },
+    { player: "Caitlin Clark", fouls: 1, period: "1st Quarter", adjustment: "0.0 min", status: "NORMAL" }
+  ]);
+});
+
 // ── Agents Health Telemetry ─────────────────────────────────────────────────
 const AGENTS_LIST = [
   { id: '0', name: 'Historical ETL', port: null },
@@ -658,7 +684,11 @@ const AGENTS_LIST = [
   { id: '14', name: 'CLV Tracker', port: 8010 },
   { id: '15', name: 'Drift Monitor', port: 8011 },
   { id: '16', name: 'Hedge Oracle', port: 8012 },
-  { id: '17', name: 'Velocity Agent', port: 8013 }
+  { id: '17', name: 'Velocity Agent', port: 8013 },
+  { id: '18', name: 'Liquidity Oracle', port: 8014 },
+  { id: '19', name: 'Sharp Profiler', port: 8015 },
+  { id: '20', name: 'Hedge Executor', port: 8016 },
+  { id: '21', name: 'Rotation Tracker', port: 8017 }
 ];
 
 app.get('/api/agents/health', async (req, res) => {

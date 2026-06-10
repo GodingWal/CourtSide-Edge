@@ -35,6 +35,7 @@ export const bets = sqliteTable('bets', {
   notes: text('notes'),
   closing_odds: integer('closing_odds'), // Closing line odds at game time (Agent 14 CLV Tracker)
   clv_pct: real('clv_pct'), // Closing Line Value percentage (positive = sharp)
+  is_hedge: integer('is_hedge'), // 1 if this bet is an automated hedge placed by Agent 20
 });
 
 export const settings = sqliteTable('settings', {

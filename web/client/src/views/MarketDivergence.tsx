@@ -46,6 +46,7 @@ function RadarPulse() {
 export default function MarketDivergence() {
   const [messages, setMessages] = useState<any[]>([]);
   const [velocityAlerts, setVelocityAlerts] = useState<any[]>([]);
+  const [sharpConsensus, setSharpConsensus] = useState<any[]>([]);
 
   /* SSE listener */
   useEffect(() => {
@@ -78,6 +79,24 @@ export default function MarketDivergence() {
     };
     fetchVelocity();
     const interval = setInterval(fetchVelocity, 5000);
+    return () => clearInterval(interval);
+  }, []);
+
+  /* Fetch sharp consensus alerts */
+  useEffect(() => {
+    const fetchSharp = async () => {
+      try {
+        const res = await fetch('http://localhost:3000/api/sharp/consensus');
+        if (res.ok) {
+          const data = await res.json();
+          setSharpConsensus(data);
+        }
+      } catch (err) {
+        console.error("Failed to fetch sharp consensus:", err);
+      }
+    };
+    fetchSharp();
+    const interval = setInterval(fetchSharp, 5000);
     return () => clearInterval(interval);
   }, []);
 
@@ -290,6 +309,44 @@ export default function MarketDivergence() {
                   <pre className="text-cs-muted text-xs leading-relaxed overflow-hidden text-ellipsis whitespace-pre-wrap break-all font-mono">
                     {JSON.stringify(m.message, null, 2)}
                   </pre>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+
+        {/* Agent 19: Sharp Line Movement Alert Feed */}
+        <div className="lg:col-span-1 cs-card p-6 flex flex-col space-y-4 animate-slide-up" style={{ animationDelay: '450ms' }}>
+          <div className="border-b border-cs-border/40 pb-3 flex items-center justify-between">
+            <h2 className="text-base font-bold text-white flex items-center gap-2">
+              <TrendingUp className="w-4 h-4 text-cs-red" />
+              Agent 19: Sharp Consensus Feed
+            </h2>
+            <span className="text-[10px] bg-cs-red/20 text-cs-red-bright px-2 py-0.5 rounded font-mono font-bold">
+              SHARP MOVES
+            </span>
+          </div>
+
+          <div className="flex-1 overflow-y-auto space-y-3 max-h-[350px] scrollbar-thin scrollbar-thumb-cs-border scrollbar-track-transparent">
+            {sharpConsensus.length === 0 ? (
+              <p className="text-xs text-cs-muted font-mono text-center py-4">No sharp line moves detected.</p>
+            ) : (
+              sharpConsensus.map((item, idx) => (
+                <div key={idx} className="bg-cs-dark/30 border border-cs-border/30 rounded-xl p-3.5 hover:border-cs-border/60 transition-colors">
+                  <div className="flex items-center justify-between">
+                    <span className="font-bold text-white text-sm">{item.player}</span>
+                    <span className="text-[10px] text-cs-muted bg-cs-dark px-1.5 py-0.2 rounded font-mono">{item.stat}</span>
+                  </div>
+                  <div className="flex items-center justify-between mt-2">
+                    <div className="text-xs text-cs-muted font-mono flex items-center gap-1.5">
+                      <span className="text-cs-muted bg-cs-dark/40 px-1 py-0.5 rounded font-bold">{item.book}</span>
+                      <span>{item.move}</span>
+                    </div>
+                    <span className={`text-xs font-mono font-bold flex items-center gap-0.5 ${item.direction === 'UP' ? 'text-emerald-400' : 'text-cs-red-bright'}`}>
+                      {item.direction === 'UP' ? <ArrowUpRight className="w-3.5 h-3.5" /> : <ArrowDownRight className="w-3.5 h-3.5" />}
+                      {item.direction}
+                    </span>
+                  </div>
                 </div>
               ))
             )}

@@ -89,6 +89,8 @@ function DrawdownGauge({ percentage = 34 }: { percentage?: number }) {
 export default function BankrollDiagnostics() {
   const isHealthy = true;
   const [hedges, setHedges] = useState<any[]>([]);
+  const [limits, setLimits] = useState<any[]>([]);
+  const [recentHedges, setRecentHedges] = useState<any[]>([]);
 
   useEffect(() => {
     const fetchHedges = async () => {
@@ -105,6 +107,40 @@ export default function BankrollDiagnostics() {
     fetchHedges();
     const interval = setInterval(fetchHedges, 8000);
     return () => clearInterval(interval);
+  }, []);
+
+  useEffect(() => {
+    const fetchLimits = async () => {
+      try {
+        const res = await fetch('http://localhost:3000/api/liquidity/limits');
+        if (res.ok) {
+          const data = await res.json();
+          setLimits(data);
+        }
+      } catch (err) {
+        console.error("Failed to fetch limits:", err);
+      }
+    };
+    const fetchRecentHedges = async () => {
+      try {
+        const res = await fetch('http://localhost:3000/api/bets');
+        if (res.ok) {
+          const data = await res.json();
+          const hedgeBets = data.filter((b: any) => b.is_hedge === 1);
+          setRecentHedges(hedgeBets);
+        }
+      } catch (err) {
+        console.error("Failed to fetch recent hedges:", err);
+      }
+    };
+    fetchLimits();
+    fetchRecentHedges();
+    const intervalLimits = setInterval(fetchLimits, 10000);
+    const intervalHedges = setInterval(fetchRecentHedges, 8000);
+    return () => {
+      clearInterval(intervalLimits);
+      clearInterval(intervalHedges);
+    };
   }, []);
 
   return (
@@ -247,68 +283,149 @@ export default function BankrollDiagnostics() {
         </div>
       </div>
 
-      {/* Dynamic Hedging & Arbitrage Console */}
-      <div className="cs-card p-6 mt-6 animate-slide-up" style={{ animationDelay: '240ms' }}>
-        <div className="border-b border-cs-border/40 pb-4 flex items-center justify-between">
-          <div className="flex items-center gap-2.5">
-            <Sparkles className="w-5 h-5 text-cs-red" />
-            <div>
-              <h2 className="text-sm font-semibold text-white uppercase tracking-wider">Agent 16: Dynamic Hedging & Arbitrage Oracle</h2>
-              <p className="text-[10px] text-cs-muted mt-0.5 font-mono">MITIGATE VARIANCE & LOCK IN EV PROFIT</p>
+      {/* ── Hedging & Liquidity Console Grid ─────────────────────────── */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mt-6">
+        {/* Dynamic Hedging & Arbitrage Console */}
+        <div className="lg:col-span-2 cs-card p-6 animate-slide-up" style={{ animationDelay: '240ms' }}>
+          <div className="border-b border-cs-border/40 pb-4 flex items-center justify-between">
+            <div className="flex items-center gap-2.5">
+              <Sparkles className="w-5 h-5 text-cs-red" />
+              <div>
+                <h2 className="text-sm font-semibold text-white uppercase tracking-wider">Agent 16: Dynamic Hedging & Arbitrage Oracle</h2>
+                <p className="text-[10px] text-cs-muted mt-0.5 font-mono">MITIGATE VARIANCE & LOCK IN EV PROFIT</p>
+              </div>
             </div>
+            <span className="text-[9px] bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 px-2.5 py-0.5 rounded font-mono font-bold">
+              LOCKS GENERATED
+            </span>
           </div>
-          <span className="text-[9px] bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 px-2.5 py-0.5 rounded font-mono font-bold">
-            LOCKS GENERATED
-          </span>
-        </div>
 
-        <div className="overflow-x-auto mt-4">
-          <table className="w-full text-left text-xs">
-            <thead>
-              <tr className="border-b border-cs-border/30 text-cs-muted uppercase font-mono text-[9px] tracking-wider">
-                <th className="pb-3 px-3">Player / Matchup</th>
-                <th className="pb-3 px-3 text-center">Original Wager</th>
-                <th className="pb-3 px-3 text-center">Live Book Line</th>
-                <th className="pb-3 px-3 text-right">Lock-in Profit</th>
-                <th className="pb-3 px-3">Hedge Strategy / Action</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-cs-border/20">
-              {hedges.length === 0 ? (
-                <tr>
-                  <td colSpan={5} className="py-8 text-center text-cs-muted font-mono text-[11px]">
-                    No active arbitrage or hedging opportunities detected. Scanning live feeds...
-                  </td>
+          <div className="overflow-x-auto mt-4">
+            <table className="w-full text-left text-xs">
+              <thead>
+                <tr className="border-b border-cs-border/30 text-cs-muted uppercase font-mono text-[9px] tracking-wider">
+                  <th className="pb-3 px-3">Player / Matchup</th>
+                  <th className="pb-3 px-3 text-center">Original Wager</th>
+                  <th className="pb-3 px-3 text-center">Live Book Line</th>
+                  <th className="pb-3 px-3 text-right">Lock-in Profit</th>
+                  <th className="pb-3 px-3">Hedge Strategy / Action</th>
                 </tr>
-              ) : (
-                hedges.map((hedge, idx) => (
-                  <tr key={hedge.id || idx} className="hover:bg-cs-dark/20 transition-colors">
-                    <td className="py-4 px-3">
-                      <div className="font-bold text-white text-sm">{hedge.hedged_player}</div>
-                      <div className="text-[10px] text-cs-muted font-mono">Bet ID: #{hedge.bet_id}</div>
-                    </td>
-                    <td className="py-4 px-3 text-center font-mono">
-                      <div className="text-white font-bold">{hedge.original_line}</div>
-                      <div className="text-[10px] text-cs-muted">{hedge.original_odds > 0 ? `+${hedge.original_odds}` : hedge.original_odds}</div>
-                    </td>
-                    <td className="py-4 px-3 text-center font-mono">
-                      <div className="text-emerald-400 font-bold">{hedge.live_line}</div>
-                      <div className="text-[10px] text-cs-muted">{hedge.live_odds > 0 ? `+${hedge.live_odds}` : hedge.live_odds}</div>
-                    </td>
-                    <td className="py-4 px-3 text-right font-mono text-emerald-400 font-bold text-sm">
-                      +${hedge.potential_profit.toFixed(2)}
-                    </td>
-                    <td className="py-4 px-3 max-w-sm">
-                      <div className="text-white flex items-start gap-1.5 leading-relaxed bg-cs-black/40 border border-cs-border/40 p-2.5 rounded-lg text-[11px] font-mono">
-                        <AlertCircle className="w-3.5 h-3.5 text-cs-red-bright shrink-0 mt-0.5" />
-                        <span>{hedge.hedge_instructions}</span>
-                      </div>
+              </thead>
+              <tbody className="divide-y divide-cs-border/20">
+                {hedges.length === 0 ? (
+                  <tr>
+                    <td colSpan={5} className="py-8 text-center text-cs-muted font-mono text-[11px]">
+                      No active arbitrage or hedging opportunities detected. Scanning live feeds...
                     </td>
                   </tr>
+                ) : (
+                  hedges.map((hedge, idx) => (
+                    <tr key={hedge.id || idx} className="hover:bg-cs-dark/20 transition-colors">
+                      <td className="py-4 px-3">
+                        <div className="font-bold text-white text-sm">{hedge.hedged_player}</div>
+                        <div className="text-[10px] text-cs-muted font-mono">Bet ID: #{hedge.bet_id}</div>
+                      </td>
+                      <td className="py-4 px-3 text-center font-mono">
+                        <div className="text-white font-bold">{hedge.original_line}</div>
+                        <div className="text-[10px] text-cs-muted">{hedge.original_odds > 0 ? `+${hedge.original_odds}` : hedge.original_odds}</div>
+                      </td>
+                      <td className="py-4 px-3 text-center font-mono">
+                        <div className="text-emerald-400 font-bold">{hedge.live_line}</div>
+                        <div className="text-[10px] text-cs-muted">{hedge.live_odds > 0 ? `+${hedge.live_odds}` : hedge.live_odds}</div>
+                      </td>
+                      <td className="py-4 px-3 text-right font-mono text-emerald-400 font-bold text-sm">
+                        +${hedge.potential_profit.toFixed(2)}
+                      </td>
+                      <td className="py-4 px-3 max-w-sm">
+                        <div className="text-white flex items-start gap-1.5 leading-relaxed bg-cs-black/40 border border-cs-border/40 p-2.5 rounded-lg text-[11px] font-mono">
+                          <AlertCircle className="w-3.5 h-3.5 text-cs-red-bright shrink-0 mt-0.5" />
+                          <span>{hedge.hedge_instructions}</span>
+                        </div>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        {/* Right side widgets: Limits Grid and Recent Automated Hedge Executions */}
+        <div className="lg:col-span-1 space-y-6 flex flex-col">
+          {/* Sportsbook Limits & Liquidity */}
+          <div className="cs-card p-6 flex-1 animate-slide-up" style={{ animationDelay: '300ms' }}>
+            <div className="border-b border-cs-border/40 pb-4 flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <Shield className="w-5 h-5 text-cs-red" />
+                <div>
+                  <h2 className="text-sm font-semibold text-white uppercase tracking-wider">Agent 18: Sportsbook Limits</h2>
+                  <p className="text-[10px] text-cs-muted mt-0.5 font-mono">LIQUIDITY & BET LIMIT MONITOR</p>
+                </div>
+              </div>
+            </div>
+
+            <div className="space-y-3 mt-4">
+              {limits.length === 0 ? (
+                <p className="text-xs text-cs-muted font-mono text-center py-6">Loading sportsbook limits...</p>
+              ) : (
+                limits.map((lim, idx) => (
+                  <div key={idx} className="flex items-center justify-between bg-cs-black/40 border border-cs-border/30 rounded-xl p-3 hover:border-cs-border/60 transition-colors">
+                    <div>
+                      <div className="font-bold text-white text-sm">{lim.book}</div>
+                      <span className="text-[9px] text-cs-muted bg-cs-dark px-1.5 py-0.2 rounded font-mono font-bold tracking-wider">{lim.type}</span>
+                    </div>
+                    <div className="text-right">
+                      <div className="text-[9px] text-cs-muted font-mono">MAX LIMIT</div>
+                      <div className="text-sm font-black text-white font-mono">${lim.limit}</div>
+                    </div>
+                  </div>
                 ))
               )}
-            </tbody>
-          </table>
+            </div>
+          </div>
+
+          {/* Agent 20: Recent Automated Hedge Executions */}
+          <div className="cs-card p-6 flex-1 animate-slide-up" style={{ animationDelay: '360ms' }}>
+            <div className="border-b border-cs-border/40 pb-4 flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <Sparkles className="w-5 h-5 text-cs-red" />
+                <div>
+                  <h2 className="text-sm font-semibold text-white uppercase tracking-wider">Agent 20: Hedge Executions</h2>
+                  <p className="text-[10px] text-cs-muted mt-0.5 font-mono">AUTOMATED ARBITRAGE ENTRIES</p>
+                </div>
+              </div>
+            </div>
+
+            <div className="space-y-3 mt-4 max-h-[200px] overflow-y-auto scrollbar-thin scrollbar-thumb-cs-border">
+              {recentHedges.length === 0 ? (
+                <p className="text-xs text-cs-muted font-mono text-center py-6">No automated hedge executions recorded.</p>
+              ) : (
+                recentHedges.map((hedge, idx) => (
+                  <div key={idx} className="bg-cs-black/40 border border-cs-border/30 rounded-xl p-3 hover:border-cs-border/60 transition-colors">
+                    <div className="flex justify-between items-start">
+                      <div>
+                        <div className="font-bold text-white text-sm">{hedge.player}</div>
+                        <div className="text-[10px] text-cs-muted font-mono">{hedge.stat} &bull; {hedge.over_under} {hedge.line}</div>
+                      </div>
+                      <span className="text-[9px] font-mono font-bold px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/30">
+                        EXECUTED
+                      </span>
+                    </div>
+                    <div className="flex justify-between items-center mt-3 border-t border-cs-border/20 pt-2 font-mono">
+                      <div>
+                        <span className="text-[9px] text-cs-muted block">STAKE</span>
+                        <span className="text-xs text-white font-bold">${hedge.stake}</span>
+                      </div>
+                      <div className="text-right">
+                        <span className="text-[9px] text-cs-muted block">ODDS</span>
+                        <span className="text-xs text-white font-bold">{hedge.book_odds > 0 ? `+${hedge.book_odds}` : hedge.book_odds}</span>
+                      </div>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
         </div>
       </div>
     </div>

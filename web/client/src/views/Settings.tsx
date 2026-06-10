@@ -27,6 +27,7 @@ export default function Settings() {
 
   // Agents status
   const [agents, setAgents] = useState<AgentHealth[]>([]);
+  const [rotations, setRotations] = useState<any[]>([]);
 
   // Drift status
   const [driftStatus, setDriftStatus] = useState<any>({
@@ -101,7 +102,15 @@ export default function Settings() {
     { id: '9', name: 'News Sentiment', status: 'online', port: null },
     { id: '10', name: 'Game Total Projector', status: 'online', port: null },
     { id: '11', name: 'Market Value Detector', status: 'online', port: null },
-    { id: '13', name: 'Matchup Oracle / Parlay Gen', status: 'online', port: 8009 }
+    { id: '13', name: 'Matchup Oracle / Parlay Gen', status: 'online', port: 8009 },
+    { id: '14', name: 'CLV Tracker', status: 'online', port: 8010 },
+    { id: '15', name: 'Drift Monitor', status: 'online', port: 8011 },
+    { id: '16', name: 'Hedge Oracle', status: 'online', port: 8012 },
+    { id: '17', name: 'Velocity Agent', status: 'online', port: 8013 },
+    { id: '18', name: 'Liquidity Oracle', status: 'online', port: 8014 },
+    { id: '19', name: 'Sharp Profiler', status: 'online', port: 8015 },
+    { id: '20', name: 'Hedge Executor', status: 'online', port: 8016 },
+    { id: '21', name: 'Rotation Tracker', status: 'online', port: 8017 }
   ];
 
   useEffect(() => {
@@ -122,6 +131,23 @@ export default function Settings() {
     };
     fetchDrift();
     const interval = setInterval(fetchDrift, 8000);
+    return () => clearInterval(interval);
+  }, []);
+
+  useEffect(() => {
+    const fetchRotations = async () => {
+      try {
+        const res = await fetch(`${API_BASE}/live/rotations`);
+        if (res.ok) {
+          const data = await res.json();
+          setRotations(data);
+        }
+      } catch (err) {
+        console.error("Failed to fetch rotations:", err);
+      }
+    };
+    fetchRotations();
+    const interval = setInterval(fetchRotations, 6000);
     return () => clearInterval(interval);
   }, []);
 
@@ -207,7 +233,7 @@ export default function Settings() {
           System Configuration
         </h1>
         <span className="text-xs text-cs-muted font-mono tracking-widest uppercase">
-          Node Control &bull; v5.1.0
+          Node Control &bull; v5.2.0
         </span>
       </div>
 
@@ -392,6 +418,39 @@ export default function Settings() {
               </div>
             ))}
           </div>
+        </div>
+      </div>
+
+      {/* Agent 21: Live Foul & Rotation Adjustments Dashboard */}
+      <div className="cs-card p-6 text-left animate-slide-up" style={{ animationDelay: '280ms' }}>
+        <h2 className="text-sm font-semibold tracking-wider uppercase text-white mb-5 flex items-center gap-2">
+          <Scale className="w-4 h-4 text-cs-red" /> Agent 21: Live Foul &amp; Rotation Adjustments
+        </h2>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
+          {rotations.length === 0 ? (
+            <p className="text-xs text-cs-muted font-mono py-4 col-span-3 text-center">Loading live rotation adjustments...</p>
+          ) : (
+            rotations.map((rot, idx) => (
+              <div key={idx} className="bg-cs-black/60 border border-cs-border/40 rounded-xl p-4 flex flex-col justify-between hover:border-cs-border/70 transition-colors">
+                <div className="flex justify-between items-start">
+                  <div>
+                    <h3 className="font-bold text-white text-sm">{rot.player}</h3>
+                    <p className="text-[10px] text-cs-muted font-mono">{rot.period} &bull; {rot.fouls} Fouls</p>
+                  </div>
+                  <span className={`text-[9px] font-bold px-2 py-0.5 rounded font-mono ${rot.status === 'SEVERE_FOUL_TROUBLE' ? 'bg-cs-red/20 text-cs-red-bright border border-cs-red/30' : rot.status === 'FOUL_TROUBLE' ? 'bg-amber-500/15 text-amber-400 border border-amber-500/30' : 'bg-cs-dark text-cs-muted border border-cs-border/20'}`}>
+                    {rot.status.replace(/_/g, ' ')}
+                  </span>
+                </div>
+                <div className="flex justify-between items-center mt-4 border-t border-cs-border/20 pt-3 font-mono">
+                  <span className="text-[10px] text-cs-muted">PROJECTION ADJ.</span>
+                  <span className={`text-xs font-black ${rot.adjustment.startsWith('-') ? 'text-cs-red-bright' : 'text-emerald-400'}`}>
+                    {rot.adjustment}
+                  </span>
+                </div>
+              </div>
+            ))
+          )}
         </div>
       </div>
 

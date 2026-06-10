@@ -1,6 +1,6 @@
 # CourtSideEdge: Real-Time WNBA Quantitative Analytics & Wager Terminal
 
-CourtSideEdge is an agentic sports-betting system built for real-time edge detection, portfolio risk sizers, referee telemetry analysis, and high-EV parlay formulation. It orchestrates a **17-agent decoupled microservice architecture** communicating via Redis Pub/Sub and Redis Streams, backing up to SQLite, and exposing live data via WebSockets and SSE to a premium dashboard.
+CourtSideEdge is an agentic sports-betting system built for real-time edge detection, portfolio risk sizers, referee telemetry analysis, and high-EV parlay formulation. It orchestrates a **21-agent decoupled microservice architecture** communicating via Redis Pub/Sub and Redis Streams, backing up to SQLite, and exposing live data via WebSockets and SSE to a premium dashboard.
 
 ---
 
@@ -71,7 +71,7 @@ graph TD
     Redis -->|Qualitative Event Logging| Backend
 ```
 
-### The 14-Agent Roster
+### The 21-Agent Roster
 
 | # | Agent | Role | Channel/Stream | Protocol |
 |---|-------|------|----------------|----------|
@@ -93,6 +93,10 @@ graph TD
 | 15 | **Drift Monitor** | Calculates rolling projection error (MAE/bias) and writes offset context | `/api/drift/status` | REST + Context |
 | 16 | **Hedge Oracle** | Computes locked-in EV hedging and arbitrage middle actions | `/api/hedges` | REST + SQL |
 | 17 | **Velocity Agent** | Monitors rate-of-change velocity anomalies in lines/odds | `channel_live_odds` | Pub/Sub |
+| 18 | **Liquidity Oracle** | Monitors and exposes max bet limits per sportsbook to prevent limit rejections | `/api/liquidity/limits` | REST |
+| 19 | **Sharp Profiler** | Tracks Pinnacle/Circa lines as leading indicator of retail lag bets | `/api/sharp/consensus` | REST + Pub/Sub |
+| 20 | **Hedge Executor** | Places automated counter-hedges in SQLite database for EV locks | `/api/hedges` | REST + SQL |
+| 21 | **Rotation Tracker** | Tracks fouls and live minutes adjustments to adjust projections | `/api/live/rotations` | REST + Context |
 
 ---
 
@@ -138,6 +142,22 @@ Agent 16 scans active bets against live lines to detect middle and lock-in profi
 
 ### Line Movement Velocity (Agent 17)
 Agent 17 calculates odds/line velocity delta per minute. Real-time anomalies are pushed to `channel_steam_alerts` and rendered on the market divergence feed.
+
+---
+
+## 2.2 Architecture Improvements (v5.2)
+
+### Sportsbook Limits & Liquidity Tracking (Agent 18)
+Agent 18 monitors sportsbook limits (e.g. Pinnacle, FanDuel, DraftKings) and registers active bet limits. The Bankroll Sizer (Agent 8) fetches these limits to scale stake sizes accordingly, preventing wager rejection.
+
+### Sharp Consensus Profiler (Agent 19)
+Agent 19 tracks line changes on sharp books (Pinnacle/Circa) and publishes consensus triggers. Agent 11 subscribes to these moves to immediately identify and execute retail sportsbook lag wagers.
+
+### Automated Hedge Executions (Agent 20)
+Agent 20 integrates with Agent 16's Hedging Oracle to automatically execute offsetting bets in the SQLite ledger when locked-in EV thresholds are crossed. All automated hedges are logged in the `bets` ledger with `is_hedge = 1`.
+
+### Live Rotations & Fouls Tracker (Agent 21)
+Agent 21 tracks game flow fouls and rotation changes. It publishes minutes adjustments directly to the shared context store, which Agent 3 reads to apply immediate projection reductions.
 
 ---
 

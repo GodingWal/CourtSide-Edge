@@ -57,6 +57,7 @@ export default function BetTracker() {
 
   // Expanded parlays tracking
   const [expandedParlays, setExpandedParlays] = useState<Record<number, boolean>>({});
+  const [expandedHedges, setExpandedHedges] = useState<Record<number, boolean>>({});
 
   // Settle modal states
   const [settlingBet, setSettlingBet] = useState<Bet | null>(null);
@@ -137,6 +138,13 @@ export default function BetTracker() {
 
   const toggleExpandParlay = (id: number) => {
     setExpandedParlays(prev => ({
+      ...prev,
+      [id]: !prev[id]
+    }));
+  };
+
+  const toggleExpandHedges = (id: number) => {
+    setExpandedHedges(prev => ({
       ...prev,
       [id]: !prev[id]
     }));
@@ -357,8 +365,9 @@ export default function BetTracker() {
   };
 
   // Helper arrays for mapping wagers
-  const rootBets = bets.filter(b => b.parent_id === null || b.parent_id === undefined);
-  const getLegs = (parentId: number) => bets.filter(b => b.parent_id === parentId);
+  const rootBets = bets.filter(b => (b.parent_id === null || b.parent_id === undefined) && b.is_hedge !== 1);
+  const getLegs = (parentId: number) => bets.filter(b => b.parent_id === parentId && b.is_hedge !== 1);
+  const getHedges = (parentId: number) => bets.filter(b => b.parent_id === parentId && b.is_hedge === 1);
 
   if (loading) {
     return (
@@ -475,19 +484,24 @@ export default function BetTracker() {
                 <th className="px-5 py-3 text-center w-[10%]">Action</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-cs-border/20">
-              {rootBets.length === 0 ? (
+            {rootBets.length === 0 ? (
+              <tbody className="divide-y divide-cs-border/20">
                 <tr>
                   <td colSpan={8} className="px-6 py-12 text-center text-cs-muted font-mono">
                     No wagers tracked in database. Upload a screenshot to begin.
                   </td>
                 </tr>
-              ) : (
-                rootBets.map((bet) => {
+              </tbody>
+            ) : (
+              rootBets.map((bet) => {
                   const isParlay = bet.is_parlay === 1;
                   const legs = isParlay ? getLegs(bet.id) : [];
                   const isExpanded = expandedParlays[bet.id] || false;
                   
+                  const hedges = getHedges(bet.id);
+                  const hasHedges = hedges.length > 0;
+                  const isHedgesExpanded = expandedHedges[bet.id] || false;
+
                   const pl = bet.profit_loss;
                   const isPlPositive = pl !== null && pl > 0;
 
@@ -502,16 +516,31 @@ export default function BetTracker() {
                             <div className="flex items-center gap-2">
                               <button
                                 onClick={() => toggleExpandParlay(bet.id)}
-                                className="p-1 hover:bg-cs-dark rounded transition-colors text-cs-red"
+                                className="p-1 hover:bg-cs-dark rounded transition-colors text-cs-red cursor-pointer"
                               >
                                 {isExpanded ? <ChevronUp className="w-4.5 h-4.5" /> : <ChevronDown className="w-4.5 h-4.5" />}
                               </button>
+                              {hasHedges && (
+                                <button
+                                  type="button"
+                                  onClick={() => toggleExpandHedges(bet.id)}
+                                  className="p-1 hover:bg-cs-dark rounded transition-colors text-emerald-400 cursor-pointer"
+                                  title="Toggle Hedges"
+                                >
+                                  {isHedgesExpanded ? <ChevronUp className="w-4.5 h-4.5" /> : <ChevronDown className="w-4.5 h-4.5" />}
+                                </button>
+                              )}
                               <div>
                                 <div className="text-white font-bold flex items-center gap-1.5">
                                   Multi-Leg Parlay
                                   <span className="text-[9px] bg-cs-red/20 text-cs-red-bright px-1.5 py-0.2 rounded font-mono">
                                     {legs.length} Legs
                                   </span>
+                                  {hasHedges && (
+                                    <span className="text-[9px] bg-emerald-500/20 text-emerald-400 px-1.5 py-0.2 rounded font-mono font-bold">
+                                      Hedged
+                                    </span>
+                                  )}
                                 </div>
                                 <div className="text-[10px] text-cs-muted font-normal max-w-xs truncate">
                                   {bet.notes || 'Aggregated EV Parlay'}
@@ -519,9 +548,28 @@ export default function BetTracker() {
                               </div>
                             </div>
                           ) : (
-                            <div>
-                              <div className="text-white font-semibold">{bet.player}</div>
-                              {bet.opposing_team && <div className="text-[10px] text-cs-muted font-normal">vs {bet.opposing_team}</div>}
+                            <div className="flex items-center gap-2">
+                              {hasHedges && (
+                                <button
+                                  type="button"
+                                  onClick={() => toggleExpandHedges(bet.id)}
+                                  className="p-1 hover:bg-cs-dark rounded transition-colors text-emerald-400 cursor-pointer"
+                                  title="Toggle Hedges"
+                                >
+                                  {isHedgesExpanded ? <ChevronUp className="w-4.5 h-4.5" /> : <ChevronDown className="w-4.5 h-4.5" />}
+                                </button>
+                              )}
+                              <div>
+                                <div className="text-white font-semibold flex items-center gap-1.5">
+                                  {bet.player}
+                                  {hasHedges && (
+                                    <span className="text-[9px] bg-emerald-500/20 text-emerald-400 px-1.5 py-0.2 rounded font-mono font-bold">
+                                      Hedged
+                                    </span>
+                                  )}
+                                </div>
+                                {bet.opposing_team && <div className="text-[10px] text-cs-muted font-normal">vs {bet.opposing_team}</div>}
+                              </div>
                             </div>
                           )}
                         </td>
@@ -625,11 +673,47 @@ export default function BetTracker() {
                           </td>
                         </tr>
                       )}
+
+                      {/* Collapsible Hedges Sub-table */}
+                      {hasHedges && isHedgesExpanded && (
+                        <tr className="bg-cs-black/60 border-b border-cs-border/20">
+                          <td colSpan={8} className="px-6 py-4">
+                            <div className="pl-6 border-l-2 border-emerald-500 space-y-3">
+                              <div className="text-[10px] font-mono text-emerald-400 uppercase tracking-wider font-bold">Automated Hedges (Agent 20)</div>
+                              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                {hedges.map((hedge, idx) => (
+                                  <div key={hedge.id || idx} className="bg-cs-dark/30 border border-emerald-500/20 rounded-xl p-3 flex justify-between items-center hover:border-emerald-500/40 transition-colors">
+                                    <div>
+                                      <div className="font-semibold text-white text-xs">{hedge.player}</div>
+                                      {hedge.opposing_team && <div className="text-[10px] text-cs-muted">vs {hedge.opposing_team}</div>}
+                                      <div className="flex items-center gap-1.5 mt-2">
+                                        <span className={`text-[9px] px-1.5 py-0.2 rounded font-black ${hedge.over_under === 'OVER' ? 'bg-cs-red/20 text-cs-red-bright' : 'bg-cs-muted/20 text-cs-muted'}`}>
+                                          {hedge.over_under}
+                                        </span>
+                                        <span className="text-white font-mono text-xs">{hedge.line} {hedge.stat}</span>
+                                      </div>
+                                      {hedge.notes && <div className="text-[9px] text-cs-muted mt-1 font-mono">{hedge.notes}</div>}
+                                    </div>
+                                    <div className="text-right">
+                                      <div className="text-xs font-mono text-white">{formatOdds(hedge.book_odds)}</div>
+                                      <div className="text-xs text-white font-bold font-mono mt-1">Stake: ${hedge.stake.toFixed(2)}</div>
+                                      {hedge.result && (
+                                        <span className={`inline-block mt-1.5 text-[9px] font-bold px-1.5 py-0.2 rounded ${hedge.result === 'WIN' ? 'bg-emerald-500/10 text-emerald-400' : 'bg-cs-red/10 text-cs-red-bright'}`}>
+                                          {hedge.result}
+                                        </span>
+                                      )}
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          </td>
+                        </tr>
+                      )}
                     </tbody>
                   );
                 })
               )}
-            </tbody>
           </table>
         </div>
       </div>
