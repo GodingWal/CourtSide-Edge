@@ -35,11 +35,6 @@ class EnsembleMathCore:
         else: # points
             return norm.rvs(loc=rate * (minutes_dist.mean() / 40.0), scale=4.0, size=1000)
 
-    def _layer5_gaussian_copula(self):
-        # 10,000 game simulations using joint distribution. Copula captures stat correlations.
-        # Mocked matrix of correlated distributions
-        return np.random.multivariate_normal([20, 5, 8], [[1, 0.35, 0.3], [0.35, 1, 0.1], [0.3, 0.1, 1]], size=10000)
-
     def _layer6_xgboost_stacking(self, layer_outputs):
         # Trained on historical outputs of Layers 1-5 vs actual outcomes.
         if self.is_cold_start:
@@ -64,7 +59,7 @@ class EnsembleMathCore:
         points_dist = self._layer4_poisson_distributions('points', 25.0 * usage_adj['usage_multiplier'], minutes_dist)
         
         # 5. Copula Simulation
-        sims = self._layer5_gaussian_copula()
+        # sims = self._layer5_gaussian_copula() # Removed: dead code that heavily impacted performance
         
         # 6. Meta-model final weighting
         final_points_projection = self._layer6_xgboost_stacking([points_dist.mean()])
