@@ -15,7 +15,10 @@ class TestNemotronClient(unittest.TestCase):
         # We need to reload the module because NVIDIA_API_KEY is evaluated at module load time
         pass
 
-    @patch.dict(os.environ, {}, clear=True)
+    def tearDown(self):
+        importlib.reload(client)
+
+    @patch.dict(os.environ, {})
     def test_analyze_sentiment_simulated(self):
         # Explicitly remove NVIDIA_API_KEY from environment to force simulated mode
         if "NVIDIA_API_KEY" in os.environ:
@@ -32,7 +35,7 @@ class TestNemotronClient(unittest.TestCase):
             "quote_impact": 0.5
         })
 
-    @patch.dict(os.environ, {"NVIDIA_API_KEY": "fake-api-key"}, clear=True)
+    @patch.dict(os.environ, {"NVIDIA_API_KEY": "fake-api-key"})
     def test_analyze_sentiment_real_api(self):
         importlib.reload(client)
         nemotron_client = client.NemotronClient()
@@ -42,7 +45,7 @@ class TestNemotronClient(unittest.TestCase):
         result = nemotron_client.analyze_sentiment("Coach said the team is tired.")
         self.assertIsNone(result)
 
-    @patch.dict(os.environ, {}, clear=True)
+    @patch.dict(os.environ, {})
     def test_extract_injury_json_simulated(self):
         if "NVIDIA_API_KEY" in os.environ:
             del os.environ["NVIDIA_API_KEY"]
@@ -63,7 +66,7 @@ class TestNemotronClient(unittest.TestCase):
             "sentiment_score": 0.2
         })
 
-    @patch.dict(os.environ, {"NVIDIA_API_KEY": "fake-api-key"}, clear=True)
+    @patch.dict(os.environ, {"NVIDIA_API_KEY": "fake-api-key"})
     def test_extract_injury_json_real_api(self):
         importlib.reload(client)
         nemotron_client = client.NemotronClient()
