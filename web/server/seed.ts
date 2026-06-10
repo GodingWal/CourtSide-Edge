@@ -1,7 +1,6 @@
 import Database from 'better-sqlite3';
-import path from 'path';
-
-const dbPath = path.resolve(__dirname, '../../data/hoopstats_wnba.db');
+import { config } from './config';
+import { runMigrations } from './migrate';
 
 // ── WNBA Players ──────────────────────────────────────────────────────────────
 const PLAYERS: { id: string; name: string; team: string; status: string }[] = [
@@ -62,122 +61,28 @@ function calcProfitLoss(result: string, stake: number, bookOdds: number): number
   return -stake; // LOSS
 }
 
-export function seed(): void {
-  const sqlite = new Database(dbPath);
+export function seed(options?: { forceReset?: boolean }): void {
+  let sqlite = new Database(config.DATABASE_PATH);
   sqlite.pragma('journal_mode = WAL');
 
-  // ── Create tables ──────────────────────────────────────────────────────────
-  sqlite.exec(`DROP TABLE IF EXISTS bets;`);
-  sqlite.exec(`DROP TABLE IF EXISTS players;`);
-  sqlite.exec(`DROP TABLE IF EXISTS bankroll_history;`);
-  sqlite.exec(`DROP TABLE IF EXISTS settings;`);
-  sqlite.exec(`DROP TABLE IF EXISTS qualitative_events;`);
-  sqlite.exec(`DROP TABLE IF EXISTS agent_context_store;`);
-  sqlite.exec(`DROP TABLE IF EXISTS decision_audit;`);
-  sqlite.exec(`DROP TABLE IF EXISTS hedging_opportunities;`);
+  if (options?.forceReset) {
+    console.log('⚠️ Force reset requested. Dropping all tables...');
+    sqlite.exec(`DROP TABLE IF EXISTS bets;`);
+    sqlite.exec(`DROP TABLE IF EXISTS players;`);
+    sqlite.exec(`DROP TABLE IF EXISTS bankroll_history;`);
+    sqlite.exec(`DROP TABLE IF EXISTS settings;`);
+    sqlite.exec(`DROP TABLE IF EXISTS qualitative_events;`);
+    sqlite.exec(`DROP TABLE IF EXISTS agent_context_store;`);
+    sqlite.exec(`DROP TABLE IF EXISTS decision_audit;`);
+    sqlite.exec(`DROP TABLE IF EXISTS hedging_opportunities;`);
+    sqlite.close();
 
-  sqlite.exec(`
-    CREATE TABLE IF NOT EXISTS players (
-      id TEXT PRIMARY KEY,
-      name TEXT NOT NULL,
-      team TEXT NOT NULL,
-      status TEXT
-    );
-  `);
+    // Rerun migrations to recreate empty tables
+    runMigrations();
 
-  sqlite.exec(`
-    CREATE TABLE IF NOT EXISTS bankroll_history (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      timestamp INTEGER NOT NULL,
-      balance REAL NOT NULL,
-      drawdown_pct REAL NOT NULL
-    );
-  `);
-
-  sqlite.exec(`
-    CREATE TABLE IF NOT EXISTS bets (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      parent_id INTEGER,
-      is_parlay INTEGER,
-      player TEXT,
-      stat TEXT,
-      line REAL,
-      over_under TEXT,
-      book_odds INTEGER NOT NULL,
-      true_odds REAL,
-      edge_pct REAL,
-      stake REAL NOT NULL,
-      result TEXT,
-      actual_value REAL,
-      profit_loss REAL,
-      placed_at INTEGER NOT NULL,
-      settled_at INTEGER,
-      opposing_team TEXT,
-      notes TEXT,
-      closing_odds INTEGER,
-      clv_pct REAL,
-      is_hedge INTEGER
-    );
-  `);
-
-  sqlite.exec(`
-    CREATE TABLE IF NOT EXISTS settings (
-      key TEXT PRIMARY KEY,
-      value TEXT NOT NULL
-    );
-  `);
-
-  sqlite.exec(`
-    CREATE TABLE IF NOT EXISTS qualitative_events (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      channel TEXT NOT NULL,
-      payload TEXT NOT NULL,
-      timestamp INTEGER NOT NULL
-    );
-  `);
-
-  sqlite.exec(`
-    CREATE TABLE IF NOT EXISTS agent_context_store (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      game_id TEXT NOT NULL,
-      agent_id TEXT NOT NULL,
-      context_key TEXT NOT NULL,
-      context_value TEXT NOT NULL,
-      confidence REAL NOT NULL,
-      ttl_seconds INTEGER DEFAULT 3600,
-      created_at INTEGER NOT NULL,
-      UNIQUE(game_id, agent_id, context_key)
-    );
-  `);
-
-  sqlite.exec(`
-    CREATE TABLE IF NOT EXISTS decision_audit (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      trace_id TEXT NOT NULL,
-      agent_id TEXT NOT NULL,
-      action TEXT NOT NULL,
-      reason TEXT,
-      input_payload TEXT,
-      output_payload TEXT,
-      confidence REAL,
-      timestamp INTEGER NOT NULL
-    );
-  `);
-
-  sqlite.exec(`
-    CREATE TABLE IF NOT EXISTS hedging_opportunities (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      bet_id INTEGER NOT NULL,
-      hedged_player TEXT NOT NULL,
-      original_line REAL NOT NULL,
-      original_odds INTEGER NOT NULL,
-      live_line REAL NOT NULL,
-      live_odds INTEGER NOT NULL,
-      potential_profit REAL NOT NULL,
-      hedge_instructions TEXT NOT NULL,
-      created_at INTEGER NOT NULL
-    );
-  `);
+    sqlite = new Database(config.DATABASE_PATH);
+    sqlite.pragma('journal_mode = WAL');
+  }
 
   // ── Seed players ───────────────────────────────────────────────────────────
   const playerCount = sqlite.prepare('SELECT COUNT(*) as cnt FROM players').get() as { cnt: number };
@@ -554,5 +459,6 @@ export function seed(): void {
 
 // Run if executed directly
 if (require.main === module) {
-  seed();
+  const forceReset = process.argv.includes('--reset');
+  seed({ forceReset });
 }

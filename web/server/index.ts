@@ -7,12 +7,42 @@ import { desc, eq } from 'drizzle-orm';
 import { seed } from './seed';
 import { createServer } from 'http';
 import { WebSocketServer, WebSocket } from 'ws';
+import { config } from './config';
+import { runMigrations } from './migrate';
+import { ZodSchema } from 'zod';
+import {
+  createBetSchema,
+  settleBetSchema,
+  clvBetSchema,
+  createContextSchema,
+  createAuditSchema,
+  createHedgeSchema,
+  updateSettingSchema
+} from './schemas.validation';
 
-const app = express();
-const port = 3000;
+export const app = express();
+const port = config.PORT;
 
 app.use(cors());
 app.use(express.json());
+
+const validateRequest = (schema: ZodSchema) => {
+  return (req: express.Request, res: express.Response, next: express.NextFunction) => {
+    const parsed = schema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({
+        error: 'Validation Error',
+        details: parsed.error.issues.map(err => ({
+          path: err.path.join('.'),
+          message: err.message
+        }))
+      });
+    }
+    req.body = parsed.data;
+    next();
+  };
+};
+
 
 // Standard helper for calculating profit/loss
 function calcProfitLoss(result: string, stake: number, bookOdds: number): number {
@@ -29,7 +59,7 @@ function calcProfitLoss(result: string, stake: number, bookOdds: number): number
 let redisClient: ReturnType<typeof createClient> | null = null;
 try {
   redisClient = createClient({
-    url: 'redis://localhost:6379',
+    url: config.REDIS_URL,
     socket: {
       reconnectStrategy: () => false
     }
@@ -89,7 +119,7 @@ app.get('/api/bets', async (req, res) => {
   }
 });
 
-app.post('/api/bets', async (req, res) => {
+app.post('/api/bets', validateRequest(createBetSchema), async (req, res) => {
   try {
     const { is_parlay, parent_id, player, stat, line, over_under, book_odds, true_odds, edge_pct, stake, opposing_team, notes, legs } = req.body;
     
@@ -170,7 +200,7 @@ app.post('/api/bets', async (req, res) => {
   }
 });
 
-app.patch('/api/bets/:id/settle', async (req, res) => {
+app.patch('/api/bets/:id/settle', validateRequest(settleBetSchema), async (req, res) => {
   try {
     const { id } = req.params;
     const { result, actual_value } = req.body;
@@ -362,7 +392,7 @@ app.get('/api/settings', async (req, res) => {
   }
 });
 
-app.put('/api/settings', async (req, res) => {
+app.put('/api/settings', validateRequest(updateSettingSchema), async (req, res) => {
   try {
     const { key, value } = req.body;
     const existing = await db.select().from(settings).where(eq(settings.key, key)).limit(1);
@@ -406,7 +436,7 @@ app.get('/api/context/:game_id', async (req, res) => {
   }
 });
 
-app.post('/api/context', async (req, res) => {
+app.post('/api/context', validateRequest(createContextSchema), async (req, res) => {
   try {
     const { game_id, agent_id, context_key, context_value, confidence, ttl_seconds } = req.body;
     await db.insert(agent_context_store).values({
@@ -420,6 +450,7 @@ app.post('/api/context', async (req, res) => {
     });
     res.status(201).json({ success: true });
   } catch (err) {
+    console.error('Error in POST /api/context:', err);
     res.status(500).json({ error: 'Failed to write context entry' });
   }
 });
@@ -459,7 +490,7 @@ app.get('/api/audit', async (req, res) => {
   }
 });
 
-app.post('/api/audit', async (req, res) => {
+app.post('/api/audit', validateRequest(createAuditSchema), async (req, res) => {
   try {
     const { trace_id, agent_id, action, reason, input_payload, output_payload, confidence } = req.body;
     await db.insert(decision_audit).values({
@@ -479,7 +510,7 @@ app.post('/api/audit', async (req, res) => {
 });
 
 // ── CLV Tracking Endpoints ──────────────────────────────────────────────────
-app.patch('/api/bets/:id/clv', async (req, res) => {
+app.patch('/api/bets/:id/clv', validateRequest(clvBetSchema), async (req, res) => {
   try {
     const { id } = req.params;
     const { closing_odds } = req.body;
@@ -606,7 +637,7 @@ app.get('/api/hedges', async (req, res) => {
   }
 });
 
-app.post('/api/hedges', async (req, res) => {
+app.post('/api/hedges', validateRequest(createHedgeSchema), async (req, res) => {
   try {
     const { bet_id, hedged_player, original_line, original_odds, live_line, live_odds, potential_profit, hedge_instructions } = req.body;
     await db.insert(hedging_opportunities).values({
@@ -763,6 +794,7 @@ app.get('/api/stream/alerts', async (req, res) => {
 async function start() {
   // Run SQLite migrations and seeding
   try {
+    runMigrations();
     seed();
     console.log('✓ SQLite database check & seed completed.');
   } catch (err) {
@@ -823,9 +855,11 @@ async function start() {
     ws.on('close', () => wsClients.delete(ws));
   });
 
-  server.listen(port, () => {
-    console.log(`Server running on port ${port}`);
-  });
+  if (process.env.NODE_ENV !== 'test') {
+    server.listen(port, () => {
+      console.log(`Server running on port ${port}`);
+    });
+  }
 }
 
 start().catch(console.error);

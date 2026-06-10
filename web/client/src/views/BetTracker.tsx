@@ -35,6 +35,7 @@ interface Bet {
   settled_at: number | null;
   opposing_team: string | null;
   notes: string | null;
+  is_hedge: number | null;
 }
 
 interface BetStats {
