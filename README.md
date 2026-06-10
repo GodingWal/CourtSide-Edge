@@ -11,6 +11,8 @@ graph TD
     %% Scrapers & Ingestion Agents
     subgraph Data Ingestion [Data Ingestion & Event Stream]
         A1[Agent 1: Market Scraper] -->|Live Odds| Redis((Redis Pub/Sub))
+        A1 -->|Raw Line Updates| A17[Agent 17: Velocity Agent]
+        A17 -->|Velocity / Steam Alerts| Redis
         A2[Agent 2: News Sentinel] -->|Tweets / Breaking News| Redis
         A25[Agent 2.5: Game Flow Oracle] -->|Live Match Telemetry| Redis
         A5[Agent 5: Referee Engine] -->|Referee Profiles & Styles| Redis
@@ -20,9 +22,10 @@ graph TD
         A9 -->|Write Enrichments| CTX
     end
 
-    %% Shared Intelligence Layer
+    %% Shared Memory Layer
     subgraph Memory Layer [Shared Agent Memory]
-        CTX -->|Read Context| A3
+        CTX -->|Read Context & Calibration| A3
+        A15[Agent 15: Drift Monitor] -->|Write Calibration| CTX
     end
 
     %% Analytical & Math Core
@@ -46,12 +49,15 @@ graph TD
     end
 
     %% Audit & Tracking
-    subgraph Audit & Tracking [Traceability Layer]
+    subgraph Audit & Tracking [Traceability & Calibration Layer]
         A11 -->|Log Decision| AUDIT[(Decision Audit Trail)]
         A7 -->|Log Decision| AUDIT
         A8 -->|Log Decision| AUDIT
         A4 -->|Log Decision| AUDIT
         A14[Agent 14: CLV Tracker] -->|Closing Line Value| DB
+        DB -->|Query Settled Bets| A15
+        DB -->|Query Active Bets| A16[Agent 16: Hedge Oracle]
+        A16 -->|Write Hedging Alerts| DB
     end
 
     %% Execution & Telemetry
