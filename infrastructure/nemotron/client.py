@@ -1,5 +1,4 @@
 import os
-import json
 import logging
 
 # Set NVIDIA_API_KEY in .env to use the real endpoint
