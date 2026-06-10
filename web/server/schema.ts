@@ -1,4 +1,4 @@
-import { sqliteTable, text, integer, real } from 'drizzle-orm/sqlite-core';
+import { sqliteTable, text, integer, real, index } from 'drizzle-orm/sqlite-core';
 
 export const players = sqliteTable('players', {
   id: text('id').primaryKey(),
@@ -36,7 +36,11 @@ export const bets = sqliteTable('bets', {
   closing_odds: integer('closing_odds'), // Closing line odds at game time (Agent 14 CLV Tracker)
   clv_pct: real('clv_pct'), // Closing Line Value percentage (positive = sharp)
   is_hedge: integer('is_hedge'), // 1 if this bet is an automated hedge placed by Agent 20
-});
+}, (table) => ([
+  index('idx_bets_placed_at').on(table.placed_at),
+  index('idx_bets_result').on(table.result),
+  index('idx_bets_parent_id').on(table.parent_id),
+]));
 
 export const settings = sqliteTable('settings', {
   key: text('key').primaryKey(),
@@ -48,7 +52,9 @@ export const qualitative_events = sqliteTable('qualitative_events', {
   channel: text('channel').notNull(),
   payload: text('payload').notNull(), // JSON payload string
   timestamp: integer('timestamp').notNull(),
-});
+}, (table) => ([
+  index('idx_events_timestamp').on(table.timestamp),
+]));
 
 // ── Agent Context Store (Shared Memory Layer) ─────────────────────────────────
 // Enables agents to read each other's enrichments instead of operating blind.
@@ -62,7 +68,9 @@ export const agent_context_store = sqliteTable('agent_context_store', {
   confidence: real('confidence').notNull(), // 0.0 - 1.0
   ttl_seconds: integer('ttl_seconds').default(3600),
   created_at: integer('created_at').notNull(),
-});
+}, (table) => ([
+  index('idx_context_game_agent').on(table.game_id, table.agent_id),
+]));
 
 // ── Decision Audit Trail ──────────────────────────────────────────────────────
 // Logs every agent approve/reject/abstain decision for full traceability.
@@ -77,7 +85,10 @@ export const decision_audit = sqliteTable('decision_audit', {
   output_payload: text('output_payload'), // JSON: what the agent emitted
   confidence: real('confidence'),
   timestamp: integer('timestamp').notNull(),
-});
+}, (table) => ([
+  index('idx_audit_trace_id').on(table.trace_id),
+  index('idx_audit_timestamp').on(table.timestamp),
+]));
 
 // ── Hedging Opportunities (Agent 16 Dynamic Hedging Oracle) ───────────────────
 export const hedging_opportunities = sqliteTable('hedging_opportunities', {

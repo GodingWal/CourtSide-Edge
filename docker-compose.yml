@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   redis:
     image: redis:alpine
@@ -9,6 +7,11 @@ services:
       - ./infrastructure/redis/data:/data
     command: redis-server --appendonly yes
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   agent_0_historical_etl:
     build:
@@ -25,7 +28,8 @@ services:
     env_file:
       - .env
     depends_on:
-      - redis
+      redis:
+        condition: service_healthy
     restart: unless-stopped
 
   agent_2_news_sentinel:
@@ -35,7 +39,8 @@ services:
     env_file:
       - .env
     depends_on:
-      - redis
+      redis:
+        condition: service_healthy
     restart: unless-stopped
 
   agent_9_news_sentiment:
@@ -45,7 +50,8 @@ services:
     env_file:
       - .env
     depends_on:
-      - redis
+      redis:
+        condition: service_healthy
     restart: unless-stopped
 
   agent_3_projection_engine:
@@ -55,7 +61,8 @@ services:
     env_file:
       - .env
     depends_on:
-      - redis
+      redis:
+        condition: service_healthy
     restart: unless-stopped
     ports:
       - "8000:8000"
@@ -65,7 +72,8 @@ services:
       context: .
       dockerfile: agents/10_game_total_projector/Dockerfile
     depends_on:
-      - redis
+      redis:
+        condition: service_healthy
     restart: unless-stopped
 
   agent_11_market_value_detector:
@@ -73,7 +81,8 @@ services:
       context: .
       dockerfile: agents/11_market_value_detector/Dockerfile
     depends_on:
-      - redis
+      redis:
+        condition: service_healthy
     restart: unless-stopped
 
   agent_5_referee_engine:
@@ -81,7 +90,8 @@ services:
       context: .
       dockerfile: agents/5_referee_engine/Dockerfile
     depends_on:
-      - redis
+      redis:
+        condition: service_healthy
     restart: unless-stopped
 
   agent_6_steam_detector:
@@ -89,7 +99,8 @@ services:
       context: .
       dockerfile: agents/6_steam_detector/Dockerfile
     depends_on:
-      - redis
+      redis:
+        condition: service_healthy
     restart: unless-stopped
 
   agent_2_5_game_flow_oracle:
@@ -97,7 +108,8 @@ services:
       context: .
       dockerfile: agents/2.5_game_flow_oracle/Dockerfile
     depends_on:
-      - redis
+      redis:
+        condition: service_healthy
     restart: unless-stopped
 
   agent_7_correlation_guard:
@@ -105,7 +117,8 @@ services:
       context: .
       dockerfile: agents/7_correlation_guard/Dockerfile
     depends_on:
-      - redis
+      redis:
+        condition: service_healthy
     restart: unless-stopped
 
   agent_8_bankroll_sizer:
@@ -113,7 +126,8 @@ services:
       context: .
       dockerfile: agents/8_bankroll_sizer/Dockerfile
     depends_on:
-      - redis
+      redis:
+        condition: service_healthy
     restart: unless-stopped
 
   agent_4_execution_oracle:
@@ -121,7 +135,8 @@ services:
       context: .
       dockerfile: agents/4_execution_oracle/Dockerfile
     depends_on:
-      - redis
+      redis:
+        condition: service_healthy
     restart: unless-stopped
     ports:
       - "8001:8001"
@@ -133,7 +148,8 @@ services:
     volumes:
       - ./data:/app/data
     depends_on:
-      - redis
+      redis:
+        condition: service_healthy
     restart: unless-stopped
     ports:
       - "8009:8009"
@@ -145,7 +161,8 @@ services:
     volumes:
       - ./data:/app/data
     depends_on:
-      - redis
+      redis:
+        condition: service_healthy
     restart: unless-stopped
     ports:
       - "8010:8010"
@@ -157,7 +174,8 @@ services:
     volumes:
       - ./data:/app/data
     depends_on:
-      - redis
+      redis:
+        condition: service_healthy
     restart: unless-stopped
     ports:
       - "8011:8011"
@@ -169,7 +187,8 @@ services:
     volumes:
       - ./data:/app/data
     depends_on:
-      - redis
+      redis:
+        condition: service_healthy
     restart: unless-stopped
     ports:
       - "8012:8012"
@@ -179,23 +198,79 @@ services:
       context: .
       dockerfile: agents/17_velocity_agent/Dockerfile
     depends_on:
-      - redis
+      redis:
+        condition: service_healthy
     restart: unless-stopped
     ports:
       - "8013:8013"
+
+  agent_18_liquidity_oracle:
+    build:
+      context: .
+      dockerfile: agents/18_liquidity_oracle/Dockerfile
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    ports:
+      - "8014:8014"
+
+  agent_19_sharp_profiler:
+    build:
+      context: .
+      dockerfile: agents/19_sharp_profiler/Dockerfile
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    ports:
+      - "8015:8015"
+
+  agent_20_hedge_executor:
+    build:
+      context: .
+      dockerfile: agents/20_hedge_executor/Dockerfile
+    volumes:
+      - ./data:/app/data
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    ports:
+      - "8016:8016"
+
+  agent_21_rotation_tracker:
+    build:
+      context: .
+      dockerfile: agents/21_rotation_tracker/Dockerfile
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    ports:
+      - "8017:8017"
 
   web_server:
     build:
       context: ./web/server
       dockerfile: Dockerfile
+    env_file:
+      - .env
     container_name: courtside_web_server
     ports:
       - "3000:3000"
     volumes:
       - ./data:/app/data
     depends_on:
-      - redis
+      redis:
+        condition: service_healthy
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
 
   web_client:
     build:
@@ -203,7 +278,12 @@ services:
       dockerfile: Dockerfile
     container_name: courtside_web_client
     ports:
-      - "5173:5173"
+      - "80:80"
     depends_on:
-      - web_server
+      web_server:
+        condition: service_healthy
     restart: unless-stopped
+
+secrets:
+  api_key:
+    file: ./.secrets/api_key.txt

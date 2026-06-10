@@ -12,6 +12,7 @@ const configSchema = z.object({
     path.resolve(__dirname, '../../data/hoopstats_wnba.db')
   ),
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
+  API_KEY: z.string().optional(), // Required in production, optional in dev/test
 });
 
 const parsed = configSchema.safeParse(process.env);
@@ -22,5 +23,12 @@ if (!parsed.success) {
   process.exit(1);
 }
 
+// Warn if running production without an API key
+if (parsed.data.NODE_ENV === 'production' && !parsed.data.API_KEY) {
+  console.error('❌ API_KEY is required in production mode.');
+  process.exit(1);
+}
+
 export const config = parsed.data;
 export type Config = z.infer<typeof configSchema>;
+

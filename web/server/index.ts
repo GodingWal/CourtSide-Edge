@@ -1,7 +1,7 @@
 import express from 'express';
 import { createClient } from 'redis';
 import cors from 'cors';
-import { db } from './db';
+import { db, sqlite } from './db';
 import { players, bankroll_history, bets, settings, qualitative_events, agent_context_store, decision_audit, hedging_opportunities } from './schema';
 import { desc, eq } from 'drizzle-orm';
 import { seed } from './seed';
@@ -10,6 +10,8 @@ import { WebSocketServer, WebSocket } from 'ws';
 import { config } from './config';
 import { runMigrations } from './migrate';
 import { ZodSchema } from 'zod';
+import pino from 'pino';
+import rateLimit from 'express-rate-limit';
 import {
   createBetSchema,
   settleBetSchema,
@@ -20,11 +22,52 @@ import {
   updateSettingSchema
 } from './schemas.validation';
 
+// ── Structured Logger ───────────────────────────────────────────────────────
+export const logger = pino({
+  level: config.NODE_ENV === 'test' ? 'silent' : 'info',
+  transport: config.NODE_ENV !== 'production' ? { target: 'pino-pretty', options: { colorize: true } } : undefined,
+});
+
 export const app = express();
 const port = config.PORT;
 
+// ── Auth Middleware ─────────────────────────────────────────────────────────
+const authMiddleware = (req: express.Request, res: express.Response, next: express.NextFunction) => {
+  // Skip auth in dev/test mode or if no API_KEY is configured
+  if (config.NODE_ENV !== 'production' || !config.API_KEY) {
+    return next();
+  }
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    return res.status(401).json({ error: 'Unauthorized: Missing Bearer token' });
+  }
+  const token = authHeader.slice(7);
+  if (token !== config.API_KEY) {
+    return res.status(403).json({ error: 'Forbidden: Invalid API key' });
+  }
+  next();
+};
+
+// ── Rate Limiting ───────────────────────────────────────────────────────────
+const writeLimiter = rateLimit({
+  windowMs: 60 * 1000, // 1 minute
+  max: 100, // 100 requests per minute per IP
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many requests, please try again later.' },
+  skip: () => config.NODE_ENV === 'test', // Skip in test mode
+});
+
 app.use(cors());
 app.use(express.json());
+
+// ── Health Endpoint (unauthenticated) ───────────────────────────────────────
+app.get('/health', (req, res) => {
+  res.json({ status: 'ok', uptime: process.uptime(), timestamp: Date.now() });
+});
+
+// Apply auth to all /api/* routes
+app.use('/api', authMiddleware);
 
 const validateRequest = (schema: ZodSchema) => {
   return (req: express.Request, res: express.Response, next: express.NextFunction) => {
@@ -65,10 +108,10 @@ try {
     }
   });
   redisClient.on('error', err => {
-    // Only log once to avoid flooding
+    logger.warn({ err }, 'Redis client error');
   });
 } catch (err) {
-  console.warn('⚠️ Redis client instantiation failed.');
+  logger.warn('Redis client instantiation failed.');
 }
 
 // Store active WebSocket connections
@@ -119,7 +162,7 @@ app.get('/api/bets', async (req, res) => {
   }
 });
 
-app.post('/api/bets', validateRequest(createBetSchema), async (req, res) => {
+app.post('/api/bets', writeLimiter, validateRequest(createBetSchema), async (req, res) => {
   try {
     const { is_parlay, parent_id, player, stat, line, over_under, book_odds, true_odds, edge_pct, stake, opposing_team, notes, legs } = req.body;
     
@@ -195,7 +238,7 @@ app.post('/api/bets', validateRequest(createBetSchema), async (req, res) => {
     }
     res.status(201).json({ success: true });
   } catch (err) {
-    console.error(err);
+    logger.error({ err }, 'Failed to create bet');
     res.status(500).json({ error: 'Failed to create bet' });
   }
 });
@@ -279,7 +322,7 @@ app.get('/api/bets/stats', async (req, res) => {
 });
 
 // ── Bet Upload & Parlay Generation Endpoints ────────────────────────────────
-app.post('/api/bets/upload', async (req, res) => {
+app.post('/api/bets/upload', writeLimiter, async (req, res) => {
   try {
     // Simulate OCR processing latency
     await new Promise(resolve => setTimeout(resolve, 1500));
@@ -330,7 +373,7 @@ app.post('/api/bets/upload', async (req, res) => {
   }
 });
 
-app.post('/api/parlay/generate', async (req, res) => {
+app.post('/api/parlay/generate', writeLimiter, async (req, res) => {
   try {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 2000);
@@ -346,7 +389,7 @@ app.post('/api/parlay/generate', async (req, res) => {
     const data = await response.json();
     res.json(data);
   } catch (err) {
-    console.warn('⚠️ Agent 13 container offline/slow. Returning fallback parlay.');
+    logger.warn('Agent 13 container offline/slow. Returning fallback parlay.');
     res.json({
       legs: [
         {
@@ -392,7 +435,7 @@ app.get('/api/settings', async (req, res) => {
   }
 });
 
-app.put('/api/settings', validateRequest(updateSettingSchema), async (req, res) => {
+app.put('/api/settings', writeLimiter, validateRequest(updateSettingSchema), async (req, res) => {
   try {
     const { key, value } = req.body;
     const existing = await db.select().from(settings).where(eq(settings.key, key)).limit(1);
@@ -436,7 +479,7 @@ app.get('/api/context/:game_id', async (req, res) => {
   }
 });
 
-app.post('/api/context', validateRequest(createContextSchema), async (req, res) => {
+app.post('/api/context', writeLimiter, validateRequest(createContextSchema), async (req, res) => {
   try {
     const { game_id, agent_id, context_key, context_value, confidence, ttl_seconds } = req.body;
     await db.insert(agent_context_store).values({
@@ -450,7 +493,7 @@ app.post('/api/context', validateRequest(createContextSchema), async (req, res) 
     });
     res.status(201).json({ success: true });
   } catch (err) {
-    console.error('Error in POST /api/context:', err);
+    logger.error({ err }, 'Error in POST /api/context');
     res.status(500).json({ error: 'Failed to write context entry' });
   }
 });
@@ -490,7 +533,7 @@ app.get('/api/audit', async (req, res) => {
   }
 });
 
-app.post('/api/audit', validateRequest(createAuditSchema), async (req, res) => {
+app.post('/api/audit', writeLimiter, validateRequest(createAuditSchema), async (req, res) => {
   try {
     const { trace_id, agent_id, action, reason, input_payload, output_payload, confidence } = req.body;
     await db.insert(decision_audit).values({
@@ -623,7 +666,7 @@ app.get('/api/drift/status', async (req, res) => {
       settled_bets_analyzed: count
     });
   } catch (err) {
-    console.error(err);
+    logger.error({ err }, 'Failed to fetch model drift status');
     res.status(500).json({ error: 'Failed to fetch model drift status' });
   }
 });
@@ -637,7 +680,7 @@ app.get('/api/hedges', async (req, res) => {
   }
 });
 
-app.post('/api/hedges', validateRequest(createHedgeSchema), async (req, res) => {
+app.post('/api/hedges', writeLimiter, validateRequest(createHedgeSchema), async (req, res) => {
   try {
     const { bet_id, hedged_player, original_line, original_odds, live_line, live_odds, potential_profit, hedge_instructions } = req.body;
     await db.insert(hedging_opportunities).values({
@@ -785,7 +828,7 @@ app.get('/api/stream/alerts', async (req, res) => {
       subscriber.quit();
     });
   } catch (err) {
-    console.error('SSE Subscription Error:', err);
+    logger.error({ err }, 'SSE Subscription Error');
     res.end();
   }
 });
@@ -796,16 +839,16 @@ async function start() {
   try {
     runMigrations();
     seed();
-    console.log('✓ SQLite database check & seed completed.');
+    logger.info('SQLite database check & seed completed.');
   } catch (err) {
-    console.error('Failed to run database seed:', err);
+    logger.error({ err }, 'Failed to run database seed');
   }
 
   // Connect to Redis optionally
   if (redisClient) {
     try {
       await redisClient.connect();
-      console.log('✓ Connected to Redis');
+      logger.info('Connected to Redis');
 
       const subscriber = redisClient.duplicate();
       await subscriber.connect();
@@ -834,15 +877,15 @@ async function start() {
                 payload: message,
                 timestamp: Date.now()
               });
-              console.log(`[Redis Bridge] Permanently logged event on ${channel} to SQLite.`);
+              logger.info({ channel }, 'Permanently logged qualitative event to SQLite');
             } catch (dbErr) {
-              console.error(`Failed to log qualitative event from ${channel}:`, dbErr);
+              logger.error({ err: dbErr, channel }, 'Failed to log qualitative event');
             }
           }
         });
       }
     } catch (err) {
-      console.warn('⚠️ Redis is running offline. WebSocket pub/sub stream disabled.');
+      logger.warn('Redis is running offline. WebSocket pub/sub stream disabled.');
     }
   }
 
@@ -855,11 +898,53 @@ async function start() {
     ws.on('close', () => wsClients.delete(ws));
   });
 
+  // ── Graceful Shutdown (Issue #11) ───────────────────────────────────────────
+  const shutdown = async (signal: string) => {
+    logger.info({ signal }, 'Received shutdown signal, draining connections...');
+
+    // 1. Stop accepting new connections
+    server.close(() => {
+      logger.info('HTTP server closed');
+    });
+
+    // 2. Close all WebSocket clients
+    for (const client of wsClients) {
+      client.close(1001, 'Server shutting down');
+    }
+    wsClients.clear();
+
+    // 3. Disconnect Redis
+    if (redisClient) {
+      try {
+        await redisClient.quit();
+        logger.info('Redis client disconnected');
+      } catch (err) {
+        logger.warn({ err }, 'Error disconnecting Redis');
+      }
+    }
+
+    // 4. Close SQLite database
+    try {
+      sqlite.close();
+      logger.info('SQLite database closed');
+    } catch (err) {
+      logger.warn({ err }, 'Error closing SQLite');
+    }
+
+    process.exit(0);
+  };
+
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
+  process.on('SIGINT', () => shutdown('SIGINT'));
+
   if (process.env.NODE_ENV !== 'test') {
     server.listen(port, () => {
-      console.log(`Server running on port ${port}`);
+      logger.info({ port }, `CourtSideEdge server running on port ${port}`);
     });
   }
 }
 
-start().catch(console.error);
+start().catch((err) => {
+  logger.fatal({ err }, 'Failed to start server');
+  process.exit(1);
+});

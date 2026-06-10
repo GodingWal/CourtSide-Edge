@@ -10,6 +10,7 @@ logger = logging.getLogger('Agent8_BankrollSizer')
 
 audit = AuditLogger()
 DB_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../data/hoopstats_wnba.db'))
+KELLY_MAX_FRACTION = float(os.environ.get('KELLY_MAX_FRACTION', '0.03'))
 
 
 class BankrollSizer:
@@ -63,18 +64,19 @@ class BankrollSizer:
         
         # Adaptive Kelly fraction based on recent performance
         if recent_win_rate >= 0.60:
-            kelly_fraction = 0.33
+            kelly_fraction = 0.25
             regime = 'HOT_STREAK'
         elif recent_win_rate >= 0.50:
-            kelly_fraction = 0.25
+            kelly_fraction = 0.167
             regime = 'NORMAL'
         elif recent_win_rate >= 0.48:
-            kelly_fraction = 0.167
+            kelly_fraction = 0.10
             regime = 'COLD_STREAK'
         else:
             kelly_fraction = 0.0
             regime = 'HALTED'
             return 0.0, regime
+        logger.info(f'Kelly regime: {regime}, fraction: {kelly_fraction}, max cap: {KELLY_MAX_FRACTION}')
         
         # Kelly formula: f = (bp - q) / b
         b = decimal_odds - 1
@@ -84,8 +86,8 @@ class BankrollSizer:
         # Apply fractional Kelly scaled by confidence
         adjusted_kelly = kelly_f * kelly_fraction * signal_confidence
         
-        # Cap at 5% of bankroll
-        bet_fraction = min(max(adjusted_kelly, 0), 0.05)
+        # Cap at max Kelly fraction of bankroll
+        bet_fraction = min(max(adjusted_kelly, 0), KELLY_MAX_FRACTION)
         if bet_fraction <= 0:
             return 0.0, 'NEGATIVE_EV'
             

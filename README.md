@@ -161,6 +161,45 @@ Agent 21 tracks game flow fouls and rotation changes. It publishes minutes adjus
 
 ---
 
+## 2.3 Architecture Improvements (v5.3)
+
+### SQLite Concurrency Hardening
+The SQLite database now runs in **WAL (Write-Ahead Logging) mode** with a 5-second `busy_timeout`, eliminating `SQLITE_BUSY` errors from concurrent agent writes. Foreign key enforcement is enabled.
+
+### Docker Healthchecks & Service Dependencies
+All containers now include `healthcheck` definitions. Redis uses `redis-cli ping` and the web server uses an HTTP `/health` endpoint. `depends_on` entries use `condition: service_healthy` to prevent premature startup.
+
+### Production Web Client (Nginx)
+The web client Dockerfile uses a multi-stage build: Vite compiles to static assets, then Nginx serves them with SPA fallback, API proxy, WebSocket proxy, gzip compression, and 1-year static asset caching.
+
+### API Authentication
+All `/api/*` endpoints are protected by Bearer token authentication in production mode. Set the `API_KEY` environment variable and include `Authorization: Bearer <key>` in requests. Auth is skipped in development and test modes.
+
+### Rate Limiting
+Write endpoints (`POST`, `PUT`, `PATCH`) are rate-limited to **100 requests per minute per IP** using `express-rate-limit`.
+
+### Structured Logging
+All server logs use **Pino** for structured JSON output in production and pretty-printed colored output in development. This enables integration with log aggregation tools (ELK, Loki, Datadog).
+
+### Graceful Shutdown
+The server handles `SIGTERM` and `SIGINT` signals by draining HTTP connections, closing WebSocket clients, disconnecting Redis, and closing the SQLite database before exiting.
+
+### Database Indexes
+Performance indexes added to frequently-queried columns:
+- `bets`: `placed_at`, `result`, `parent_id`
+- `decision_audit`: `trace_id`, `timestamp`
+- `agent_context_store`: composite `(game_id, agent_id)`
+- `qualitative_events`: `timestamp`
+
+### Kelly Fraction Safety (Agent 8)
+Kelly fractions reduced across all regimes to prevent over-aggressive sizing:
+- HOT_STREAK: 1/4 Kelly (was 1/3)
+- NORMAL: 1/6 Kelly (was 1/4)
+- COLD_STREAK: 1/10 Kelly (was 1/6)
+- Max bankroll cap: 3% (was 5%), configurable via `KELLY_MAX_FRACTION` env var
+
+---
+
 ## 3. Developer Setup & Environment Instructions
 
 ### Prerequisites
@@ -188,6 +227,8 @@ Agent 21 tracks game flow fouls and rotation changes. It publishes minutes adjus
    ```bash
    docker-compose up --build -d
    ```
+   All services include Docker healthchecks — Redis verifies connectivity via `redis-cli ping` and the web server exposes a `/health` endpoint. Services wait for healthy dependencies before starting. The web client container uses a multi-stage Nginx build for production.
+
    *Note: If Docker is unavailable locally, the express backend handles connection failures gracefully and defaults to offline/SQLite-direct capabilities.*
 
 4. **Run Server & Client locally**:
@@ -203,6 +244,17 @@ Agent 21 tracks game flow fouls and rotation changes. It publishes minutes adjus
      npm install
      npm run dev
      ```
+
+### Environment Variables
+
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
+| `PORT` | `3000` | No | Express server port |
+| `REDIS_URL` | `redis://localhost:6379` | No | Redis connection URL |
+| `DATABASE_PATH` | `../../data/hoopstats_wnba.db` | No | SQLite database file path |
+| `NODE_ENV` | `development` | No | `development`, `production`, or `test` |
+| `API_KEY` | — | **Production only** | Bearer token for API authentication |
+| `KELLY_MAX_FRACTION` | `0.03` | No | Max bankroll fraction cap for Agent 8 |
 
 ---
 
@@ -239,7 +291,7 @@ CREATE TABLE bankroll_history (id INTEGER PRIMARY KEY AUTOINCREMENT, timestamp I
 -- Wager Ledger (parlay containers + child legs + CLV tracking)
 CREATE TABLE bets (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    parent_id INTEGER, is_parlay INTEGER,
+    parent_id INTEGER, is_parlay INTEGER, is_hedge INTEGER,
     player TEXT, stat TEXT, line REAL, over_under TEXT,
     book_odds INTEGER NOT NULL, true_odds REAL, edge_pct REAL,
     stake REAL NOT NULL, result TEXT, actual_value REAL, profit_loss REAL,
@@ -269,6 +321,20 @@ CREATE TABLE decision_audit (
 
 -- Qualitative Event Logs
 CREATE TABLE qualitative_events (id INTEGER PRIMARY KEY AUTOINCREMENT, channel TEXT NOT NULL, payload TEXT NOT NULL, timestamp INTEGER NOT NULL);
+
+-- Hedging Opportunities (Agent 16 Dynamic Hedging Oracle)
+CREATE TABLE hedging_opportunities (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    bet_id INTEGER NOT NULL,
+    hedged_player TEXT NOT NULL,
+    original_line REAL NOT NULL,
+    original_odds INTEGER NOT NULL,
+    live_line REAL NOT NULL,
+    live_odds INTEGER NOT NULL,
+    potential_profit REAL NOT NULL,
+    hedge_instructions TEXT NOT NULL,
+    created_at INTEGER NOT NULL
+);
 ```
 
 ---
@@ -303,3 +369,29 @@ CREATE TABLE qualitative_events (id INTEGER PRIMARY KEY AUTOINCREMENT, channel T
 | `PATCH` | `/api/bets/:id/settle` | Settle a bet |
 | `POST` | `/api/bets/upload` | Mock OCR ticket upload |
 | `POST` | `/api/parlay/generate` | Agent 13 parlay generation |
+
+---
+
+## 7. Database Migrations
+
+Schema changes are managed via **Drizzle Kit**. Migrations are applied automatically on server startup.
+
+```bash
+# Generate a new migration after editing schema.ts
+cd web/server
+npx drizzle-kit generate
+
+# Apply migrations manually
+npx tsx migrate.ts
+```
+
+## 8. Testing
+
+The server includes an integration test suite using **Vitest** and **Supertest**.
+
+```bash
+cd web/server
+npm run test
+```
+
+Tests run against an isolated SQLite database and validate all API endpoints, validation logic, and settlement calculations. The test suite is also integrated into the GitHub Actions CI pipeline.
