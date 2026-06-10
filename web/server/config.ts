@@ -13,6 +13,7 @@ const configSchema = z.object({
   ),
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
   API_KEY: z.string().optional(), // Required in production, optional in dev/test
+  FRONTEND_URL: z.string().default('http://localhost:5173'),
 });
 
 const parsed = configSchema.safeParse(process.env);
