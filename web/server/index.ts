@@ -58,7 +58,7 @@ const writeLimiter = rateLimit({
   skip: () => config.NODE_ENV === 'test', // Skip in test mode
 });
 
-app.use(cors());
+app.use(cors({ origin: config.FRONTEND_URL }));
 app.use(express.json());
 
 // ── Health Endpoint (unauthenticated) ───────────────────────────────────────
