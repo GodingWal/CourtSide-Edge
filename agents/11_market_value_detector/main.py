@@ -1,47 +1,81 @@
 import time
 import logging
-from shared.redis_client import RedisPubSub
+from shared.redis_client import RedisPubSub, StreamConsumer
+from shared.audit_logger import AuditLogger, generate_trace_id
 
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("Agent11_MarketValue")
+logger = logging.getLogger('Agent11_MarketValue')
+
+audit = AuditLogger()
 
 class MarketIntelligence:
     def __init__(self):
         self.line_history = {}
 
     def track_movement(self, odds_data):
-        # Logic to identify reverse line movement or public drift
-        return "sharp_money" if odds_data.get("velocity", 0) > 0.5 else "public_drift"
+        velocity = odds_data.get('velocity', 0)
+        if velocity > 0.8:
+            return 'sharp_money', 0.92
+        elif velocity > 0.5:
+            return 'sharp_money', 0.75
+        elif velocity > 0.2:
+            return 'public_drift', 0.60
+        else:
+            return 'noise', 0.35
 
-def on_live_odds(message, pubsub, intelligence):
-    movement_type = intelligence.track_movement(message)
-    logger.info(f"Tracking market movement: {movement_type}")
+def on_live_odds(message, stream_producer, intelligence):
+    movement_type, confidence = intelligence.track_movement(message)
+    logger.info(f'Tracking market movement: {movement_type} (confidence: {confidence})')
     
-    # Calculate divergence (Mocked)
-    divergence_score = 6.5 # % edge
+    # Skip noise-level signals
+    if confidence < 0.4:
+        logger.info(f'Signal too weak ({confidence}), skipping.')
+        return
+    
+    divergence_score = 6.5  # % edge (mocked)
+    trace_id = generate_trace_id()
     
     alert = {
-        "source": "Agent 11",
-        "market_classification": movement_type,
-        "divergence_score": divergence_score,
-        "timestamp": time.time()
+        'source': 'Agent 11',
+        'type': 'market_divergence',
+        'market_classification': movement_type,
+        'divergence_score': divergence_score,
+        'confidence': confidence,
+        'sample_size': message.get('sample_size', 25),
+        'decay_seconds': 300,
+        'trace_id': trace_id,
+        'timestamp': time.time()
     }
     
-    logger.info(f"Publishing market intelligence: {alert}")
-    pubsub.publish("channel_market_intelligence", alert)
+    # Log the decision to audit trail
+    audit.log_decision(
+        trace_id=trace_id,
+        agent_id='Agent_11',
+        action='APPROVE',
+        reason=f'Detected {movement_type} with {confidence:.0%} confidence, divergence {divergence_score}%',
+        input_payload=message,
+        output_payload=alert,
+        confidence=confidence
+    )
+    
+    logger.info(f'Publishing market intelligence (trace: {trace_id[:8]}...)')
+    # Use Redis Streams for critical-path channel
+    stream_producer.produce('stream_market_intelligence', alert)
 
 def main():
     pubsub = RedisPubSub()
+    stream = StreamConsumer(group_name='agent_11_group', consumer_name='agent_11_worker')
     intelligence = MarketIntelligence()
-    logger.info("Agent 11 (Market Value Detector) started.")
+    logger.info('Agent 11 (Market Value Detector) started.')
     
-    pubsub.subscribe("channel_live_odds", lambda m: on_live_odds(m, pubsub, intelligence))
+    pubsub.subscribe('channel_live_odds', lambda m: on_live_odds(m, stream, intelligence))
     
     try:
         while True:
             time.sleep(1)
     except KeyboardInterrupt:
         pubsub.close()
+        stream.close()
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()

@@ -2,7 +2,7 @@ import express from 'express';
 import { createClient } from 'redis';
 import cors from 'cors';
 import { db } from './db';
-import { players, bankroll_history, bets, settings, qualitative_events } from './schema';
+import { players, bankroll_history, bets, settings, qualitative_events, agent_context_store, decision_audit } from './schema';
 import { desc, eq } from 'drizzle-orm';
 import { seed } from './seed';
 import { createServer } from 'http';
@@ -393,6 +393,173 @@ app.get('/api/export/bets', async (req, res) => {
   }
 });
 
+// ── Agent Context Store Endpoints ───────────────────────────────────────────
+app.get('/api/context/:game_id', async (req, res) => {
+  try {
+    const { game_id } = req.params;
+    const entries = await db.select().from(agent_context_store)
+      .where(eq(agent_context_store.game_id, game_id))
+      .orderBy(desc(agent_context_store.created_at));
+    res.json(entries);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to fetch context entries' });
+  }
+});
+
+app.post('/api/context', async (req, res) => {
+  try {
+    const { game_id, agent_id, context_key, context_value, confidence, ttl_seconds } = req.body;
+    await db.insert(agent_context_store).values({
+      game_id,
+      agent_id,
+      context_key,
+      context_value: typeof context_value === 'string' ? context_value : JSON.stringify(context_value),
+      confidence: confidence || 0.8,
+      ttl_seconds: ttl_seconds || 3600,
+      created_at: Date.now()
+    });
+    res.status(201).json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to write context entry' });
+  }
+});
+
+app.get('/api/context', async (req, res) => {
+  try {
+    const entries = await db.select().from(agent_context_store)
+      .orderBy(desc(agent_context_store.created_at))
+      .limit(100);
+    res.json(entries);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to fetch all context entries' });
+  }
+});
+
+// ── Decision Audit Trail Endpoints ──────────────────────────────────────────
+app.get('/api/audit/:trace_id', async (req, res) => {
+  try {
+    const { trace_id } = req.params;
+    const decisions = await db.select().from(decision_audit)
+      .where(eq(decision_audit.trace_id, trace_id))
+      .orderBy(decision_audit.timestamp);
+    res.json(decisions);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to fetch audit trail' });
+  }
+});
+
+app.get('/api/audit', async (req, res) => {
+  try {
+    const entries = await db.select().from(decision_audit)
+      .orderBy(desc(decision_audit.timestamp))
+      .limit(100);
+    res.json(entries);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to fetch audit entries' });
+  }
+});
+
+app.post('/api/audit', async (req, res) => {
+  try {
+    const { trace_id, agent_id, action, reason, input_payload, output_payload, confidence } = req.body;
+    await db.insert(decision_audit).values({
+      trace_id,
+      agent_id,
+      action,
+      reason: reason || null,
+      input_payload: input_payload ? JSON.stringify(input_payload) : null,
+      output_payload: output_payload ? JSON.stringify(output_payload) : null,
+      confidence: confidence || null,
+      timestamp: Date.now()
+    });
+    res.status(201).json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to log audit decision' });
+  }
+});
+
+// ── CLV Tracking Endpoints ──────────────────────────────────────────────────
+app.patch('/api/bets/:id/clv', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { closing_odds } = req.body;
+
+    const betRecord = await db.select().from(bets).where(eq(bets.id, parseInt(id, 10))).limit(1);
+    if (betRecord.length === 0) {
+      return res.status(404).json({ error: 'Bet not found' });
+    }
+    const bet = betRecord[0];
+    const openingOdds = bet.book_odds;
+    
+    // Calculate implied probabilities
+    const openProb = openingOdds < 0 
+      ? Math.abs(openingOdds) / (Math.abs(openingOdds) + 100) 
+      : 100 / (openingOdds + 100);
+    const closeProb = closing_odds < 0 
+      ? Math.abs(closing_odds) / (Math.abs(closing_odds) + 100) 
+      : 100 / (closing_odds + 100);
+    const clv_pct = Math.round((closeProb - openProb) / openProb * 10000) / 100;
+
+    await db.update(bets)
+      .set({ closing_odds, clv_pct })
+      .where(eq(bets.id, parseInt(id, 10)));
+
+    res.json({ success: true, closing_odds, clv_pct });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to record CLV' });
+  }
+});
+
+app.get('/api/clv/summary', async (req, res) => {
+  try {
+    const allBets = await db.select().from(bets);
+    const tracked = allBets.filter(b => b.clv_pct !== null && b.parent_id === null);
+    
+    if (tracked.length === 0) {
+      return res.json({ total_tracked: 0, avg_clv: 0, positive_clv_pct: 0, clv_by_stat: {}, clv_by_result: {} });
+    }
+    
+    const avg_clv = Math.round(tracked.reduce((sum, b) => sum + (b.clv_pct || 0), 0) / tracked.length * 100) / 100;
+    const positive = tracked.filter(b => (b.clv_pct || 0) > 0).length;
+    
+    // CLV by stat
+    const statMap: Record<string, number[]> = {};
+    tracked.forEach(b => {
+      if (b.stat && b.clv_pct !== null) {
+        if (!statMap[b.stat]) statMap[b.stat] = [];
+        statMap[b.stat].push(b.clv_pct!);
+      }
+    });
+    const clv_by_stat: Record<string, number> = {};
+    for (const [k, v] of Object.entries(statMap)) {
+      clv_by_stat[k] = Math.round(v.reduce((a, b) => a + b, 0) / v.length * 100) / 100;
+    }
+    
+    // CLV by result
+    const resultMap: Record<string, number[]> = {};
+    tracked.forEach(b => {
+      if (b.result && b.clv_pct !== null) {
+        if (!resultMap[b.result]) resultMap[b.result] = [];
+        resultMap[b.result].push(b.clv_pct!);
+      }
+    });
+    const clv_by_result: Record<string, number> = {};
+    for (const [k, v] of Object.entries(resultMap)) {
+      clv_by_result[k] = Math.round(v.reduce((a, b) => a + b, 0) / v.length * 100) / 100;
+    }
+    
+    res.json({
+      total_tracked: tracked.length,
+      avg_clv,
+      positive_clv_pct: Math.round(positive / tracked.length * 1000) / 10,
+      clv_by_stat,
+      clv_by_result
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to compute CLV summary' });
+  }
+});
+
 // ── Agents Health Telemetry ─────────────────────────────────────────────────
 const AGENTS_LIST = [
   { id: '0', name: 'Historical ETL', port: null },
@@ -408,7 +575,8 @@ const AGENTS_LIST = [
   { id: '9', name: 'News Sentiment', port: null },
   { id: '10', name: 'Game Total Projector', port: null },
   { id: '11', name: 'Market Value Detector', port: null },
-  { id: '13', name: 'Matchup Oracle / Parlay Gen', port: 8009 }
+  { id: '13', name: 'Matchup Oracle / Parlay Gen', port: 8009 },
+  { id: '14', name: 'CLV Tracker', port: 8010 }
 ];
 
 app.get('/api/agents/health', async (req, res) => {

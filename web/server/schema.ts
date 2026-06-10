@@ -33,6 +33,8 @@ export const bets = sqliteTable('bets', {
   settled_at: integer('settled_at'),
   opposing_team: text('opposing_team'),
   notes: text('notes'),
+  closing_odds: integer('closing_odds'), // Closing line odds at game time (Agent 14 CLV Tracker)
+  clv_pct: real('clv_pct'), // Closing Line Value percentage (positive = sharp)
 });
 
 export const settings = sqliteTable('settings', {
@@ -44,6 +46,35 @@ export const qualitative_events = sqliteTable('qualitative_events', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   channel: text('channel').notNull(),
   payload: text('payload').notNull(), // JSON payload string
+  timestamp: integer('timestamp').notNull(),
+});
+
+// ── Agent Context Store (Shared Memory Layer) ─────────────────────────────────
+// Enables agents to read each other's enrichments instead of operating blind.
+// Agent 3 can read Agent 5's referee profiles, Agent 9's fatigue scores, etc.
+export const agent_context_store = sqliteTable('agent_context_store', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  game_id: text('game_id').notNull(),
+  agent_id: text('agent_id').notNull(),
+  context_key: text('context_key').notNull(), // e.g. 'referee_foul_bias', 'coach_fatigue_score'
+  context_value: text('context_value').notNull(), // JSON payload
+  confidence: real('confidence').notNull(), // 0.0 - 1.0
+  ttl_seconds: integer('ttl_seconds').default(3600),
+  created_at: integer('created_at').notNull(),
+});
+
+// ── Decision Audit Trail ──────────────────────────────────────────────────────
+// Logs every agent approve/reject/abstain decision for full traceability.
+// trace_id links all decisions for a single edge through the pipeline.
+export const decision_audit = sqliteTable('decision_audit', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  trace_id: text('trace_id').notNull(), // UUID linking all decisions for one edge
+  agent_id: text('agent_id').notNull(),
+  action: text('action').notNull(), // 'APPROVE', 'REJECT', 'ABSTAIN', 'SIZE', 'EXECUTE', 'HALT'
+  reason: text('reason'),
+  input_payload: text('input_payload'), // JSON: what the agent received
+  output_payload: text('output_payload'), // JSON: what the agent emitted
+  confidence: real('confidence'),
   timestamp: integer('timestamp').notNull(),
 });
 

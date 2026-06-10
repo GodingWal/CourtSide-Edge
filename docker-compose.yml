@@ -138,6 +138,18 @@ services:
     ports:
       - "8009:8009"
 
+  agent_14_clv_tracker:
+    build:
+      context: .
+      dockerfile: agents/14_clv_tracker/Dockerfile
+    volumes:
+      - ./data:/app/data
+    depends_on:
+      - redis
+    restart: unless-stopped
+    ports:
+      - "8010:8010"
+
 
 
   web_server:

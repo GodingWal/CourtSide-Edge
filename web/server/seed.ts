@@ -72,6 +72,8 @@ export function seed(): void {
   sqlite.exec(`DROP TABLE IF EXISTS bankroll_history;`);
   sqlite.exec(`DROP TABLE IF EXISTS settings;`);
   sqlite.exec(`DROP TABLE IF EXISTS qualitative_events;`);
+  sqlite.exec(`DROP TABLE IF EXISTS agent_context_store;`);
+  sqlite.exec(`DROP TABLE IF EXISTS decision_audit;`);
 
   sqlite.exec(`
     CREATE TABLE IF NOT EXISTS players (
@@ -110,7 +112,9 @@ export function seed(): void {
       placed_at INTEGER NOT NULL,
       settled_at INTEGER,
       opposing_team TEXT,
-      notes TEXT
+      notes TEXT,
+      closing_odds INTEGER,
+      clv_pct REAL
     );
   `);
 
@@ -126,6 +130,34 @@ export function seed(): void {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       channel TEXT NOT NULL,
       payload TEXT NOT NULL,
+      timestamp INTEGER NOT NULL
+    );
+  `);
+
+  sqlite.exec(`
+    CREATE TABLE IF NOT EXISTS agent_context_store (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      game_id TEXT NOT NULL,
+      agent_id TEXT NOT NULL,
+      context_key TEXT NOT NULL,
+      context_value TEXT NOT NULL,
+      confidence REAL NOT NULL,
+      ttl_seconds INTEGER DEFAULT 3600,
+      created_at INTEGER NOT NULL,
+      UNIQUE(game_id, agent_id, context_key)
+    );
+  `);
+
+  sqlite.exec(`
+    CREATE TABLE IF NOT EXISTS decision_audit (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      trace_id TEXT NOT NULL,
+      agent_id TEXT NOT NULL,
+      action TEXT NOT NULL,
+      reason TEXT,
+      input_payload TEXT,
+      output_payload TEXT,
+      confidence REAL,
       timestamp INTEGER NOT NULL
     );
   `);
@@ -178,8 +210,8 @@ export function seed(): void {
   const betCount = sqlite.prepare('SELECT COUNT(*) as cnt FROM bets').get() as { cnt: number };
   if (betCount.cnt === 0) {
     const insert = sqlite.prepare(`
-      INSERT INTO bets (parent_id, is_parlay, player, stat, line, over_under, book_odds, true_odds, edge_pct, stake, result, actual_value, profit_loss, placed_at, settled_at, opposing_team, notes)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO bets (parent_id, is_parlay, player, stat, line, over_under, book_odds, true_odds, edge_pct, stake, result, actual_value, profit_loss, placed_at, settled_at, opposing_team, notes, closing_odds, clv_pct)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
     const now = Date.now();
     const dayMs = 86400000;
@@ -217,10 +249,24 @@ export function seed(): void {
         const opposingTeam = pick(TEAMS.filter((t) => t !== player.team));
         const notes = result === 'WIN' ? 'Sharp line, good CLV' : result === 'LOSS' ? 'Variance hit' : null;
 
+        // Generate CLV data for settled bets
+        let closingOdds: number | null = null;
+        let clvPct: number | null = null;
+        if (result !== null) {
+          // Simulate closing odds movement (line moved 5-15 points in our favor ~60% of the time)
+          const favorableMove = Math.random() > 0.4;
+          const movement = randomInt(3, 15);
+          closingOdds = favorableMove ? bookOdds - movement : bookOdds + movement;
+          // CLV = (closing_implied - opening_implied) / opening_implied * 100
+          const openProb = bookOdds < 0 ? Math.abs(bookOdds) / (Math.abs(bookOdds) + 100) : 100 / (bookOdds + 100);
+          const closeProb = closingOdds < 0 ? Math.abs(closingOdds) / (Math.abs(closingOdds) + 100) : 100 / (closingOdds + 100);
+          clvPct = Math.round((closeProb - openProb) / openProb * 10000) / 100;
+        }
+
         insert.run(
           null, 0, player.name, stat, line, overUnder, bookOdds, trueOdds, edgePct,
           stake, result, actualValue, profitLoss, placedAt, settledAt,
-          opposingTeam, notes
+          opposingTeam, notes, closingOdds, clvPct
         );
       }
 
@@ -228,33 +274,33 @@ export function seed(): void {
       const parlay1Placed = now - 5 * dayMs;
       const parlay1Settled = parlay1Placed + 4 * 3600000;
       const parent1Res = insert.run(
-        null, 1, null, null, null, null, 260, 0.55, 8.5, 100, 'WIN', null, 260.00, parlay1Placed, parlay1Settled, null, '2-Leg Parlay (Stewart + Wilson)'
+        null, 1, null, null, null, null, 260, 0.55, 8.5, 100, 'WIN', null, 260.00, parlay1Placed, parlay1Settled, null, '2-Leg Parlay (Stewart + Wilson)', 280, 3.5
       );
       const parent1Id = parent1Res.lastInsertRowid as number;
 
       // Leg 1 of Parlay 1
       insert.run(
-        parent1Id, 0, 'Breanna Stewart', 'PTS', 22.5, 'OVER', -110, 0.58, 6.2, 0, 'WIN', 25, 0, parlay1Placed, parlay1Settled, 'LVA', 'Leg 1'
+        parent1Id, 0, 'Breanna Stewart', 'PTS', 22.5, 'OVER', -110, 0.58, 6.2, 0, 'WIN', 25, 0, parlay1Placed, parlay1Settled, 'LVA', 'Leg 1', -118, 4.1
       );
       // Leg 2 of Parlay 1
       insert.run(
-        parent1Id, 0, "A'ja Wilson", 'REB', 9.5, 'OVER', -115, 0.60, 9.1, 0, 'WIN', 12, 0, parlay1Placed, parlay1Settled, 'NYL', 'Leg 2'
+        parent1Id, 0, "A'ja Wilson", 'REB', 9.5, 'OVER', -115, 0.60, 9.1, 0, 'WIN', 12, 0, parlay1Placed, parlay1Settled, 'NYL', 'Leg 2', -125, 5.2
       );
 
       // Seed Parlay 2: Pending
       const parlay2Placed = now - 2 * 3600000; // 2 hours ago
       const parent2Res = insert.run(
-        null, 1, null, null, null, null, 320, 0.48, 11.2, 50, null, null, null, parlay2Placed, null, null, 'Active 2-Leg Parlay (Clark + Ionescu)'
+        null, 1, null, null, null, null, 320, 0.48, 11.2, 50, null, null, null, parlay2Placed, null, null, 'Active 2-Leg Parlay (Clark + Ionescu)', null, null
       );
       const parent2Id = parent2Res.lastInsertRowid as number;
 
       // Leg 1 of Parlay 2
       insert.run(
-        parent2Id, 0, 'Caitlin Clark', 'AST', 8.5, 'OVER', -110, 0.52, 8.5, 0, null, null, null, parlay2Placed, null, 'CON', 'Leg 1'
+        parent2Id, 0, 'Caitlin Clark', 'AST', 8.5, 'OVER', -110, 0.52, 8.5, 0, null, null, null, parlay2Placed, null, 'CON', 'Leg 1', null, null
       );
       // Leg 2 of Parlay 2
       insert.run(
-        parent2Id, 0, 'Sabrina Ionescu', 'PTS', 18.5, 'OVER', -115, 0.55, 12.0, 0, null, null, null, parlay2Placed, null, 'PHX', 'Leg 2'
+        parent2Id, 0, 'Sabrina Ionescu', 'PTS', 18.5, 'OVER', -115, 0.55, 12.0, 0, null, null, null, parlay2Placed, null, 'PHX', 'Leg 2', null, null
       );
     });
     tx();
@@ -359,6 +405,68 @@ export function seed(): void {
     console.log(`✓ Seeded ${sampleEvents.length} sample qualitative events`);
   } else {
     console.log(`⏭ Qualitative events already seeded (${qualitativeCount.cnt} rows)`);
+  }
+
+  // ── Seed agent context store ──────────────────────────────────────────────
+  const contextCount = sqlite.prepare('SELECT COUNT(*) as cnt FROM agent_context_store').get() as { cnt: number };
+  if (contextCount.cnt === 0) {
+    const insert = sqlite.prepare(`
+      INSERT INTO agent_context_store (game_id, agent_id, context_key, context_value, confidence, ttl_seconds, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `);
+    const now = Date.now();
+    const dayMs = 86400000;
+
+    const sampleContexts = [
+      { game_id: 'LVA_NYL', agent_id: 'Agent_5', context_key: 'referee_foul_bias', context_value: JSON.stringify({ crew: 'Crew_A', fouls_per_40: 38.5, pace_effect: -1.2, ou_tendency: 'Under' }), confidence: 0.85, ttl: 7200, ts: now - 3 * 3600000 },
+      { game_id: 'LVA_NYL', agent_id: 'Agent_9', context_key: 'coach_fatigue_score', context_value: JSON.stringify({ team: 'LVA', fatigue: -0.6, travel_density: '3 road in 5 days', summary: 'Heavy travel fatigue detected' }), confidence: 0.72, ttl: 3600, ts: now - 2 * 3600000 },
+      { game_id: 'IND_CHI', agent_id: 'Agent_5', context_key: 'referee_foul_bias', context_value: JSON.stringify({ crew: 'Crew_B', fouls_per_40: 30.1, pace_effect: 2.5, ou_tendency: 'Over' }), confidence: 0.88, ttl: 7200, ts: now - 1 * 3600000 },
+      { game_id: 'IND_CHI', agent_id: 'Agent_9', context_key: 'travel_fatigue', context_value: JSON.stringify({ team: 'IND', fatigue: -0.2, travel_density: 'Home stand', summary: 'Minimal fatigue, rested squad' }), confidence: 0.91, ttl: 3600, ts: now - 30 * 60000 },
+      { game_id: 'LVA_NYL', agent_id: 'Agent_2', context_key: 'roster_alert', context_value: JSON.stringify({ player: "A'ja Wilson", status: 'Questionable', injury: 'Right ankle', impact: 'If out, LVA usage redistribution massive' }), confidence: 0.65, ttl: 1800, ts: now - 45 * 60000 },
+    ];
+
+    const tx = sqlite.transaction(() => {
+      for (const c of sampleContexts) {
+        insert.run(c.game_id, c.agent_id, c.context_key, c.context_value, c.confidence, c.ttl, c.ts);
+      }
+    });
+    tx();
+    console.log(`✓ Seeded ${sampleContexts.length} agent context entries`);
+  } else {
+    console.log(`⏭ Agent context store already seeded (${contextCount.cnt} rows)`);
+  }
+
+  // ── Seed decision audit trail ────────────────────────────────────────────
+  const auditCount = sqlite.prepare('SELECT COUNT(*) as cnt FROM decision_audit').get() as { cnt: number };
+  if (auditCount.cnt === 0) {
+    const insert = sqlite.prepare(`
+      INSERT INTO decision_audit (trace_id, agent_id, action, reason, input_payload, output_payload, confidence, timestamp)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    const now = Date.now();
+    const traceId1 = 'a1b2c3d4-e5f6-7890-abcd-ef1234567890';
+    const traceId2 = 'f9e8d7c6-b5a4-3210-fedc-ba0987654321';
+
+    const sampleAudits = [
+      // Trace 1: Full pipeline — approved
+      { trace_id: traceId1, agent_id: 'Agent_11', action: 'APPROVE', reason: 'Detected sharp_money with 82% confidence, divergence 6.5%', confidence: 0.82, ts: now - 5 * 60000 },
+      { trace_id: traceId1, agent_id: 'Agent_7', action: 'APPROVE', reason: 'Game exposure 1/3, within limits', confidence: 0.82, ts: now - 4 * 60000 + 30000 },
+      { trace_id: traceId1, agent_id: 'Agent_8', action: 'SIZE', reason: 'Sized at $42.50 (NORMAL regime, confidence-adjusted Kelly)', confidence: 0.82, ts: now - 4 * 60000 },
+      { trace_id: traceId1, agent_id: 'Agent_4', action: 'EXECUTE', reason: 'Executed $42.50 bet. Drawdown: 3.2%, Confidence: 0.82', confidence: 0.82, ts: now - 3 * 60000 + 45000 },
+      // Trace 2: Rejected at Agent 7
+      { trace_id: traceId2, agent_id: 'Agent_11', action: 'APPROVE', reason: 'Detected public_drift with 60% confidence', confidence: 0.60, ts: now - 10 * 60000 },
+      { trace_id: traceId2, agent_id: 'Agent_7', action: 'REJECT', reason: 'Game exposure 3 exceeds max 3 for confidence < 0.85', confidence: 0.60, ts: now - 9 * 60000 + 30000 },
+    ];
+
+    const tx = sqlite.transaction(() => {
+      for (const a of sampleAudits) {
+        insert.run(a.trace_id, a.agent_id, a.action, a.reason, null, null, a.confidence, a.ts);
+      }
+    });
+    tx();
+    console.log(`✓ Seeded ${sampleAudits.length} decision audit entries`);
+  } else {
+    console.log(`⏭ Decision audit already seeded (${auditCount.cnt} rows)`);
   }
 
   sqlite.close();
