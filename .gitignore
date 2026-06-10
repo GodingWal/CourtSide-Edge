@@ -29,3 +29,10 @@ lerna-debug.log*
 # OS files
 .DS_Store
 Thumbs.db
+
+# Python caches
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/

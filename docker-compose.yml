@@ -250,6 +250,28 @@ services:
     ports:
       - "8017:8017"
 
+  agent_22_data_watchdog:
+    build:
+      context: .
+      dockerfile: agents/22_data_watchdog/Dockerfile
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    ports:
+      - "8018:8018"
+
+  agent_23_game_session_manager:
+    build:
+      context: .
+      dockerfile: agents/23_game_session_manager/Dockerfile
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    ports:
+      - "8019:8019"
+
   web_server:
     build:
       context: ./web/server

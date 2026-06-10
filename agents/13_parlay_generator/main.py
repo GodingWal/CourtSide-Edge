@@ -2,8 +2,11 @@ import os
 import sqlite3
 import random
 import logging
-from fastapi import FastAPI
+import time
+import threading
+from fastapi import FastAPI, HTTPException
 import uvicorn
+from shared.redis_client import RedisPubSub
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("Agent13_ParlayGenerator")
@@ -31,6 +34,45 @@ STATS = [
 
 TEAMS = ["LVA", "NYL", "SEA", "CON", "PHX", "IND", "CHI", "MIN", "DAL", "WSH", "ATL", "LAX"]
 
+# ── Pregame Window & Game Session Tracking ────────────────────────────────────
+PREGAME_WINDOW_MIN = int(os.environ.get('PARLAY_PREGAME_WINDOW_MINUTES', '30'))
+
+active_games = {}
+state_lock = threading.Lock()
+
+
+def process_game_active(msg):
+    game_id = msg.get("gameId")
+    tipoff = msg.get("tipoff")
+    status = msg.get("status")
+    if game_id:
+        with state_lock:
+            active_games[game_id] = {
+                "gameId": game_id,
+                "tipoff": tipoff,
+                "status": status
+            }
+        logger.info(f"Stored status update: {game_id} -> {status} (tipoff: {tipoff})")
+
+
+def start_subscriptions():
+    pubsub = RedisPubSub()
+    logger.info("Agent 13 subscribing to channel_game_active...")
+    pubsub.subscribe("channel_game_active", process_game_active)
+    try:
+        while True:
+            time.sleep(1)
+    except Exception as e:
+        logger.error(f"Subscription loop failed: {e}")
+        pubsub.close()
+
+
+@app.on_event("startup")
+def startup_event():
+    # Start subscription listener in background thread
+    threading.Thread(target=start_subscriptions, daemon=True).start()
+
+
 def get_active_players():
     if not os.path.exists(DB_PATH):
         logger.warning(f"Database not found at {DB_PATH}. Using default players.")
@@ -51,17 +93,20 @@ def get_active_players():
         logger.error(f"Error reading database: {e}")
         return DEFAULT_PLAYERS
 
+
 def to_decimal(american):
     if american > 0:
         return (american / 100.0) + 1.0
     else:
         return (100.0 / abs(american)) + 1.0
 
+
 def to_american(decimal):
     if decimal >= 2.0:
         return int(round((decimal - 1.0) * 100.0))
     else:
         return int(round(-100.0 / (decimal - 1.0)))
+
 
 def generate_nemotron_summary(leg1, leg2):
     templates = [
@@ -75,12 +120,40 @@ def generate_nemotron_summary(leg1, leg2):
         p2=leg2["player"], team2=leg2["opposing_team"]
     )
 
+
 @app.get("/health")
 def health():
-    return {"status": "healthy"}
+    return {
+        "status": "healthy",
+        "pregame_window_min": PREGAME_WINDOW_MIN,
+        "tracked_games": list(active_games.values())
+    }
+
 
 @app.post("/api/parlay/generate")
 def generate_parlay():
+    # ── Pregame Window Gate Check ─────────────────────────────────────────────
+    now = time.time()
+    window_sec = PREGAME_WINDOW_MIN * 60
+    
+    with state_lock:
+        games_in_window = []
+        for g_id, game in active_games.items():
+            if game["status"] == "PRE":
+                time_to_tipoff = game["tipoff"] - now
+                if 0 <= time_to_tipoff <= window_sec:
+                    games_in_window.append(game)
+                    
+    # If no upcoming games are in the tipoff window, refuse parlay synthesis
+    if not games_in_window:
+        logger.warning("⛔ PARLAY SYNTHESIS BLOCKED: Outside pre-game window (no games scheduled in next 30 minutes)")
+        raise HTTPException(
+            status_code=400,
+            detail=f"Parlay synthesis blocked: Outside of pre-game window. No games starting in the next {PREGAME_WINDOW_MIN} minutes."
+        )
+
+    logger.info(f"Generating parlay. Games in window: {[g['gameId'] for g in games_in_window]}")
+
     players = get_active_players()
     if len(players) < 2:
         players = DEFAULT_PLAYERS
