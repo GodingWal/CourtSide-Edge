@@ -1,2 +1,12 @@
 vast
-cd ~/CourtSide-Edge && git fetch --all --prune -q && git reset --hard origin/main -q && bash deploy/scripts/deploy-agents.sh && sleep 5 && bash deploy/scripts/run-agents-native.sh status
+cd ~/CourtSide-Edge && git fetch --all --prune -q && git reset --hard origin/main -q && bash deploy/scripts/run-agents-native.sh restart >/dev/null && sleep 45 && echo "=== agent1: lines & props ===" && grep -E "Odds API|Opening line|Line move|Prop move" logs/1_market_scraper.log | tail -12 && echo "=== props cached ===" && .venv-agents/bin/python - <<'PY'
+import os
+import redis
+env = dict(l.split('=',1) for l in open('deploy/env/agents.env') if '=' in l and not l.startswith('#'))
+r = redis.Redis(host=env['REDIS_HOST'], port=int(env['REDIS_PORT']), password=env['REDIS_PASSWORD'].strip())
+props = r.hgetall('props:lines')
+print(len(props), "props cached. Sample:")
+for k, v in list(props.items())[:6]:
+    print(" ", k.decode(), "→", v.decode()[:110])
+print("edges in stream:", r.xlen('stream_market_intelligence'))
+PY
