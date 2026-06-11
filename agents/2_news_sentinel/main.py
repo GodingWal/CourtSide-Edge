@@ -29,6 +29,9 @@ def main():
 
             # Extract structured injury/roster intel with the local Nemotron model.
             extracted = nemotron.extract_injury_json(text)
+            if extracted is None:
+                logger.warning("LLM unavailable/failed for this article — skipping (no fabricated intel).")
+                continue
             extracted["headline"] = article["headline"]
             extracted["published"] = article.get("published")
             logger.info(f"Nemotron extracted JSON: {extracted}")

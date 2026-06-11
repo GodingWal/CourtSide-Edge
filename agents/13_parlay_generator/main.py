@@ -6,33 +6,15 @@ import threading
 from fastapi import FastAPI, HTTPException
 import uvicorn
 from shared.redis_client import RedisPubSub
+from infrastructure.nemotron.client import NemotronClient
 
-from shared.base_agent import run_polling_loop, setup_logging, db_connect
+from shared.base_agent import run_polling_loop, setup_logging
 
 logger = setup_logging("Agent13_ParlayGenerator")
 
 app = FastAPI(title="Agent 13: Matchup Oracle & Parlay Generator")
 
-DB_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../data/hoopstats_wnba.db"))
-
-DEFAULT_PLAYERS = [
-    {"name": "A'ja Wilson", "team": "LVA"},
-    {"name": "Breanna Stewart", "team": "NYL"},
-    {"name": "Caitlin Clark", "team": "IND"},
-    {"name": "Sabrina Ionescu", "team": "NYL"},
-    {"name": "Alyssa Thomas", "team": "CON"},
-    {"name": "Kelsey Plum", "team": "LVA"},
-    {"name": "Angel Reese", "team": "CHI"},
-    {"name": "Arike Ogunbowale", "team": "DAL"},
-]
-
-STATS = [
-    {"stat": "PTS", "line_min": 15.5, "line_max": 26.5},
-    {"stat": "REB", "line_min": 6.5, "line_max": 11.5},
-    {"stat": "AST", "line_min": 4.5, "line_max": 9.5},
-]
-
-TEAMS = ["LVA", "NYL", "SEA", "CON", "PHX", "IND", "CHI", "MIN", "DAL", "WSH", "ATL", "LAX"]
+nemotron = NemotronClient()
 
 # ── Pregame Window & Game Session Tracking ────────────────────────────────────
 PREGAME_WINDOW_MIN = int(os.environ.get('PARLAY_PREGAME_WINDOW_MINUTES', '30'))
@@ -74,27 +56,6 @@ def startup_event():
     threading.Thread(target=start_subscriptions, daemon=True).start()
 
 
-def get_active_players():
-    if not os.path.exists(DB_PATH):
-        logger.warning(f"Database not found at {DB_PATH}. Using default players.")
-        return DEFAULT_PLAYERS
-    
-    try:
-        conn = db_connect(DB_PATH)
-        cursor = conn.cursor()
-        cursor.execute("SELECT name, team FROM players WHERE status = 'ACTIVE'")
-        rows = cursor.fetchall()
-        conn.close()
-        
-        if not rows:
-            return DEFAULT_PLAYERS
-        
-        return [{"name": row[0], "team": row[1]} for row in rows]
-    except Exception as e:
-        logger.error(f"Error reading database: {e}")
-        return DEFAULT_PLAYERS
-
-
 def to_decimal(american):
     if american > 0:
         return (american / 100.0) + 1.0
@@ -109,17 +70,30 @@ def to_american(decimal):
         return int(round(-100.0 / (decimal - 1.0)))
 
 
-def generate_nemotron_summary(leg1, leg2):
-    templates = [
-        "{p1}'s interior matchup against {team1}'s weak paint defense will drive heavy volume and high-efficiency looks. Concurrently, {p2} is positioned to exploit {team2}'s drop coverage scheme, leading to increased output that makes this two-leg combination highly positive EV.",
-        "{p1} projects to see high usage against {team1}'s fast-paced transition play, magnifying the over value. Simultaneously, {p2}'s elite secondary playmaking will punish {team2}'s aggressive blitz packages, creating a strong correlated correlation between both legs.",
-        "With {team1} struggling against perimeter pick-and-rolls, {p1} is in a prime spot to exceed lines in high-leverage possessions. Meanwhile, {p2} benefits from massive rebounding advantages against {team2}'s small-ball frontcourt, sealing a highly edge-rich pairing."
-    ]
-    template = random.choice(templates)
-    return template.format(
-        p1=leg1["player"], team1=leg1["opposing_team"],
-        p2=leg2["player"], team2=leg2["opposing_team"]
+def generate_nemotron_summary(leg1, leg2, platform, multiplier):
+    """Rationale for the entry. Uses the real local Nemotron model when
+    available; otherwise a purely factual description of the picks — never
+    fabricated matchup analysis."""
+    factual = (
+        f"2-pick power play on {platform}: {leg1['player']} OVER {leg1['line']} {leg1['stat']} "
+        f"({leg1['opposing_team']}) + {leg2['player']} OVER {leg2['line']} {leg2['stat']} "
+        f"({leg2['opposing_team']}); pays {multiplier}x."
     )
+    if nemotron.simulated:
+        return factual
+    try:
+        return nemotron.ask(
+            question=(
+                f"Entry: {factual}\n"
+                "Write a 2-3 sentence rationale for this WNBA pick'em entry. Base it ONLY on the "
+                "lines given — do not invent injuries, matchup stats, or scheme details."
+            ),
+            system="You are the parlay analyst of a WNBA betting terminal. Be concise and concrete.",
+            temperature=0.4,
+        )
+    except Exception as e:
+        logger.error(f"Nemotron summary failed, returning factual description: {e}")
+        return factual
 
 
 @app.get("/health")
@@ -219,7 +193,7 @@ def generate_parlay():
     combined_dec = multiplier
     parlay_odds = to_american(combined_dec)
     
-    summary = generate_nemotron_summary(leg1, leg2)
+    summary = generate_nemotron_summary(leg1, leg2, platform, multiplier)
     
     return {
         "legs": [leg1, leg2],

@@ -26,7 +26,9 @@ class CorrelationGuard:
         self.active_game_exposures[game_id] = exposure + 1
         return True, f'Game exposure now {exposure + 1}/{max_exposure}'
 
-def on_market_intelligence(msg_id, message, stream_producer, guard):
+# `stream` is the same StreamConsumer used for consumption; it doubles as the
+# producer for the downstream approved-edges stream.
+def on_market_intelligence(msg_id, message, stream, guard):
     trace_id = message.get('trace_id', 'unknown')
     logger.info(f'Received market edge (trace: {trace_id[:8]}...)')
     
@@ -46,7 +48,7 @@ def on_market_intelligence(msg_id, message, stream_producer, guard):
         )
         
         logger.info('Edge approved, publishing to stream_approved_edges')
-        stream_producer.produce('stream_approved_edges', message)
+        stream.produce('stream_approved_edges', message)
     else:
         audit.log_decision(
             trace_id=trace_id,

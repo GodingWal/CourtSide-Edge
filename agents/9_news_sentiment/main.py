@@ -33,6 +33,9 @@ def main():
 
             # Score with the local Nemotron model (temp=0.3).
             analysis = nemotron.analyze_sentiment(content)
+            if analysis is None:
+                logger.warning("LLM unavailable/failed for this article — skipping (no fabricated scores).")
+                continue
             logger.info(f"Nemotron analysis: {analysis}")
 
             analysis["headline"] = article["headline"]

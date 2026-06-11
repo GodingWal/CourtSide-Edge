@@ -18,16 +18,13 @@ def _client_without_server():
 
 class TestNemotronClient(unittest.TestCase):
 
-    def test_no_server_falls_back_to_simulated(self):
+    def test_no_server_returns_none(self):
         client = _client_without_server()
         self.assertTrue(client.simulated)
 
-        result = client.analyze_sentiment("Some test text")
-        self.assertEqual(result, {
-            "motivation_score": 0.8,
-            "fatigue_penalty": -0.1,
-            "quote_impact": 0.5,
-        })
+        # No LLM → no fabricated data: callers receive None and skip the item.
+        self.assertIsNone(client.analyze_sentiment("Some test text"))
+        self.assertIsNone(client.extract_injury_json("Some test text"))
 
     def test_analyze_sentiment_local_server(self):
         client = _client_with_server()
@@ -63,18 +60,14 @@ class TestNemotronClient(unittest.TestCase):
         self.assertEqual(result["player_name"], "A")
         self.assertEqual(result["injury_status"], "OUT")
 
-    def test_call_error_falls_back_to_simulated(self):
+    def test_call_error_returns_none(self):
         client = _client_with_server()
 
         with patch.object(client_module.requests, "post", side_effect=Exception("boom")):
             result = client.analyze_sentiment("Some test text")
 
-        # Falls back to the simulated values rather than raising
-        self.assertEqual(result, {
-            "motivation_score": 0.8,
-            "fatigue_penalty": -0.1,
-            "quote_impact": 0.5,
-        })
+        # Failed call → None rather than fabricated values.
+        self.assertIsNone(result)
 
 
 if __name__ == '__main__':
