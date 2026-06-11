@@ -22,15 +22,17 @@ def process_odds_message(message):
     """Processes incoming live odds, calculates velocity of changes, and alerts on anomalies."""
     logger.info("Agent 17 received live odds stream data.")
     
-    # We parse the incoming mock data
-    # Mock data format published by Agent 1:
-    # { "player": "Caitlin Clark", "stat": "AST", "line": 8.5, "odds": -110, "timestamp": ... }
-    player = message.get("player", "A'ja Wilson")
-    stat = message.get("stat", "PTS")
-    line = message.get("line", 22.5)
+    # Agent 1 publishes REAL game lines from ESPN:
+    # { "game_id": "IND_CHI", "over_under": 165.5, "spread": -4.5, "timestamp": ... }
+    # (player-prop messages, when a props feed is configured, carry player/stat/line/odds)
+    if message.get("over_under") is None and message.get("line") is None:
+        return
+    player = message.get("player") or message.get("game_id", "GAME")
+    stat = message.get("stat") or ("TOTAL" if message.get("over_under") is not None else "LINE")
+    line = message.get("line", message.get("over_under"))
     odds = message.get("odds", -110)
     ts = message.get("timestamp", time.time())
-    
+
     key = f"{player}:{stat}"
     if key not in price_histories:
         price_histories[key] = []
@@ -82,35 +84,23 @@ def process_odds_message(message):
                 if pubsub:
                     # Publish as a steam alert so correlation engine & execution monitor pick it up
                     pubsub.publish("channel_steam_alerts", alert_payload)
+                    # Surface on the dashboard (web API reads recent:velocity_alerts)
+                    pubsub.push_recent("recent:velocity_alerts", {
+                        "player": player,
+                        "stat": stat,
+                        "direction": direction,
+                        "delta": f"{line_delta:+.1f}",
+                        "odds_delta": f"{odds_delta:+d}",
+                        "duration_seconds": int(time_delta_seconds),
+                        "reason": alert_payload["data"]["reason"],
+                        "timestamp": int(time.time() * 1000),
+                    })
 
 def start_redis_listener():
     global pubsub
     pubsub = RedisPubSub()
     pubsub.subscribe("channel_live_odds", process_odds_message)
-    logger.info("Subscribed to channel_live_odds")
-    
-    # We will also simulate receiving updates periodically to keep the dashboard active when Redis is run offline
-    # This simulates line shifts every 15 seconds
-    while True:
-        try:
-            # Generate mock live odds update to process
-            mock_players = ["Caitlin Clark", "A'ja Wilson", "Breanna Stewart"]
-            mock_stats = ["PTS", "AST", "REB"]
-            p = mock_players[int(time.time()) % 3]
-            s = mock_stats[int(time.time()) % 3]
-            line = 20.5 + (int(time.time()) % 5) * 0.5
-            o = -110 - (int(time.time()) % 4) * 5
-            
-            process_odds_message({
-                "player": p,
-                "stat": s,
-                "line": line,
-                "odds": o,
-                "timestamp": time.time()
-            })
-        except Exception as e:
-            logger.error(f"Error in simulated odds generator: {e}")
-        time.sleep(15)
+    logger.info("Subscribed to channel_live_odds (real lines from Agent 1).")
 
 if __name__ == "__main__":
     logger.info("Starting Agent 17 (Line Movement Velocity Agent)...")

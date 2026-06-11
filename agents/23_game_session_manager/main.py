@@ -3,6 +3,7 @@ import threading
 from fastapi import FastAPI, Query, HTTPException
 import uvicorn
 from shared.redis_client import RedisPubSub
+from shared.espn_client import get_scoreboard
 
 from shared.base_agent import setup_logging
 
@@ -10,21 +11,8 @@ logger = setup_logging('Agent23_GameSessionManager')
 
 app = FastAPI(title="Agent 23: WNBA Game Session Manager")
 
-# Mock database of games in memory
-games_db = {
-    "LVA_NYL": {
-        "gameId": "LVA_NYL",
-        "teams": ["LVA", "NYL"],
-        "tipoff": time.time() + 900,  # 15 minutes from now (inside the 30-min parlay window)
-        "status": "PRE"
-    },
-    "IND_CHI": {
-        "gameId": "IND_CHI",
-        "teams": ["IND", "CHI"],
-        "tipoff": time.time() + 1800,  # 30 minutes from now (on the boundary)
-        "status": "PRE"
-    }
-}
+# Game sessions, populated from the real WNBA schedule (ESPN scoreboard).
+games_db = {}
 
 # Lock for thread safety
 db_lock = threading.Lock()
@@ -78,6 +66,31 @@ def set_game_status(game_id: str, status: str = Query(..., regex="^(PRE|LIVE|FIN
     return updated_game
 
 
+def run_schedule_sync():
+    """Refresh games_db from the real ESPN scoreboard every 60s."""
+    logger.info("Starting real schedule sync loop (ESPN)...")
+    while True:
+        try:
+            games = get_scoreboard()
+            if games:
+                with db_lock:
+                    for g in games:
+                        games_db[g["game_id"]] = {
+                            "gameId": g["game_id"],
+                            "teams": [g["away"], g["home"]],
+                            "tipoff": g["tipoff"] or time.time(),
+                            "status": g["state"],
+                            "period": g.get("period"),
+                            "clock": g.get("clock"),
+                            "home_score": g.get("home_score"),
+                            "away_score": g.get("away_score"),
+                        }
+                logger.info(f"Schedule sync: {len(games)} real games tracked.")
+        except Exception as e:
+            logger.error(f"Schedule sync error: {e}")
+        time.sleep(60)
+
+
 def run_heartbeat():
     pubsub = None
     logger.info("Starting heartbeat loop...")
@@ -101,7 +114,8 @@ def run_heartbeat():
 
 
 if __name__ == '__main__':
-    # Start heartbeat in background thread
+    # Start real-schedule sync + heartbeat in background threads
+    threading.Thread(target=run_schedule_sync, daemon=True).start()
     heartbeat_thread = threading.Thread(target=run_heartbeat, daemon=True)
     heartbeat_thread.start()
     

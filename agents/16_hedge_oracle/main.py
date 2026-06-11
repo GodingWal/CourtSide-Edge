@@ -1,11 +1,11 @@
 import time
 import os
-import random
 from fastapi import FastAPI
 import uvicorn
 import threading
 
 from shared.base_agent import setup_logging, db_transaction
+from shared.redis_client import RedisPubSub
 
 logger = setup_logging("Agent16_HedgeOracle")
 
@@ -37,7 +37,7 @@ def calculate_hedge_profit(original_odds, live_odds, stake):
     
     return hedge_stake, potential_profit
 
-def scan_for_hedges():
+def scan_for_hedges(pubsub):
     logger.info("Scanning for dynamic hedging and middle opportunities...")
     
     if not os.path.exists(DB_PATH):
@@ -64,14 +64,19 @@ def scan_for_hedges():
                 logger.info("No active pending wagers to hedge.")
                 return
 
+            # Real live lines only: Agent 1 caches current market lines in the
+            # Redis hash live:lines. With no real movement there is no hedge —
+            # we never fabricate one.
+            try:
+                live_lines = {k: float(v) for k, v in pubsub.client.hgetall("live:lines").items()}
+            except Exception as e:
+                logger.warning(f"Could not read live lines from Redis: {e}")
+                live_lines = {}
+
             for bet_id, player, stat, line, book_odds, stake, opp in pending_bets:
-                # Simulate scanning multiple sportsbooks for live lines
-                # In a real system, Agent 1 scraper feeds this. Here, we mock a live line shift.
-                # 50% chance of a hedging or middle opportunity appearing
-                if random.random() > 0.5:
-                    # Mock a favorable movement in our direction
-                    live_line = line + (1.0 if random.random() > 0.5 else -1.0)
-                    live_odds = random.choice([+110, +115, +120, +130, -105])
+                live_line = live_lines.get(opp) if opp else None
+                if live_line is not None and line is not None and live_line != line:
+                    live_odds = -110  # consensus pricing; book-specific odds need a props feed
                 
                     # Check if this forms a middle or arbitrage
                     hedge_stake, profit = calculate_hedge_profit(book_odds, live_odds, stake)
@@ -99,9 +104,10 @@ def scan_for_hedges():
 
 def hedge_oracle_loop():
     time.sleep(10)
+    pubsub = RedisPubSub()
     while True:
         try:
-            scan_for_hedges()
+            scan_for_hedges(pubsub)
         except Exception as e:
             logger.error(f"Error in hedge oracle loop: {e}")
         time.sleep(30) # scan for hedges every 30s
