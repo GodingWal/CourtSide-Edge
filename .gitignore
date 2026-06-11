@@ -19,6 +19,10 @@ hoopstats_wnba_test.db
 .env.local
 .env.*.local
 
+# Deploy secrets (generated from *.example, hold real API/Redis credentials)
+deploy/env/web.env
+deploy/env/agents.env
+
 # Logs
 npm-debug.log*
 yarn-debug.log*

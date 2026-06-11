@@ -4,6 +4,10 @@ WORKDIR /app
 COPY package*.json ./
 RUN npm ci
 COPY . .
+# API base is baked at build time. Defaults to same-origin /api for production
+# (the reverse proxy injects auth); override for split-origin deployments.
+ARG VITE_API_BASE=/api
+ENV VITE_API_BASE=$VITE_API_BASE
 RUN npm run build
 
 # Stage 2: Serve with Nginx

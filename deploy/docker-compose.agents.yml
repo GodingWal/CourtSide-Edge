@@ -1,0 +1,113 @@
+# CourtSideEdge — AGENT tier (runs on the vast.ai box: 151.237.25.234)
+#
+# These are the stateless / compute agents. They do NOT run their own Redis or
+# touch the SQLite ledger; they connect back to the VPS over the network:
+#   REDIS_HOST   = <VPS IP>   (set in deploy/env/agents.env)
+#   REDIS_PASSWORD = <shared secret, matches the VPS>
+#   BACKEND_URL  = https://courtside-edge.com
+#
+# The ledger-coupled agents (0, 13, 14, 15, 16, 20) live in the web tier on the
+# VPS because they read/write the SQLite file directly.
+#
+# Usage (from repo root, on the vast.ai box):
+#   docker compose --env-file deploy/env/agents.env -f deploy/docker-compose.agents.yml up -d --build
+#
+# Health-check FastAPI ports are bound to loopback so you can inspect them
+# through the SSH tunnel (ssh -p 26918 root@151.237.25.234 -L 8080:localhost:8080).
+
+x-agent: &agent
+  env_file: [env/agents.env]
+  restart: unless-stopped
+
+services:
+  agent_1_market_scraper:
+    <<: *agent
+    build: { context: .., dockerfile: agents/1_market_scraper/Dockerfile }
+
+  agent_2_news_sentinel:
+    <<: *agent
+    build: { context: .., dockerfile: agents/2_news_sentinel/Dockerfile }
+
+  agent_9_news_sentiment:
+    <<: *agent
+    build: { context: .., dockerfile: agents/9_news_sentiment/Dockerfile }
+
+  agent_3_projection_engine:
+    <<: *agent
+    build: { context: .., dockerfile: agents/3_projection_engine/Dockerfile }
+    ports: ["127.0.0.1:8000:8000"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+  agent_10_game_total_projector:
+    <<: *agent
+    build: { context: .., dockerfile: agents/10_game_total_projector/Dockerfile }
+
+  agent_11_market_value_detector:
+    <<: *agent
+    build: { context: .., dockerfile: agents/11_market_value_detector/Dockerfile }
+
+  agent_5_referee_engine:
+    <<: *agent
+    build: { context: .., dockerfile: agents/5_referee_engine/Dockerfile }
+
+  agent_6_steam_detector:
+    <<: *agent
+    build: { context: .., dockerfile: agents/6_steam_detector/Dockerfile }
+
+  agent_2_5_game_flow_oracle:
+    <<: *agent
+    build: { context: .., dockerfile: agents/2.5_game_flow_oracle/Dockerfile }
+
+  agent_7_correlation_guard:
+    <<: *agent
+    build: { context: .., dockerfile: agents/7_correlation_guard/Dockerfile }
+
+  agent_8_bankroll_sizer:
+    <<: *agent
+    build: { context: .., dockerfile: agents/8_bankroll_sizer/Dockerfile }
+
+  agent_4_execution_oracle:
+    <<: *agent
+    build: { context: .., dockerfile: agents/4_execution_oracle/Dockerfile }
+    ports: ["127.0.0.1:8001:8001"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+  agent_17_velocity_agent:
+    <<: *agent
+    build: { context: .., dockerfile: agents/17_velocity_agent/Dockerfile }
+    ports: ["127.0.0.1:8013:8013"]
+
+  agent_18_liquidity_oracle:
+    <<: *agent
+    build: { context: .., dockerfile: agents/18_liquidity_oracle/Dockerfile }
+    ports: ["127.0.0.1:8014:8014"]
+
+  agent_19_sharp_profiler:
+    <<: *agent
+    build: { context: .., dockerfile: agents/19_sharp_profiler/Dockerfile }
+    ports: ["127.0.0.1:8015:8015"]
+
+  agent_21_rotation_tracker:
+    <<: *agent
+    build: { context: .., dockerfile: agents/21_rotation_tracker/Dockerfile }
+    ports: ["127.0.0.1:8017:8017"]
+
+  agent_22_data_watchdog:
+    <<: *agent
+    build: { context: .., dockerfile: agents/22_data_watchdog/Dockerfile }
+    ports: ["127.0.0.1:8018:8018"]
+
+  agent_23_game_session_manager:
+    <<: *agent
+    build: { context: .., dockerfile: agents/23_game_session_manager/Dockerfile }
+    ports: ["127.0.0.1:8019:8019"]

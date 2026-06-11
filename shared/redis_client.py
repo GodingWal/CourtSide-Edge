@@ -8,6 +8,8 @@ from typing import Callable, Any
 
 REDIS_HOST = os.getenv('REDIS_HOST', 'localhost')
 REDIS_PORT = int(os.getenv('REDIS_PORT', 6379))
+# Optional password for cross-host (e.g. agents on vast.ai -> VPS) Redis connections.
+REDIS_PASSWORD = os.getenv('REDIS_PASSWORD') or None
 
 logger = logging.getLogger('RedisClient')
 
@@ -15,7 +17,7 @@ logger = logging.getLogger('RedisClient')
 class RedisPubSub:
     """Standard Redis Pub/Sub for non-critical informational channels."""
     def __init__(self):
-        self.client = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, decode_responses=True)
+        self.client = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, password=REDIS_PASSWORD, decode_responses=True)
         self.pubsub = self.client.pubsub()
 
     def publish(self, channel: str, message: Any):
@@ -45,7 +47,7 @@ class StreamConsumer:
     """
     
     def __init__(self, group_name: str, consumer_name: str):
-        self.client = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, decode_responses=True)
+        self.client = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, password=REDIS_PASSWORD, decode_responses=True)
         self.group_name = group_name
         self.consumer_name = consumer_name
         self._running = False

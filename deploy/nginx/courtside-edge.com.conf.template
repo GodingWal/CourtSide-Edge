@@ -1,0 +1,93 @@
+# Host nginx reverse proxy for courtside-edge.com (runs on the VPS).
+#
+# Terminates TLS and fronts the two loopback-bound containers from
+# docker-compose.web.yml:
+#   web_client (static SPA)  -> 127.0.0.1:8080
+#   web_server (API/SSE/WS)  -> 127.0.0.1:3000
+#
+# The API bearer token is injected here so it never ships to the browser.
+# `__API_KEY__` is substituted at deploy time from deploy/env/web.env
+# (see deploy/scripts/install-nginx.sh). Install to:
+#   /etc/nginx/sites-available/courtside-edge.com  (symlink into sites-enabled)
+# then run scripts/setup-tls.sh to obtain certs and enable the 443 block.
+
+map $http_upgrade $connection_upgrade {
+    default upgrade;
+    ''      close;
+}
+
+# HTTP -> HTTPS (certbot also manages this once certs exist).
+server {
+    listen 80;
+    listen [::]:80;
+    server_name courtside-edge.com www.courtside-edge.com;
+
+    # Allow ACME http-01 challenges.
+    location /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+    }
+
+    location / {
+        return 301 https://$host$request_uri;
+    }
+}
+
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    http2 on;
+    server_name courtside-edge.com www.courtside-edge.com;
+
+    ssl_certificate     /etc/letsencrypt/live/courtside-edge.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/courtside-edge.com/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_prefer_server_ciphers on;
+    ssl_session_cache shared:SSL:10m;
+    ssl_session_timeout 1d;
+
+    # Redirect the www host to the apex.
+    if ($host = www.courtside-edge.com) {
+        return 301 https://courtside-edge.com$request_uri;
+    }
+
+    add_header X-Frame-Options "SAMEORIGIN" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+
+    client_max_body_size 10m;
+
+    # ── API + SSE + WebSocket -> Express server, with injected auth ─────────
+    location /api/ {
+        proxy_pass http://127.0.0.1:3000;
+        proxy_http_version 1.1;
+
+        # Inject the bearer token server-side.
+        proxy_set_header Authorization "Bearer __API_KEY__";
+
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        # WebSocket upgrade.
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $connection_upgrade;
+
+        # Server-Sent Events: stream, don't buffer, don't time out.
+        proxy_buffering off;
+        proxy_cache off;
+        proxy_read_timeout 1h;
+        proxy_send_timeout 1h;
+    }
+
+    # ── Static SPA -> web_client container ─────────────────────────────────
+    location / {
+        proxy_pass http://127.0.0.1:8080;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
