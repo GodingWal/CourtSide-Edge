@@ -1,2 +1,8 @@
 vast
-cd ~/CourtSide-Edge && git fetch --all --prune -q && git reset --hard origin/main -q && bash deploy/scripts/deploy-agents.sh && sleep 5 && bash deploy/scripts/run-agents-native.sh status
+cd ~/CourtSide-Edge
+KEY=$(grep '^API_KEY=' deploy/env/agents.env | cut -d= -f2)
+echo "=== site bundle (deployed build) ==="; curl -s https://courtside-edge.com/ | grep -oE 'assets/index-[^"]+\.js' | head -2
+echo "=== agents/health through domain ==="; curl -s -H "Authorization: Bearer $KEY" https://courtside-edge.com/api/agents/health | head -c 400; echo
+echo "=== sandbox endpoint exists? ==="; curl -s -o /dev/null -w "%{http_code}\n" -X POST -H "Authorization: Bearer $KEY" -H 'Content-Type: application/json' -d '{"message":"ping"}' https://courtside-edge.com/api/sandbox/chat
+echo "=== local agents status ==="; bash deploy/scripts/run-agents-native.sh status | tail -2
+echo "=== agent12 log ==="; tail -3 logs/12_alpha_sandbox.log 2>/dev/null || echo "no agent12 log"
