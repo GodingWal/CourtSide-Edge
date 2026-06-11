@@ -20,6 +20,9 @@ interface TeamStats {
   fg_pct: number | null;
   fg3_pct: number | null;
   ft_pct: number | null;
+  pace?: number | null;
+  ortg?: number | null;
+  drtg?: number | null;
   last10: string;
 }
 
@@ -261,6 +264,9 @@ export default function StatsCenter() {
                   <th className="px-3 py-3 text-right">TOV</th>
                   <th className="px-3 py-3 text-right">FG%</th>
                   <th className="px-3 py-3 text-right">3P%</th>
+                  <th className="px-3 py-3 text-right">PACE</th>
+                  <th className="px-3 py-3 text-right">ORTG</th>
+                  <th className="px-3 py-3 text-right">DRTG</th>
                 </tr>
               </thead>
               <tbody>
@@ -279,6 +285,9 @@ export default function StatsCenter() {
                     <td className="px-3 py-3 text-right font-mono text-cs-muted">{t.topg}</td>
                     <td className="px-3 py-3 text-right font-mono text-cs-muted">{fmt(t.fg_pct)}</td>
                     <td className="px-3 py-3 text-right font-mono text-cs-muted">{fmt(t.fg3_pct)}</td>
+                    <td className="px-3 py-3 text-right font-mono text-cs-muted">{fmt(t.pace)}</td>
+                    <td className="px-3 py-3 text-right font-mono text-cs-muted">{fmt(t.ortg)}</td>
+                    <td className="px-3 py-3 text-right font-mono text-cs-muted">{fmt(t.drtg)}</td>
                   </tr>
                 ))}
               </tbody>

@@ -82,6 +82,20 @@ def _read_enrichments(game_id: str) -> dict:
     return enrichments
 
 
+def _official_out_players() -> list:
+    """Players listed OUT on the official report (cached by Agent 2)."""
+    if not pubsub:
+        return []
+    try:
+        raw = pubsub.client.get("injuries:report")
+        if not raw:
+            return []
+        return [r["player"] for r in json.loads(raw) if str(r.get("status", "")).upper() == "OUT"]
+    except Exception as e:
+        logger.warning(f"Could not read injury report for usage redistribution: {e}")
+        return []
+
+
 def on_live_odds(message):
     # Only player-prop messages name a projectable target. ESPN game-line
     # messages (game totals/spreads) carry no player and are handled by
@@ -99,9 +113,17 @@ def on_live_odds(message):
     game_id = game.replace(" @ ", "_") if " @ " in game else message.get("game_id", "UNKNOWN")
     enrichments = _read_enrichments(game_id)
 
-    proj = ensemble.run_projection(player, stat, message)
+    # Usage redistribution input: official OUT list from the injury report.
+    game_context = {**message, "out_players": _official_out_players()}
+
+    proj = ensemble.run_projection(player, stat, game_context)
     if proj is None:
         return  # no real history — publish nothing
+
+    if proj.get("usage_boost") and proj["usage_boost"] != 1.0:
+        logger.info(
+            f"  → Usage redistribution x{proj['usage_boost']} (OUT: {proj['usage_boost_from']})"
+        )
 
     context_used = list(enrichments.keys())
 
@@ -135,6 +157,7 @@ def on_live_odds(message):
                 "projected_value": proj["projected_value"],
                 "market_line": line,
                 "edge_vs_line": edge,
+                "p_over_line": proj.get("p_over_line"),
                 "book": message.get("book"),
                 "games_sampled": proj["games_sampled"],
                 "timestamp": time.time(),
@@ -175,12 +198,42 @@ def start_redis_listener():
         logger.error(f"Redis listener error: {e}")
 
 
+def weekly_model_maintenance():
+    """Publish the stat correlation matrix and run walk-forward validation.
+
+    Both are derived purely from stored box scores; the correlations feed
+    Agents 7/13 (parlay correlation flags) and the validation summary feeds
+    the dashboard. Runs shortly after startup, then weekly.
+    """
+    from backtest import publish_validation, run_backtest
+
+    time.sleep(120)  # let the listener connect and Agent 0's ETL settle
+    while True:
+        try:
+            correlations = ensemble.stat_correlations()
+            if correlations and pubsub:
+                pubsub.client.set("stats:correlations", json.dumps(correlations), ex=8 * 24 * 3600)
+                logger.info(f"Published stat correlation matrix ({len(correlations)} pairs).")
+        except Exception as e:
+            logger.error(f"Correlation matrix publish failed: {e}")
+        try:
+            result = run_backtest(ensemble)
+            if result["per_stat"]:
+                publish_validation(result)
+        except Exception as e:
+            logger.error(f"Walk-forward validation failed: {e}")
+        time.sleep(7 * 24 * 3600)
+
+
 if __name__ == "__main__":
     logger.info("Agent 3 (Projection Engine) started.")
 
     # Start Redis listener in background thread
     listener_thread = threading.Thread(target=start_redis_listener, daemon=True)
     listener_thread.start()
+
+    # Weekly correlation matrix + walk-forward validation (plan §9).
+    threading.Thread(target=weekly_model_maintenance, daemon=True).start()
 
     # Start FastAPI server
     uvicorn.run(app, host="0.0.0.0", port=8000)
