@@ -1,3 +1,4 @@
+import json
 import time
 from shared.redis_client import RedisPubSub, StreamConsumer
 from shared.audit_logger import AuditLogger, generate_trace_id
@@ -47,7 +48,18 @@ class MarketIntelligence:
         else:
             return 'noise', 0.35
 
-def on_live_odds(message, stream_producer, intelligence):
+def lookup_true_line(pubsub, player, stat):
+    """Agent 3's cached projection for this market, if one exists."""
+    if not player or not stat:
+        return None
+    try:
+        raw = pubsub.client.hget("props:projections", f"{player}|{stat}")
+        return json.loads(raw)["projected_value"] if raw else None
+    except Exception:
+        return None
+
+
+def on_live_odds(message, stream_producer, intelligence, pubsub):
     movement_type, confidence = intelligence.track_movement(message)
     logger.info(f'Tracking market movement: {movement_type} (confidence: {confidence})')
     
@@ -78,6 +90,9 @@ def on_live_odds(message, stream_producer, intelligence):
         'stat': message.get('stat') or ('TOTAL' if message.get('over_under') is not None else None),
         'line': curr,
         'prev_line': prev,
+        'odds': message.get('odds'),
+        'book': message.get('book'),
+        'true_line': lookup_true_line(pubsub, message.get('player'), message.get('stat')),
         'divergence_score': divergence_score,
         'confidence': confidence,
         'sample_size': len(intelligence.line_history),
@@ -100,7 +115,7 @@ def on_live_odds(message, stream_producer, intelligence):
     # Use Redis Streams for critical-path channel
     stream_producer.produce('stream_market_intelligence', alert)
 
-def on_sharp_move(message, stream_producer):
+def on_sharp_move(message, stream_producer, pubsub):
     sharp_data = message.get("data", {})
     player = sharp_data.get("player")
     book = sharp_data.get("book", "Consensus")
@@ -135,6 +150,7 @@ def on_sharp_move(message, stream_producer):
         'line': curr_line,
         'prev_line': prev_line,
         'book': book,
+        'true_line': lookup_true_line(pubsub, player, sharp_data.get('stat')),
         'divergence_score': divergence_score,
         'confidence': confidence,
         'sample_size': 1,
@@ -162,8 +178,8 @@ def main():
     intelligence = MarketIntelligence()
     logger.info('Agent 11 (Market Value Detector) started.')
     
-    pubsub.subscribe('channel_live_odds', lambda m: on_live_odds(m, stream, intelligence))
-    pubsub.subscribe('channel_sharp_moves', lambda m: on_sharp_move(m, stream))
+    pubsub.subscribe('channel_live_odds', lambda m: on_live_odds(m, stream, intelligence, pubsub))
+    pubsub.subscribe('channel_sharp_moves', lambda m: on_sharp_move(m, stream, pubsub))
     
     try:
         # Idle keepalive: actual work happens in Redis callback threads.

@@ -36,6 +36,8 @@ export interface GeneratedParlay {
   legs: any[];
   parlay_odds: number;
   summary: string;
+  platform?: string;
+  payout_multiplier?: number;
 }
 
 export const formatOdds = (odds: number) => {

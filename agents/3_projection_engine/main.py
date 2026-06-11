@@ -1,3 +1,4 @@
+import json
 import os
 import time
 import threading
@@ -123,6 +124,24 @@ def on_live_odds(message):
         context_used.append("live_rotation_adjustment")
 
     edge = round(proj["projected_value"] - line, 2) if line is not None else None
+
+    # Cache the latest projection per market so other agents can rank live
+    # props by real edge (Agent 13 parlay legs, Agent 11 true-line context).
+    if pubsub and line is not None:
+        try:
+            pubsub.client.hset("props:projections", f"{player}|{stat}", json.dumps({
+                "player": player,
+                "stat": stat,
+                "projected_value": proj["projected_value"],
+                "market_line": line,
+                "edge_vs_line": edge,
+                "book": message.get("book"),
+                "games_sampled": proj["games_sampled"],
+                "timestamp": time.time(),
+            }))
+            pubsub.client.expire("props:projections", 4 * 3600)
+        except Exception as e:
+            logger.warning(f"Failed to cache projection: {e}")
 
     response = {
         "source": "Agent 3",

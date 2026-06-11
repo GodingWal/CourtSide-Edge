@@ -37,7 +37,8 @@ _INJURY_SCHEMA_HINT = (
 
 _SENTIMENT_SCHEMA_HINT = (
     'Respond with ONLY a JSON object, no prose, matching exactly: '
-    '{"motivation_score": float 0-1, "fatigue_penalty": float -1 to 0, '
+    '{"team": str (3-letter team code, or "UNKNOWN" if no team is identifiable), '
+    '"motivation_score": float 0-1, "fatigue_penalty": float -1 to 0, '
     '"quote_impact": float -1 to 1}'
 )
 

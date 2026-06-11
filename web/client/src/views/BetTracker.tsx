@@ -49,6 +49,7 @@ export default function BetTracker() {
   const [generatorOpen, setGeneratorOpen] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [generatedParlay, setGeneratedParlay] = useState<GeneratedParlay | null>(null);
+  const [generatorLegs, setGeneratorLegs] = useState(2);
   const [generatorStake, setGeneratorStake] = useState('100');
   const [submittingWager, setSubmittingWager] = useState(false);
 
@@ -212,13 +213,24 @@ export default function BetTracker() {
   };
 
   // ── Agent 13 Parlay Generator Handlers ─────────────────────────────────────
-  const triggerGenerateParlay = async () => {
+  // Opens the modal on the entry-size selector; generation runs after the
+  // user picks how many legs (2-6) the slip should have.
+  const triggerGenerateParlay = () => {
+    setGeneratedParlay(null);
+    setGenerating(false);
     setGeneratorOpen(true);
+  };
+
+  const handleGenerateParlay = async () => {
     setGenerating(true);
     setGeneratedParlay(null);
 
     try {
-      const res = await fetch(`${API_BASE}/parlay/generate`, { method: 'POST' });
+      const res = await fetch(`${API_BASE}/parlay/generate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ legs: generatorLegs })
+      });
       if (!res.ok) {
         const body = await res.json().catch(() => null);
         throw new Error(body?.error || 'Generation failed');
@@ -260,7 +272,7 @@ export default function BetTracker() {
 
       toast({
         title: 'Agent Parlay Logged',
-        description: `Logged 2-leg parlay wager of $${generatorStake}.`,
+        description: `Logged ${generatedParlay.legs.length}-leg parlay wager of $${generatorStake}.`,
         variant: 'success'
       });
 
@@ -448,9 +460,12 @@ export default function BetTracker() {
         <ParlayGeneratorModal
           generating={generating}
           generatedParlay={generatedParlay}
+          generatorLegs={generatorLegs}
+          setGeneratorLegs={setGeneratorLegs}
           generatorStake={generatorStake}
           setGeneratorStake={setGeneratorStake}
           submittingWager={submittingWager}
+          onGenerate={handleGenerateParlay}
           onLogParlay={handleLogGeneratedParlay}
           onClose={() => setGeneratorOpen(false)}
         />
