@@ -12,8 +12,11 @@ router.post('/parlay/generate', writeLimiter, async (req, res) => {
   try {
     // Entry size (2-6 picks) chosen in the dashboard; Agent 13 validates too.
     const legs = Math.min(6, Math.max(2, parseInt(req.body?.legs, 10) || 2));
+    // Generation includes an LLM rationale (Agent 13 caps it at ~20s); give
+    // the proxy enough headroom that a slow local model doesn't read as
+    // "Agent 13 offline" while the agent is mid-reply.
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 30000);
+    const timeoutId = setTimeout(() => controller.abort(), 60000);
     const response = await fetch(`${config.AGENT13_URL}/api/parlay/generate`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -30,9 +33,10 @@ router.post('/parlay/generate', writeLimiter, async (req, res) => {
     }
     res.json(data);
   } catch (err) {
-    logger.warn({ err }, 'Agent 13 (parlay generator) unreachable.');
+    logger.warn({ err, agent13: config.AGENT13_URL }, 'Agent 13 (parlay generator) unreachable.');
     res.status(503).json({
-      error: 'Parlay generator (Agent 13) is offline. Start the agent and try again.'
+      error: `Parlay generator (Agent 13) is unreachable at ${config.AGENT13_URL}. ` +
+        'Start the agent, or set AGENT13_URL if it runs on another host/container.'
     });
   }
 });

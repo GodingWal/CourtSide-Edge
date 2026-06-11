@@ -7,6 +7,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import Body, FastAPI, HTTPException
 import uvicorn
+from shared.espn_client import get_scoreboard
 from shared.odds_math import decimal_to_american
 from shared.redis_client import RedisPubSub
 from infrastructure.hermes.client import HermesClient
@@ -28,7 +29,12 @@ app = FastAPI(title="Agent 13: Matchup Oracle & Parlay Generator", lifespan=life
 hermes = HermesClient()
 
 # ── Pregame Window & Game Session Tracking ────────────────────────────────────
-PREGAME_WINDOW_MIN = int(os.environ.get('PARLAY_PREGAME_WINDOW_MINUTES', '30'))
+# Pick'em entries lock at tipoff, not 30 minutes before - the old 30-minute
+# default left the generator refusing requests for almost the entire day.
+PREGAME_WINDOW_MIN = int(os.environ.get('PARLAY_PREGAME_WINDOW_MINUTES', '720'))
+# The web proxy aborts at 60s; keep the Hermes rationale call well inside that
+# so a slow local LLM degrades to the factual summary instead of a timeout.
+SUMMARY_TIMEOUT_SECONDS = int(os.environ.get('PARLAY_SUMMARY_TIMEOUT_SECONDS', '20'))
 
 active_games = {}
 state_lock = threading.Lock()
@@ -91,6 +97,7 @@ def generate_hermes_summary(legs, platform, multiplier):
             system="You are the parlay analyst of a WNBA betting terminal. Be concise and concrete.",
             temperature=0.4,
             max_tokens=512,
+            timeout=SUMMARY_TIMEOUT_SECONDS,
         )
     except Exception as e:
         logger.error(f"Hermes summary failed, returning factual description: {e}")
@@ -144,23 +151,46 @@ def generate_parlay(payload: dict | None = Body(default=None)):
     # ── Pregame Window Gate Check ─────────────────────────────────────────────
     now = time.time()
     window_sec = PREGAME_WINDOW_MIN * 60
-    
-    with state_lock:
-        games_in_window = []
-        for g_id, game in active_games.items():
+
+    def games_in_pregame_window(games):
+        eligible = []
+        for game in games:
             # tipoff can be None when ESPN omits the start time - skip rather
             # than crash the request with a TypeError.
-            if game["status"] == "PRE" and game.get("tipoff") is not None:
+            if game.get("status") == "PRE" and game.get("tipoff") is not None:
                 time_to_tipoff = game["tipoff"] - now
                 if 0 <= time_to_tipoff <= window_sec:
-                    games_in_window.append(game)
-                    
+                    eligible.append(game)
+        return eligible
+
+    with state_lock:
+        tracked = list(active_games.values())
+    games_in_window = games_in_pregame_window(tracked)
+
+    # Game-session tracking is fed by Agent 23 over Redis; when it has nothing
+    # usable (agent down, subscription dropped), check the real ESPN schedule
+    # directly instead of refusing every request.
+    if not games_in_window:
+        try:
+            schedule = get_scoreboard() or []
+        except Exception as e:
+            logger.warning(f"ESPN schedule fallback failed: {e}")
+            schedule = []
+        games_in_window = games_in_pregame_window(
+            [{"gameId": g["game_id"], "tipoff": g.get("tipoff"), "status": g.get("state")} for g in schedule]
+        )
+        if games_in_window:
+            logger.info("Pregame window satisfied via ESPN schedule fallback (no tracked sessions).")
+
     # If no upcoming games are in the tipoff window, refuse parlay synthesis
     if not games_in_window:
-        logger.warning("⛔ PARLAY SYNTHESIS BLOCKED: Outside pre-game window (no games scheduled in next 30 minutes)")
+        logger.warning("⛔ PARLAY SYNTHESIS BLOCKED: no WNBA games tipping off within the window")
         raise HTTPException(
             status_code=400,
-            detail=f"Parlay synthesis blocked: Outside of pre-game window. No games starting in the next {PREGAME_WINDOW_MIN} minutes."
+            detail=(
+                "Parlay synthesis blocked: no WNBA games tipping off within the next "
+                f"{PREGAME_WINDOW_MIN} minutes."
+            )
         )
 
     logger.info(f"Generating parlay. Games in window: {[g['gameId'] for g in games_in_window]}")
@@ -183,10 +213,11 @@ def generate_parlay(payload: dict | None = Body(default=None)):
             props.append(json.loads(raw))
         except (TypeError, ValueError):
             continue
-    # One prop per player; require a line and odds.
+    # One prop per player; a real line is required (pick'em legs carry no
+    # per-leg juice, so a missing over-price must not exclude the market).
     by_player = {}
     for prop in props:
-        if prop.get("line") is not None and prop.get("odds") is not None:
+        if prop.get("line") is not None:
             by_player.setdefault(prop["player"], prop)
     candidates = list(by_player.values())
 

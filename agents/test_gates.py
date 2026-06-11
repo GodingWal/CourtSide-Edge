@@ -141,6 +141,9 @@ class TestAgent13ParlayWindow(unittest.TestCase):
             props if key == "props:lines" else projections if key == "props:projections" else {}
         )
         agent13.RedisPubSub = MagicMock(return_value=pubsub_instance)
+        # Keep tests offline: the window gate falls back to the real ESPN
+        # schedule when no tracked game sessions are eligible.
+        agent13.get_scoreboard = MagicMock(return_value=[])
 
     def _set_game_in_window(self):
         now = time.time()
@@ -192,19 +195,43 @@ class TestAgent13ParlayWindow(unittest.TestCase):
 
     def test_parlay_synthesis_blocked_outside_window(self):
         now = time.time()
-        # Game tipping off in 45 minutes (outside 30-min window)
+        # Game tipping off an hour past the configured window
         agent13.active_games["LVA_NYL"] = {
             "gameId": "LVA_NYL",
-            "tipoff": now + 2700,
+            "tipoff": now + agent13.PREGAME_WINDOW_MIN * 60 + 3600,
             "status": "PRE"
         }
-        
+
         # Should raise HTTP 400 Exception
         with self.assertRaises(HTTPException) as ctx:
             agent13.generate_parlay()
-        
+
         self.assertEqual(ctx.exception.status_code, 400)
         self.assertIn("Parlay synthesis blocked", ctx.exception.detail)
+
+    def test_parlay_uses_espn_schedule_when_sessions_missing(self):
+        # No tracked game sessions (Agent 23 down) - the generator must fall
+        # back to the real ESPN schedule instead of refusing every request.
+        agent13.get_scoreboard = MagicMock(return_value=[{
+            "game_id": "LVA_NYL",
+            "tipoff": time.time() + 900,
+            "state": "PRE",
+        }])
+
+        result = agent13.generate_parlay()
+        self.assertEqual(len(result["legs"]), 2)
+
+    def test_parlay_blocked_when_games_already_live(self):
+        now = time.time()
+        agent13.active_games["LVA_NYL"] = {
+            "gameId": "LVA_NYL",
+            "tipoff": now - 600,
+            "status": "LIVE"
+        }
+
+        with self.assertRaises(HTTPException) as ctx:
+            agent13.generate_parlay()
+        self.assertEqual(ctx.exception.status_code, 400)
 
 
 if __name__ == "__main__":
