@@ -5,24 +5,24 @@ import re
 
 import requests
 
-# Local-first Nemotron client. By default it talks to an OpenAI-compatible
+# Local-first Hermes client. By default it talks to an OpenAI-compatible
 # inference server on this host (Ollama, started by
-# deploy/scripts/setup-local-llm.sh) serving an NVIDIA Nemotron-family model.
+# deploy/scripts/setup-local-llm.sh) serving a NousResearch Hermes-family model.
 #
-#   NEMOTRON_BASE_URL  default http://localhost:11434/v1  (Ollama)
-#   NEMOTRON_MODEL     default nemotron-mini              (fits 31GB disk; use
-#                      "nemotron:70b" if the instance has ~50GB+ free disk)
-#   NEMOTRON_API_KEY   default "local" (Ollama ignores it; set a real key if
-#                      pointing BASE_URL at a hosted endpoint instead)
+#   HERMES_BASE_URL  default http://localhost:11434/v1  (Ollama)
+#   HERMES_MODEL     default hermes3 (8B, ~4.7GB; fits 31GB disk; use
+#                    "hermes3:70b" if the instance has ~50GB+ free disk)
+#   HERMES_API_KEY   default "local" (Ollama ignores it; set a real key if
+#                    pointing BASE_URL at a hosted endpoint instead)
 #
 # If the server is unreachable or errors, extraction calls return None so
 # callers skip the item instead of acting on fabricated data.
-NEMOTRON_BASE_URL = os.getenv("NEMOTRON_BASE_URL", "http://localhost:11434/v1")
-NEMOTRON_MODEL = os.getenv("NEMOTRON_MODEL", "nemotron-mini")
-NEMOTRON_API_KEY = os.getenv("NEMOTRON_API_KEY", "local")
+HERMES_BASE_URL = os.getenv("HERMES_BASE_URL", "http://localhost:11434/v1")
+HERMES_MODEL = os.getenv("HERMES_MODEL", "hermes3")
+HERMES_API_KEY = os.getenv("HERMES_API_KEY", "local")
 REQUEST_TIMEOUT = 60
 
-logger = logging.getLogger("NemotronClient")
+logger = logging.getLogger("HermesClient")
 
 _INJURY_SCHEMA_HINT = (
     'Respond with ONLY a JSON object, no prose, matching exactly: '
@@ -41,19 +41,19 @@ _SENTIMENT_SCHEMA_HINT = (
     '"quote_impact": float -1 to 1}'
 )
 
-class NemotronClient:
+class HermesClient:
     def __init__(self):
         # Probe the local server once at startup so logs make the mode obvious.
         # Per-call fallback still applies either way.
         try:
-            requests.get(f"{NEMOTRON_BASE_URL}/models", timeout=3,
-                         headers={"Authorization": f"Bearer {NEMOTRON_API_KEY}"})
+            requests.get(f"{HERMES_BASE_URL}/models", timeout=3,
+                         headers={"Authorization": f"Bearer {HERMES_API_KEY}"})
             self.simulated = False
-            logger.info(f"NemotronClient using {NEMOTRON_MODEL} at {NEMOTRON_BASE_URL}")
+            logger.info(f"HermesClient using {HERMES_MODEL} at {HERMES_BASE_URL}")
         except Exception:
             self.simulated = True
             logger.warning(
-                f"No LLM server at {NEMOTRON_BASE_URL} (run deploy/scripts/setup-local-llm.sh). "
+                f"No LLM server at {HERMES_BASE_URL} (run deploy/scripts/setup-local-llm.sh). "
                 "LLM extraction is disabled — calls will return None."
             )
 
@@ -61,13 +61,13 @@ class NemotronClient:
     def _chat(self, system: str, user: str, temperature: float) -> str:
         """One OpenAI-compatible chat completion against the local server."""
         resp = requests.post(
-            f"{NEMOTRON_BASE_URL}/chat/completions",
+            f"{HERMES_BASE_URL}/chat/completions",
             headers={
-                "Authorization": f"Bearer {NEMOTRON_API_KEY}",
+                "Authorization": f"Bearer {HERMES_API_KEY}",
                 "Content-Type": "application/json",
             },
             json={
-                "model": NEMOTRON_MODEL,
+                "model": HERMES_MODEL,
                 "messages": [
                     {"role": "system", "content": system},
                     {"role": "user", "content": user},
@@ -116,7 +116,7 @@ class NemotronClient:
             )
             return self._parse_json(raw)
         except Exception as e:
-            logger.error(f"Nemotron injury extraction failed, skipping item: {e}")
+            logger.error(f"Hermes injury extraction failed, skipping item: {e}")
             return None
 
     def analyze_sentiment(self, text: str) -> dict | None:
@@ -138,5 +138,5 @@ class NemotronClient:
             )
             return self._parse_json(raw)
         except Exception as e:
-            logger.error(f"Nemotron sentiment analysis failed, skipping item: {e}")
+            logger.error(f"Hermes sentiment analysis failed, skipping item: {e}")
             return None

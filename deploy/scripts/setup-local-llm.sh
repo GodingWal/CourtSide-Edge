@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
-# Set up a LOCAL Nemotron inference server on the vast.ai GPU box (no Docker —
+# Set up a LOCAL Hermes inference server on the vast.ai GPU box (no Docker —
 # Ollama runs as a plain binary, which works in vast's unprivileged containers).
 #
-# Default model: nemotron-mini (NVIDIA Nemotron-family 4B instruct, ~2.7GB) —
+# Default model: hermes3 (NousResearch Hermes 3 8B instruct, ~4.7GB) —
 # sized for this instance's ~31GB free disk. With ~50GB+ free disk, run:
-#   NEMOTRON_MODEL=nemotron:70b bash deploy/scripts/setup-local-llm.sh
+#   HERMES_MODEL=hermes3:70b bash deploy/scripts/setup-local-llm.sh
 #
-# The agents' NemotronClient defaults to http://localhost:11434/v1 and the
-# nemotron-mini model, so after this script + an agent restart, agents 2 and 9
+# The agents' HermesClient defaults to http://localhost:11434/v1 and the
+# hermes3 model, so after this script + an agent restart, agents 2 and 9
 # use the local GPU model automatically.
 #
 # Usage (from repo root):  bash deploy/scripts/setup-local-llm.sh [start|stop|status]
@@ -16,7 +16,7 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$REPO_ROOT"
 
-MODEL="${NEMOTRON_MODEL:-nemotron-mini}"
+MODEL="${HERMES_MODEL:-hermes3}"
 LOG_DIR="logs"
 PID_FILE="run/ollama.pid"
 OLLAMA_HOST="${OLLAMA_HOST:-127.0.0.1:11434}"
@@ -55,7 +55,7 @@ start() {
     -H 'Content-Type: application/json' \
     -d "{\"model\": \"${MODEL}\", \"messages\": [{\"role\": \"user\", \"content\": \"Reply with the word READY\"}], \"max_tokens\": 8}" \
     | head -c 400; echo
-  echo "✓ Local Nemotron (${MODEL}) serving at http://${OLLAMA_HOST}/v1"
+  echo "✓ Local Hermes (${MODEL}) serving at http://${OLLAMA_HOST}/v1"
   echo "  Restart the agents to pick it up: bash deploy/scripts/run-agents-native.sh restart"
 }
 

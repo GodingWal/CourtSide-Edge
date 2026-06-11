@@ -215,7 +215,7 @@ router.get('/baselines', async (req, res) => {
   }
 });
 
-// ── Alpha Sandbox chat (bridged over Redis to Agent 12 / local Nemotron) ────
+// ── Alpha Sandbox chat (bridged over Redis to Agent 12 / local Hermes) ──────
 router.post('/sandbox/chat', writeLimiter, async (req, res) => {
   try {
     const message = String(req.body?.message ?? '').trim().slice(0, 2000);

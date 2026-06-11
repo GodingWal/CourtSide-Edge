@@ -36,7 +36,7 @@ Browser ──HTTPS──▶ nginx (VPS) ──┬─▶ web_client  (static SPA
 bash deploy/scripts/gen-secrets.sh        # writes env/web.env + env/agents.env (gitignored)
 ```
 This creates a shared `API_KEY` and `REDIS_PASSWORD` so the two hosts agree.
-Set `NVIDIA_API_KEY=… bash deploy/scripts/gen-secrets.sh` to enable real Nemotron.
+Set `HERMES_API_KEY=… bash deploy/scripts/gen-secrets.sh` to use a hosted Hermes endpoint.
 
 ### 1. VPS (web tier)
 ```bash

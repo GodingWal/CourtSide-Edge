@@ -6,7 +6,7 @@ import threading
 from fastapi import FastAPI, HTTPException
 import uvicorn
 from shared.redis_client import RedisPubSub
-from infrastructure.nemotron.client import NemotronClient
+from infrastructure.hermes.client import HermesClient
 
 from shared.base_agent import run_polling_loop, setup_logging
 
@@ -14,7 +14,7 @@ logger = setup_logging("Agent13_ParlayGenerator")
 
 app = FastAPI(title="Agent 13: Matchup Oracle & Parlay Generator")
 
-nemotron = NemotronClient()
+hermes = HermesClient()
 
 # ── Pregame Window & Game Session Tracking ────────────────────────────────────
 PREGAME_WINDOW_MIN = int(os.environ.get('PARLAY_PREGAME_WINDOW_MINUTES', '30'))
@@ -70,8 +70,8 @@ def to_american(decimal):
         return int(round(-100.0 / (decimal - 1.0)))
 
 
-def generate_nemotron_summary(leg1, leg2, platform, multiplier):
-    """Rationale for the entry. Uses the real local Nemotron model when
+def generate_hermes_summary(leg1, leg2, platform, multiplier):
+    """Rationale for the entry. Uses the real local Hermes model when
     available; otherwise a purely factual description of the picks — never
     fabricated matchup analysis."""
     factual = (
@@ -79,10 +79,10 @@ def generate_nemotron_summary(leg1, leg2, platform, multiplier):
         f"({leg1['opposing_team']}) + {leg2['player']} OVER {leg2['line']} {leg2['stat']} "
         f"({leg2['opposing_team']}); pays {multiplier}x."
     )
-    if nemotron.simulated:
+    if hermes.simulated:
         return factual
     try:
-        return nemotron.ask(
+        return hermes.ask(
             question=(
                 f"Entry: {factual}\n"
                 "Write a 2-3 sentence rationale for this WNBA pick'em entry. Base it ONLY on the "
@@ -92,7 +92,7 @@ def generate_nemotron_summary(leg1, leg2, platform, multiplier):
             temperature=0.4,
         )
     except Exception as e:
-        logger.error(f"Nemotron summary failed, returning factual description: {e}")
+        logger.error(f"Hermes summary failed, returning factual description: {e}")
         return factual
 
 
@@ -193,7 +193,7 @@ def generate_parlay():
     combined_dec = multiplier
     parlay_odds = to_american(combined_dec)
     
-    summary = generate_nemotron_summary(leg1, leg2, platform, multiplier)
+    summary = generate_hermes_summary(leg1, leg2, platform, multiplier)
     
     return {
         "legs": [leg1, leg2],

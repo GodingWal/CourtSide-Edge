@@ -37,7 +37,7 @@ export default function ParlayGeneratorModal({
             <div>
               <h3 className="text-base font-bold text-white">Aggregating WNBA Projection Divergences</h3>
               <p className="text-xs text-cs-muted mt-1 max-w-xs">
-                Agent 13 running correlation matrix checks and building high-EV parlay via Nemotron Matchup engine...
+                Agent 13 running correlation matrix checks and building high-EV parlay via Hermes Matchup engine...
               </p>
             </div>
           </div>
@@ -84,7 +84,7 @@ export default function ParlayGeneratorModal({
               <div className="bg-cs-dark/45 border border-cs-border/50 rounded-2xl p-4 space-y-2">
                 <div className="text-[10px] text-cs-red uppercase tracking-widest font-black flex items-center gap-1.5">
                   <Cpu className="w-3.5 h-3.5 text-cs-red shrink-0" />
-                  Nemotron Qualitative Breakdown
+                  Hermes Qualitative Breakdown
                 </div>
                 <p className="text-[11px] text-white leading-relaxed italic">
                   "{generatedParlay.summary}"

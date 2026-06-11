@@ -35,7 +35,7 @@ export default function AlphaSandbox() {
       if (!res.ok) {
         throw new Error(data?.error || `Request failed (${res.status})`);
       }
-      const meta = `local Nemotron · ${data.elapsed_seconds ?? '?'}s`;
+      const meta = `local Hermes · ${data.elapsed_seconds ?? '?'}s`;
       setLastMeta(meta);
       setMessages((prev) => [...prev, { role: 'agent', text: data.reply ?? '(empty reply)', meta }]);
     } catch (err: any) {
@@ -55,7 +55,7 @@ export default function AlphaSandbox() {
         </div>
         <div className="cs-card px-3 py-1.5 flex items-center gap-2">
           <span className="cs-stat-label">Engine</span>
-          <span className="text-xs font-mono text-white/80">{lastMeta ?? 'local Nemotron (GPU)'}</span>
+          <span className="text-xs font-mono text-white/80">{lastMeta ?? 'local Hermes (GPU)'}</span>
         </div>
       </div>
 
@@ -75,7 +75,7 @@ export default function AlphaSandbox() {
                 <p className="text-sm text-cs-muted leading-relaxed">
                   Ask Agent 12 about today's matchups, prop lines, pace, fatigue or referee impact.
                   <br />
-                  <span className="text-xs">Answers are generated live by the Nemotron model running on the GPU server.</span>
+                  <span className="text-xs">Answers are generated live by the Hermes model running on the GPU server.</span>
                 </p>
               </div>
             )}
