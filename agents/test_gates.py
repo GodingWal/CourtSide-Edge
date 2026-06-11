@@ -162,8 +162,8 @@ class TestAgent13ParlayWindow(unittest.TestCase):
         self.assertEqual(result["payout_multiplier"], 3.0)
         # Legs are ranked by real projected edge: Wilson (+15.6%) first, and
         # Stewart's negative edge flips her side to UNDER.
-        wilson = next(l for l in result["legs"] if l["player"] == "A'ja Wilson")
-        stewart = next(l for l in result["legs"] if l["player"] == "Breanna Stewart")
+        wilson = next(leg for leg in result["legs"] if leg["player"] == "A'ja Wilson")
+        stewart = next(leg for leg in result["legs"] if leg["player"] == "Breanna Stewart")
         self.assertEqual(wilson["over_under"], "OVER")
         self.assertEqual(stewart["over_under"], "UNDER")
         self.assertGreater(wilson["edge_pct"], 0)
