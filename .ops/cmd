@@ -1,2 +1,13 @@
 vast
-cd ~/CourtSide-Edge && git fetch --all --prune -q && git reset --hard origin/main -q && bash deploy/scripts/deploy-agents.sh && sleep 5 && bash deploy/scripts/run-agents-native.sh status
+cd ~/CourtSide-Edge && .venv-agents/bin/python - <<'PY'
+import sys
+sys.path.insert(0, '.')
+from datetime import datetime, timedelta, timezone
+from shared.espn_client import get_scoreboard
+print("UTC now:", datetime.now(timezone.utc).isoformat())
+for label, d in [("default", None), ("today-ET", (datetime.now(timezone.utc) - timedelta(hours=5)).strftime("%Y%m%d")), ("tomorrow-ET", (datetime.now(timezone.utc) + timedelta(hours=19)).strftime("%Y%m%d"))]:
+    games = get_scoreboard(d)
+    print(f"--- scoreboard {label} ({d}): {len(games)} games")
+    for g in games:
+        print("   ", g["away"], "@", g["home"], g["state"], "tipoff:", g["tipoff"])
+PY
