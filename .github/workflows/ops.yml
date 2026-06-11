@@ -1,0 +1,49 @@
+name: Ops
+
+# Manual remote-hands: run a command on the VPS or the vast.ai box over SSH.
+# Used for diagnostics and one-off host maintenance (firewall, service checks)
+# without needing a local terminal. Only repo collaborators can dispatch it,
+# and it reuses the same deploy-key secrets as the Deploy workflow.
+
+on:
+  workflow_dispatch:
+    inputs:
+      host:
+        description: Which host to run on
+        type: choice
+        required: true
+        options: [vps, vast]
+      command:
+        description: Shell command to run on the host
+        type: string
+        required: true
+
+jobs:
+  run:
+    if: vars.DEPLOY_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Run command on host
+        env:
+          VPS_KEY: ${{ secrets.VPS_SSH_KEY }}
+          VAST_KEY: ${{ secrets.VAST_SSH_KEY }}
+          TARGET: ${{ inputs.host }}
+          REMOTE_CMD: ${{ inputs.command }}
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          if [ "$TARGET" = "vps" ]; then
+            printf '%s\n' "$VPS_KEY" > ~/.ssh/id_ops
+            HOST='${{ vars.VPS_HOST || '76.13.100.125' }}'
+            USER='${{ vars.VPS_USER || 'root' }}'
+            PORT='${{ vars.VPS_PORT || '22' }}'
+          else
+            printf '%s\n' "$VAST_KEY" > ~/.ssh/id_ops
+            HOST='${{ vars.VAST_HOST || '151.237.25.234' }}'
+            USER='${{ vars.VAST_USER || 'root' }}'
+            PORT='${{ vars.VAST_PORT || '26918' }}'
+          fi
+          chmod 600 ~/.ssh/id_ops
+          ssh-keyscan -p "$PORT" -H "$HOST" >> ~/.ssh/known_hosts 2>/dev/null
+          echo "── output from $TARGET ($HOST) ──"
+          ssh -i ~/.ssh/id_ops -p "$PORT" "$USER@$HOST" "$REMOTE_CMD"
