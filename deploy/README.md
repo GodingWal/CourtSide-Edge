@@ -74,6 +74,31 @@ Both are idempotent (`up -d --build`); only changed images rebuild.
   vast.ai box IP changes, update `AGENT_IP` and re-run `firewall.sh`.
 - Real `env/web.env` / `env/agents.env` are gitignored — never commit them.
 
+## Continuous deployment (GitHub Actions)
+
+`.github/workflows/deploy.yml` deploys automatically after CI passes on `main`
+(and on demand via the **Run workflow** button). It SSHes into each host, fast-
+forwards the repo to `origin/main`, and runs the deploy script — so the env
+files holding secrets stay on the hosts and never pass through CI.
+
+One-time setup (repo **Settings → Secrets and variables → Actions**):
+
+1. Generate a deploy keypair and authorize the public key on both hosts:
+   ```bash
+   ssh-keygen -t ed25519 -f deploy_key -N ''
+   ssh-copy-id -i deploy_key.pub root@76.13.100.125
+   ssh-copy-id -i deploy_key.pub -p 26918 root@151.237.25.234
+   ```
+2. Add **secrets** `VPS_SSH_KEY` and `VAST_SSH_KEY` (paste the private key).
+3. Add the **variable** `DEPLOY_ENABLED=true` (master switch — jobs are skipped
+   until this is set, so you never get red builds before it's configured).
+4. Optional **variables** to override defaults:
+   `VPS_HOST`, `VPS_USER`, `VPS_PORT`, `VPS_REPO_PATH`,
+   `VAST_HOST`, `VAST_USER`, `VAST_PORT`, `VAST_REPO_PATH`.
+
+Prereq: both hosts already have the repo cloned and their `deploy/env/*.env`
+files in place (do the one-time manual deploy first).
+
 ## Operations
 
 ```bash
