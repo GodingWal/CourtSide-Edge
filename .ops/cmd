@@ -1,2 +1,2 @@
-vps
-docker ps --format '{{.Names}} | {{.Status}} | {{.Ports}}'; echo ---; ss -tlnp | grep 6379 || echo NO-6379-LISTENER; echo ---; ufw status verbose 2>/dev/null | head -25 || echo NO-UFW; echo ---; iptables -L INPUT -n 2>/dev/null | head -12; echo ---; ls /etc/nginx/sites-enabled/ 2>/dev/null
+vast
+echo "egress IP: $(curl -s --max-time 10 ifconfig.me || echo FAIL)"; echo ---; docker --version 2>&1; docker ps 2>&1 | head -3; echo ---; timeout 5 bash -c 'cat < /dev/null > /dev/tcp/76.13.100.125/6379' && echo "TCP 6379 OPEN" || echo "TCP 6379 BLOCKED"; echo ---; timeout 5 bash -c 'cat < /dev/null > /dev/tcp/76.13.100.125/443' && echo "TCP 443 OPEN" || echo "TCP 443 BLOCKED"
