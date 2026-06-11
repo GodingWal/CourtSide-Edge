@@ -31,6 +31,11 @@ class RedisPubSub:
         # Start a thread to listen for messages
         self.thread = self.pubsub.run_in_thread(sleep_time=0.001)
 
+    def push_recent(self, key: str, payload: Any, cap: int = 50):
+        """Maintain a capped list of recent signals (read by the web API)."""
+        self.client.lpush(key, json.dumps(payload))
+        self.client.ltrim(key, 0, cap - 1)
+
     def close(self):
         """Close the pubsub connection."""
         if hasattr(self, 'thread'):

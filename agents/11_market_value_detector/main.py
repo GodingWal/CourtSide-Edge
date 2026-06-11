@@ -32,13 +32,28 @@ def on_live_odds(message, stream_producer, intelligence):
         logger.info(f'Signal too weak ({confidence}), skipping.')
         return
     
-    divergence_score = 6.5  # % edge (mocked)
+    # Derive divergence from the REAL observed movement: % change of the
+    # market number (total/spread/line), scaled by signal confidence.
+    prev = message.get("prev_over_under") if message.get("prev_over_under") is not None else message.get("prev_line")
+    curr = message.get("over_under") if message.get("over_under") is not None else message.get("line")
+    if prev in (None, 0) or curr is None:
+        logger.info("No quantifiable line movement in message; skipping divergence alert.")
+        return
+    movement_pct = abs(curr - prev) / abs(prev) * 100
+    divergence_score = round(movement_pct * confidence, 2)
+    if divergence_score <= 0:
+        return
     trace_id = generate_trace_id()
     
     alert = {
         'source': 'Agent 11',
         'type': 'market_divergence',
         'market_classification': movement_type,
+        'game_id': message.get('game_id'),
+        'player': message.get('player'),
+        'stat': message.get('stat') or ('TOTAL' if message.get('over_under') is not None else None),
+        'line': curr,
+        'prev_line': prev,
         'divergence_score': divergence_score,
         'confidence': confidence,
         'sample_size': message.get('sample_size', 25),

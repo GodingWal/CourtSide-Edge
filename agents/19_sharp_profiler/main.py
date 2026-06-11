@@ -16,73 +16,49 @@ def health():
     return {"status": "healthy"}
 
 def on_raw_odds(message):
-    """Monitors incoming odds and detects sharp movements from maker books (Pinnacle/Circa)."""
-    # If the source is Pinnacle/Circa, we publish to sharp moves channel
-    book = message.get("book", "Pinnacle")
-    if book in ["Pinnacle", "Circa"]:
-        logger.info(f"Detected odds movement on sharp maker book: {book}")
-        sharp_event = {
-            "source": "Agent 19",
-            "type": "sharp_move",
-            "data": {
-                "player": message.get("player", "A'ja Wilson"),
-                "stat": message.get("stat", "PTS"),
-                "book": book,
-                "move": f"{message.get('prev_line', 22.5)} → {message.get('line', 23.5)}",
-                "direction": "UP" if message.get("line", 23.5) > message.get("prev_line", 22.5) else "DOWN",
-                "timestamp": time.time()
-            },
-            "confidence": 0.95,
+    """Monitors real incoming odds (Agent 1 / ESPN consensus) for genuine line moves."""
+    # Only react to REAL movement: Agent 1 includes prev_* fields when a line changed.
+    prev = message.get("prev_over_under") if message.get("prev_over_under") is not None else message.get("prev_line")
+    curr = message.get("over_under") if message.get("over_under") is not None else message.get("line")
+    if prev is None or curr is None or prev == curr:
+        return
+
+    book = message.get("provider") or message.get("book") or "Consensus"
+    subject = message.get("player") or message.get("game_id", "GAME")
+    stat = message.get("stat") or ("TOTAL" if message.get("over_under") is not None else "LINE")
+    logger.info(f"Real line movement on {book}: {subject} {stat} {prev} → {curr}")
+
+    sharp_event = {
+        "source": "Agent 19",
+        "type": "sharp_move",
+        "data": {
+            "player": subject,
+            "stat": stat,
+            "book": book,
+            "move": f"{prev} → {curr}",
+            "direction": "UP" if curr > prev else "DOWN",
             "timestamp": time.time()
-        }
-        if pubsub:
-            pubsub.publish("channel_sharp_moves", sharp_event)
-
-def simulation_loop():
-    # Simulate a sharp move event every 15 seconds to drive retail-lag checks and dashboard alerts
-    while True:
-        try:
-            time.sleep(15)
-            mock_players = ["A'ja Wilson", "Caitlin Clark", "Breanna Stewart"]
-            mock_stats = ["PTS", "AST", "REB"]
-            p = mock_players[int(time.time()) % 3]
-            s = mock_stats[int(time.time()) % 3]
-            prev = 18.5 + (int(time.time()) % 3) * 0.5
-            curr = prev + (0.5 if random_dir() else -0.5)
-            
-            sharp_event = {
-                "source": "Agent 19",
-                "type": "sharp_move",
-                "data": {
-                    "player": p,
-                    "stat": s,
-                    "book": "Pinnacle" if int(time.time()) % 2 == 0 else "Circa",
-                    "move": f"{prev:.1f} → {curr:.1f}",
-                    "direction": "UP" if curr > prev else "DOWN",
-                    "timestamp": time.time()
-                },
-                "confidence": 0.95,
-                "timestamp": time.time()
-            }
-            logger.info(f"Simulating sharp maker move: {sharp_event['data']['player']} {sharp_event['data']['move']} on {sharp_event['data']['book']}")
-            if pubsub:
-                pubsub.publish("channel_sharp_moves", sharp_event)
-        except Exception as e:
-            logger.error(f"Error in sharp simulation: {e}")
-
-def random_dir():
-    import random
-    return random.choice([True, False])
+        },
+        "confidence": 0.95,
+        "timestamp": time.time()
+    }
+    if pubsub:
+        pubsub.publish("channel_sharp_moves", sharp_event)
+        # Surface on the dashboard (web API reads recent:sharp_consensus)
+        pubsub.push_recent("recent:sharp_consensus", {
+            "player": subject,
+            "stat": stat,
+            "book": book,
+            "move": f"{prev} → {curr}",
+            "direction": "UP" if curr > prev else "DOWN",
+            "timestamp": int(time.time() * 1000),
+        })
 
 def start_redis_listener():
     global pubsub
     pubsub = RedisPubSub()
     pubsub.subscribe("channel_live_odds", on_raw_odds)
-    logger.info("Subscribed to channel_live_odds")
-    
-    # Start simulation loop in background
-    sim_thread = threading.Thread(target=simulation_loop, daemon=True)
-    sim_thread.start()
+    logger.info("Subscribed to channel_live_odds (real lines only — no simulation).")
     
     try:
         # Idle keepalive: actual work happens in Redis callback threads.
