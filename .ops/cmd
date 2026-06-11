@@ -1,2 +1,2 @@
 vast
-cd ~/CourtSide-Edge && git fetch --all --prune -q && git reset --hard origin/main -q && bash deploy/scripts/deploy-agents.sh && sleep 5 && bash deploy/scripts/run-agents-native.sh status
+nvidia-smi --query-gpu=name,memory.total,memory.used --format=csv; echo ---; df -h / /workspace 2>/dev/null | head -5; echo ---; free -g | head -2; echo ---; nproc
