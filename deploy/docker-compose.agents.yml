@@ -20,6 +20,10 @@ x-agent: &agent
   restart: unless-stopped
 
 services:
+  agent_12_alpha_sandbox:
+    <<: *agent
+    build: { context: .., dockerfile: agents/12_alpha_sandbox/Dockerfile }
+
   agent_1_market_scraper:
     <<: *agent
     build: { context: .., dockerfile: agents/1_market_scraper/Dockerfile }

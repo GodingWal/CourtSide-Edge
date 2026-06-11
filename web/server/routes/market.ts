@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { randomUUID } from 'crypto';
 import { db } from '../db';
 import { bankroll_history, bets, agent_context_store, hedging_opportunities, qualitative_events } from '../schema';
 import { desc, eq } from 'drizzle-orm';
@@ -19,6 +20,25 @@ router.get('/bankroll/history', async (req, res) => {
     res.json(history);
   } catch (err) {
     res.status(500).json({ error: 'Failed to fetch bankroll history' });
+  }
+});
+
+// Manually set the current bankroll (inserts a bankroll_history point).
+router.post('/bankroll', writeLimiter, async (req, res) => {
+  try {
+    const balance = parseFloat(req.body?.balance);
+    if (!Number.isFinite(balance) || balance < 0 || balance > 100000000) {
+      return res.status(400).json({ error: 'balance must be a non-negative number' });
+    }
+    // drawdown vs historical peak (0 when this is a new peak)
+    const hist = await db.select().from(bankroll_history);
+    const peak = Math.max(balance, ...hist.map((h) => h.balance), 0);
+    const drawdown_pct = peak > 0 ? Math.round(((peak - balance) / peak) * 10000) / 100 : 0;
+    await db.insert(bankroll_history).values({ timestamp: Date.now(), balance, drawdown_pct });
+    res.status(201).json({ success: true, balance });
+  } catch (err) {
+    logger.error({ err }, 'Failed to set bankroll');
+    res.status(500).json({ error: 'Failed to set bankroll' });
   }
 });
 
@@ -181,52 +201,79 @@ router.get('/live/rotations', async (req, res) => {
   }
 });
 
+// ── Alpha Sandbox chat (bridged over Redis to Agent 12 / local Nemotron) ────
+router.post('/sandbox/chat', writeLimiter, async (req, res) => {
+  try {
+    const message = String(req.body?.message ?? '').trim().slice(0, 2000);
+    if (!message) return res.status(400).json({ error: 'message is required' });
+    if (!redisClient?.isOpen) {
+      return res.status(503).json({ error: 'Analysis engine offline (Redis unavailable).' });
+    }
+    const id = randomUUID();
+    await redisClient.lPush('sandbox:requests', JSON.stringify({ id, message, ts: Date.now() }));
+
+    // Poll for Agent 12's reply (local LLM inference can take a while).
+    const deadline = Date.now() + 60_000;
+    while (Date.now() < deadline) {
+      const raw = await redisClient.get(`sandbox:response:${id}`);
+      if (raw) {
+        await redisClient.del(`sandbox:response:${id}`);
+        return res.json(JSON.parse(raw));
+      }
+      await new Promise((r) => setTimeout(r, 750));
+    }
+    res.status(504).json({ error: 'Agent 12 did not respond in time. Is the agent tier running?' });
+  } catch (err) {
+    logger.error({ err }, 'Sandbox chat failed');
+    res.status(500).json({ error: 'Sandbox chat failed' });
+  }
+});
+
 // ── Agents Health Telemetry ─────────────────────────────────────────────────
+// Liveness is real: every Python agent maintains heartbeat:agent:<id> in
+// Redis (90s TTL, refreshed every 30s) regardless of which host it runs on.
 const AGENTS_LIST = [
-  { id: '0', name: 'Historical ETL', port: null },
-  { id: '1', name: 'Market Scraper', port: null },
-  { id: '2', name: 'News Sentinel', port: null },
-  { id: '2.5', name: 'Game Flow Oracle', port: null },
-  { id: '3', name: 'Projection Engine', port: 8000 },
-  { id: '4', name: 'Execution Oracle', port: 8001 },
-  { id: '5', name: 'Referee Engine', port: null },
-  { id: '6', name: 'Steam Detector', port: null },
-  { id: '7', name: 'Correlation Guard', port: null },
-  { id: '8', name: 'Bankroll Sizer', port: null },
-  { id: '9', name: 'News Sentiment', port: null },
-  { id: '10', name: 'Game Total Projector', port: null },
-  { id: '11', name: 'Market Value Detector', port: null },
-  { id: '13', name: 'Matchup Oracle / Parlay Gen', port: 8009 },
-  { id: '14', name: 'CLV Tracker', port: 8010 },
-  { id: '15', name: 'Drift Monitor', port: 8011 },
-  { id: '16', name: 'Hedge Oracle', port: 8012 },
-  { id: '17', name: 'Velocity Agent', port: 8013 },
-  { id: '18', name: 'Liquidity Oracle', port: 8014 },
-  { id: '19', name: 'Sharp Profiler', port: 8015 },
-  { id: '20', name: 'Hedge Executor', port: 8016 },
-  { id: '21', name: 'Rotation Tracker', port: 8017 }
+  { id: '0', name: 'Historical ETL' },
+  { id: '1', name: 'Market Scraper' },
+  { id: '2', name: 'News Sentinel' },
+  { id: '2.5', name: 'Game Flow Oracle' },
+  { id: '3', name: 'Projection Engine' },
+  { id: '4', name: 'Execution Oracle' },
+  { id: '5', name: 'Referee Engine' },
+  { id: '6', name: 'Steam Detector' },
+  { id: '7', name: 'Correlation Guard' },
+  { id: '8', name: 'Bankroll Sizer' },
+  { id: '9', name: 'News Sentiment' },
+  { id: '10', name: 'Game Total Projector' },
+  { id: '11', name: 'Market Value Detector' },
+  { id: '13', name: 'Matchup Oracle / Parlay Gen' },
+  { id: '14', name: 'CLV Tracker' },
+  { id: '15', name: 'Drift Monitor' },
+  { id: '16', name: 'Hedge Oracle' },
+  { id: '17', name: 'Velocity Agent' },
+  { id: '18', name: 'Liquidity Oracle' },
+  { id: '19', name: 'Sharp Profiler' },
+  { id: '20', name: 'Hedge Executor' },
+  { id: '21', name: 'Rotation Tracker' },
+  { id: '22', name: 'Data Watchdog' },
+  { id: '23', name: 'Game Session Manager' }
 ];
 
 router.get('/agents/health', async (req, res) => {
   try {
-    const results = await Promise.all(AGENTS_LIST.map(async (agent) => {
-      if (agent.port) {
-        try {
-          const controller = new AbortController();
-          const timeoutId = setTimeout(() => controller.abort(), 2000);
-          const response = await fetch(`http://localhost:${agent.port}/health`, { signal: controller.signal });
-          clearTimeout(timeoutId);
-          if (response.ok) {
-            return { ...agent, status: 'online' as const };
-          }
-        } catch (e) {
-          // fetch error or timeout
-        }
-      }
-      return { ...agent, status: agent.port ? 'offline' as const : 'online' as const };
+    if (!redisClient?.isOpen) {
+      return res.json(AGENTS_LIST.map((a) => ({ ...a, port: null, status: 'offline' as const })));
+    }
+    const keys = AGENTS_LIST.map((a) => `heartbeat:agent:${a.id}`);
+    const beats = await redisClient.mGet(keys);
+    const results = AGENTS_LIST.map((agent, i) => ({
+      ...agent,
+      port: null,
+      status: beats[i] ? ('online' as const) : ('offline' as const),
     }));
     res.json(results);
   } catch (err) {
+    logger.error({ err }, 'Failed to query agent health');
     res.status(500).json({ error: 'Failed to query agent health' });
   }
 });

@@ -28,14 +28,15 @@ export default function Settings() {
 
   // Agents status
   const [agents, setAgents] = useState<AgentHealth[]>([]);
+  const [currentBankroll, setCurrentBankroll] = useState('');
   const [rotations, setRotations] = useState<any[]>([]);
 
   // Drift status
   const [driftStatus, setDriftStatus] = useState<any>({
-    calibration: { PTS: -0.4, REB: 0.2, AST: 0.1 },
-    mae: 1.45,
-    bias: -0.12,
-    settled_bets_analyzed: 27
+    calibration: null,
+    mae: null,
+    bias: null,
+    settled_bets_analyzed: 0
   });
 
 
@@ -140,6 +141,17 @@ export default function Settings() {
       await saveSetting('bankroll_starting', bankrollStarting);
       await saveSetting('kelly_fraction', kellyFraction);
       await saveSetting('auto_halt_drawdown', autoHaltDrawdown);
+
+      // If a current bankroll was entered, record it as the live balance.
+      if (currentBankroll !== '') {
+        const res = await fetch(`${API_BASE}/bankroll`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ balance: parseFloat(currentBankroll) })
+        });
+        if (!res.ok) throw new Error('Failed to set current bankroll');
+        setCurrentBankroll('');
+      }
       
       toast({
         title: 'Settings Saved',
@@ -183,7 +195,7 @@ export default function Settings() {
 
   if (loading) {
     return (
-      <div className="p-8 space-y-6 max-w-[1440px] mx-auto w-full min-h-screen animate-fade-in">
+      <div className="p-4 md:p-8 space-y-6 max-w-[1440px] mx-auto w-full min-h-screen animate-fade-in">
         <div className="flex items-center gap-3">
           <SettingsIcon className="w-7 h-7 text-cs-red" />
           <h1 className="text-3xl font-extrabold text-white">System Settings</h1>
@@ -198,7 +210,7 @@ export default function Settings() {
   }
 
   return (
-    <div className="p-8 space-y-6 max-w-[1440px] mx-auto w-full min-h-screen animate-fade-in">
+    <div className="p-4 md:p-8 space-y-6 max-w-[1440px] mx-auto w-full min-h-screen animate-fade-in">
       {/* Header */}
       <div className="flex items-center justify-between">
         <h1 className="text-3xl font-extrabold text-white tracking-tight flex items-center gap-3">
@@ -230,6 +242,23 @@ export default function Settings() {
               />
               <p className="text-[10px] text-cs-muted mt-1 leading-normal">
                 Base allocation pool for bet sizing calculation and historical P&L drawdown.
+              </p>
+            </div>
+
+            {/* Current Bankroll (writes a live balance point) */}
+            <div>
+              <label className="cs-label">Current Bankroll ($)</label>
+              <input
+                type="number"
+                min="0"
+                step="0.01"
+                value={currentBankroll}
+                onChange={(e) => setCurrentBankroll(e.target.value)}
+                placeholder="Set the live balance shown on the dashboard"
+                className="cs-input font-mono"
+              />
+              <p className="text-[10px] text-cs-muted mt-1 leading-normal">
+                Records a new balance point — the dashboard's Total Bankroll updates immediately. Leave blank to keep unchanged.
               </p>
             </div>
 
@@ -357,15 +386,15 @@ export default function Settings() {
         <div className="grid grid-cols-1 md:grid-cols-3 gap-5 mb-5">
           <div className="p-4 bg-cs-black/60 border border-cs-border/40 rounded-xl">
             <p className="cs-stat-label">Model Bias (Mean Error)</p>
-            <span className={`text-xl font-bold font-mono block mt-1.5 ${driftStatus.bias < 0 ? 'text-cs-red-bright' : 'text-emerald-400'}`}>
-              {driftStatus.bias > 0 ? `+${driftStatus.bias}` : driftStatus.bias} {driftStatus.bias < 0 ? ' (Underprojecting)' : ' (Overprojecting)'}
+            <span className={`text-xl font-bold font-mono block mt-1.5 ${(driftStatus.bias ?? 0) < 0 ? 'text-cs-red-bright' : 'text-emerald-400'}`}>
+              {driftStatus.bias === null || driftStatus.bias === undefined ? '—' : `${driftStatus.bias > 0 ? `+${driftStatus.bias}` : driftStatus.bias}${driftStatus.bias < 0 ? ' (Underprojecting)' : ' (Overprojecting)'}`}
             </span>
           </div>
 
           <div className="p-4 bg-cs-black/60 border border-cs-border/40 rounded-xl">
             <p className="cs-stat-label">Mean Absolute Error (MAE)</p>
             <span className="text-xl font-bold font-mono text-white block mt-1.5">
-              {driftStatus.mae} pts/reb/ast
+              {driftStatus.mae ?? '—'} pts/reb/ast
             </span>
           </div>
 
@@ -381,15 +410,21 @@ export default function Settings() {
           <div className="text-xs font-semibold text-white mb-3 flex items-center gap-2">
             <Sparkles className="w-3.5 h-3.5 text-cs-red" /> Active Projection Offset Multipliers
           </div>
-          <div className="grid grid-cols-3 gap-4">
-            {Object.entries(driftStatus.calibration).map(([stat, offset]: any) => (
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            {!driftStatus?.calibration || Object.keys(driftStatus.calibration).length === 0 ? (
+              <p className="text-xs text-cs-muted font-mono col-span-full text-center py-3">
+                No calibration data yet — Agent 15 publishes after enough settled bets.
+              </p>
+            ) : (
+            Object.entries(driftStatus.calibration).map(([stat, offset]: any) => (
               <div key={stat} className="bg-cs-dark/30 border border-cs-border/30 rounded-xl p-3 flex items-center justify-between">
                 <span className="font-bold text-xs text-white">{stat} adjustment</span>
                 <span className={`font-mono text-xs font-black ${offset >= 0 ? 'text-emerald-400' : 'text-cs-red-bright'}`}>
                   {offset >= 0 ? `+${offset}` : offset}
                 </span>
               </div>
-            ))}
+            ))
+            )}
           </div>
         </div>
       </div>

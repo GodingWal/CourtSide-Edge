@@ -18,6 +18,7 @@ LOG_DIR="logs"
 PID_DIR="run"
 
 AGENTS=(
+  12_alpha_sandbox
   1_market_scraper
   2_news_sentinel
   9_news_sentiment

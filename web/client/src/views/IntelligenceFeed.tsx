@@ -174,7 +174,7 @@ export default function IntelligenceFeed() {
   }, []);
 
   return (
-    <div className="min-h-screen bg-cs-black p-6 animate-fade-in">
+    <div className="min-h-screen bg-cs-black p-4 md:p-6 animate-fade-in">
       {/* Header */}
       <div className="flex items-center gap-3 mb-8">
         <div className="w-10 h-10 rounded-xl bg-cs-red/10 border border-cs-red/20 flex items-center justify-center shadow-glow-red-sm">
