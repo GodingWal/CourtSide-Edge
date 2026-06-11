@@ -2,35 +2,6 @@ import { useEffect, useState } from 'react';
 import { Activity, TrendingUp, Zap, CircleDot, ArrowUpRight, ArrowDownRight, Sparkles } from 'lucide-react';
 import { API_BASE } from '../lib/config';
 
-/* ── mock data ─────────────────────────────────────────────────────── */
-const MOCK_EDGES = [
-  { player: "A'ja Wilson",      market: 'Points O/U',   bookLine: '22.5 O -110', trueLine: '24.8', edge: 8.2, signal: 'STRONG'   },
-  { player: 'Breanna Stewart',  market: 'Rebounds O/U', bookLine: '9.5 O -115',  trueLine: '11.1', edge: 6.4, signal: 'STRONG'   },
-  { player: 'Kelsey Plum',      market: 'Assists O/U',  bookLine: '5.5 O -105',  trueLine: '6.3',  edge: 4.1, signal: 'MODERATE' },
-  { player: 'Alyssa Thomas',    market: 'Pts+Reb+Ast',  bookLine: '29.5 O -108', trueLine: '31.9', edge: 5.7, signal: 'STRONG'   },
-  { player: 'Sabrina Ionescu',  market: 'Three-Pts O/U',bookLine: '2.5 O +100',  trueLine: '3.1',  edge: 3.9, signal: 'MODERATE' },
-];
-
-/* ── mini sparkline SVG ────────────────────────────────────────────── */
-function MiniSparkline() {
-  return (
-    <svg viewBox="0 0 80 28" className="w-20 h-7 ml-auto" fill="none">
-      <polyline
-        points="0,22 10,18 20,20 30,12 40,15 50,8 60,10 70,4 80,6"
-        stroke="url(#spark-grad)"
-        strokeWidth="2"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-      <defs>
-        <linearGradient id="spark-grad" x1="0" y1="0" x2="80" y2="0">
-          <stop offset="0%" stopColor="#ef4444" stopOpacity="0.4" />
-          <stop offset="100%" stopColor="#ef4444" />
-        </linearGradient>
-      </defs>
-    </svg>
-  );
-}
 
 /* ── radar pulse for empty alert state ─────────────────────────────── */
 function RadarPulse() {
@@ -48,6 +19,27 @@ export default function MarketDivergence() {
   const [messages, setMessages] = useState<any[]>([]);
   const [velocityAlerts, setVelocityAlerts] = useState<any[]>([]);
   const [sharpConsensus, setSharpConsensus] = useState<any[]>([]);
+  const [edges, setEdges] = useState<any[]>([]);
+  const [betStats, setBetStats] = useState<any | null>(null);
+
+  /* real edges + bet stats */
+  useEffect(() => {
+    const fetchEdges = async () => {
+      try {
+        const [edgesRes, statsRes] = await Promise.all([
+          fetch(`${API_BASE}/edges/recent`),
+          fetch(`${API_BASE}/bets/stats`),
+        ]);
+        if (edgesRes.ok) setEdges(await edgesRes.json());
+        if (statsRes.ok) setBetStats(await statsRes.json());
+      } catch (err) {
+        console.error('Failed to fetch edges/stats:', err);
+      }
+    };
+    fetchEdges();
+    const interval = setInterval(fetchEdges, 10000);
+    return () => clearInterval(interval);
+  }, []);
 
   /* SSE listener */
   useEffect(() => {
@@ -127,8 +119,7 @@ export default function MarketDivergence() {
             Active Edges
           </p>
           <div className="flex items-end justify-between mt-2">
-            <span className="cs-stat text-4xl">12</span>
-            <MiniSparkline />
+            <span className="cs-stat text-4xl">{edges.length}</span>
           </div>
         </div>
 
@@ -141,12 +132,14 @@ export default function MarketDivergence() {
             <TrendingUp className="w-3.5 h-3.5 text-cs-red" />
             Win Rate (30d)
           </p>
-          <span className="cs-stat text-4xl text-gradient-red mt-2 block">67.2%</span>
+          <span className="cs-stat text-4xl text-gradient-red mt-2 block">
+            {betStats && (betStats.wins + betStats.losses) > 0 ? `${betStats.win_rate.toFixed(1)}%` : '—'}
+          </span>
           {/* thin progress bar */}
           <div className="mt-3 h-1.5 w-full rounded-full bg-cs-dark overflow-hidden">
             <div
               className="h-full rounded-full bg-gradient-to-r from-cs-red to-cs-red-bright shadow-glow-red-sm"
-              style={{ width: '67.2%' }}
+              style={{ width: `${Math.min(100, betStats?.win_rate ?? 0)}%` }}
             />
           </div>
         </div>
@@ -160,10 +153,13 @@ export default function MarketDivergence() {
             <Activity className="w-3.5 h-3.5 text-cs-red" />
             Bankroll P&amp;L
           </p>
-          <span className="cs-stat text-4xl mt-2 block" style={{ color: '#22c55e' }}>
-            +$2,340
+          <span
+            className="cs-stat text-4xl mt-2 block"
+            style={{ color: (betStats?.total_profit ?? 0) >= 0 ? '#22c55e' : '#ef4444' }}
+          >
+            {betStats ? `${betStats.total_profit >= 0 ? '+' : '-'}$${Math.abs(betStats.total_profit).toLocaleString(undefined, { maximumFractionDigits: 0 })}` : '—'}
           </span>
-          <p className="text-xs text-cs-muted mt-1">since Jun 1</p>
+          <p className="text-xs text-cs-muted mt-1">all settled bets</p>
         </div>
       </div>
 
@@ -191,38 +187,46 @@ export default function MarketDivergence() {
                 </tr>
               </thead>
               <tbody>
-                {MOCK_EDGES.map((row, i) => (
-                  <tr
-                    key={row.player}
-                    className={`border-b border-cs-border/40 transition-colors hover:bg-cs-red/[0.04] ${
-                      i % 2 === 0 ? 'bg-cs-dark/50' : 'bg-transparent'
-                    }`}
-                  >
-                    <td className="px-6 py-4 font-medium text-white whitespace-nowrap">{row.player}</td>
-                    <td className="px-6 py-4 text-cs-muted">{row.market}</td>
-                    <td className="px-6 py-4 text-cs-muted font-mono text-xs">{row.bookLine}</td>
-                    <td className="px-6 py-4 text-white font-mono text-xs">{row.trueLine}</td>
-                    <td className="px-6 py-4 text-right">
-                      <span
-                        className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-bold"
-                        style={{ color: '#22c55e', backgroundColor: 'rgba(34,197,94,0.12)' }}
-                      >
-                        +{row.edge}%
-                      </span>
-                    </td>
-                    <td className="px-6 py-4 text-center">
-                      <span
-                        className={`cs-badge text-xs font-bold tracking-wide ${
-                          row.signal === 'STRONG'
-                            ? 'bg-cs-red/15 text-cs-red-bright shadow-glow-red-sm'
-                            : 'bg-amber-500/10 text-amber-400'
-                        }`}
-                      >
-                        {row.signal}
-                      </span>
+                {edges.length === 0 ? (
+                  <tr>
+                    <td colSpan={6} className="px-6 py-10 text-center text-cs-muted font-mono text-xs">
+                      No live edges detected yet. Agent 11 publishes here when real market divergence is found.
                     </td>
                   </tr>
-                ))}
+                ) : (
+                  edges.map((row, i) => (
+                    <tr
+                      key={row.trace_id ?? i}
+                      className={`border-b border-cs-border/40 transition-colors hover:bg-cs-red/[0.04] ${
+                        i % 2 === 0 ? 'bg-cs-dark/50' : 'bg-transparent'
+                      }`}
+                    >
+                      <td className="px-6 py-4 font-medium text-white whitespace-nowrap">{row.player ?? '—'}</td>
+                      <td className="px-6 py-4 text-cs-muted">{row.stat ?? row.market_classification ?? '—'}</td>
+                      <td className="px-6 py-4 text-cs-muted font-mono text-xs">{row.line !== undefined ? `${row.line} ${row.odds ?? ''}` : '—'}</td>
+                      <td className="px-6 py-4 text-white font-mono text-xs">{row.true_line ?? '—'}</td>
+                      <td className="px-6 py-4 text-right">
+                        <span
+                          className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-bold"
+                          style={{ color: '#22c55e', backgroundColor: 'rgba(34,197,94,0.12)' }}
+                        >
+                          +{row.divergence_score ?? row.edge ?? 0}%
+                        </span>
+                      </td>
+                      <td className="px-6 py-4 text-center">
+                        <span
+                          className={`cs-badge text-xs font-bold tracking-wide ${
+                            (row.confidence ?? 0) >= 0.85
+                              ? 'bg-cs-red/15 text-cs-red-bright shadow-glow-red-sm'
+                              : 'bg-amber-500/10 text-amber-400'
+                          }`}
+                        >
+                          {(row.confidence ?? 0) >= 0.85 ? 'STRONG' : 'MODERATE'}
+                        </span>
+                      </td>
+                    </tr>
+                  ))
+                )}
               </tbody>
             </table>
           </div>

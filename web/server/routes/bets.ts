@@ -3,6 +3,7 @@ import { db } from '../db';
 import { bets } from '../schema';
 import { desc, eq } from 'drizzle-orm';
 import { logger } from '../logger';
+import { config } from '../config';
 import { writeLimiter, validateRequest } from '../middleware';
 import { createBetSchema, settleBetSchema, clvBetSchema } from '../schemas.validation';
 
@@ -194,6 +195,13 @@ router.get('/bets/stats', async (req, res) => {
 // ── Bet Upload Endpoint ─────────────────────────────────────────────────────
 router.post('/bets/upload', writeLimiter, async (req, res) => {
   try {
+    // Real OCR is not implemented. In production this endpoint refuses rather
+    // than fabricating a random bet (the dev-only simulation below remains for
+    // exercising the upload UI locally).
+    if (config.NODE_ENV === 'production') {
+      return res.status(501).json({ error: 'Bet slip OCR is not available yet. Enter the bet manually.' });
+    }
+
     // Simulate OCR processing latency
     await new Promise(resolve => setTimeout(resolve, 1500));
 

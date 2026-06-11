@@ -62,6 +62,13 @@ function calcProfitLoss(result: string, stake: number, bookOdds: number): number
 }
 
 export function seed(options?: { forceReset?: boolean }): void {
+  // Demo/sample data (fake bets, bankroll history, events, audit traces) is
+  // only seeded outside production, or when SEED_DEMO_DATA=true is set
+  // explicitly. Reference data (players, settings) is always seeded.
+  const seedDemo =
+    process.env.SEED_DEMO_DATA === 'true' ||
+    (config.NODE_ENV !== 'production' && process.env.SEED_DEMO_DATA !== 'false');
+
   let sqlite = new Database(config.DATABASE_PATH);
   sqlite.pragma('journal_mode = WAL');
 
@@ -101,7 +108,7 @@ export function seed(options?: { forceReset?: boolean }): void {
 
   // ── Seed bankroll history (90 days) ────────────────────────────────────────
   const bankrollCount = sqlite.prepare('SELECT COUNT(*) as cnt FROM bankroll_history').get() as { cnt: number };
-  if (bankrollCount.cnt === 0) {
+  if (seedDemo && bankrollCount.cnt === 0) {
     const insert = sqlite.prepare(
       'INSERT INTO bankroll_history (timestamp, balance, drawdown_pct) VALUES (?, ?, ?)'
     );
@@ -130,7 +137,7 @@ export function seed(options?: { forceReset?: boolean }): void {
 
   // ── Seed bets (25 samples) ────────────────────────────────────────────────
   const betCount = sqlite.prepare('SELECT COUNT(*) as cnt FROM bets').get() as { cnt: number };
-  if (betCount.cnt === 0) {
+  if (seedDemo && betCount.cnt === 0) {
     const insert = sqlite.prepare(`
       INSERT INTO bets (parent_id, is_parlay, player, stat, line, over_under, book_odds, true_odds, edge_pct, stake, result, actual_value, profit_loss, placed_at, settled_at, opposing_team, notes, closing_odds, clv_pct, is_hedge)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -279,7 +286,7 @@ export function seed(options?: { forceReset?: boolean }): void {
 
   // ── Seed qualitative events ──────────────────────────────────────────────
   const qualitativeCount = sqlite.prepare('SELECT COUNT(*) as cnt FROM qualitative_events').get() as { cnt: number };
-  if (qualitativeCount.cnt === 0) {
+  if (seedDemo && qualitativeCount.cnt === 0) {
     const insert = sqlite.prepare(`
       INSERT INTO qualitative_events (channel, payload, timestamp)
       VALUES (?, ?, ?)
@@ -356,7 +363,7 @@ export function seed(options?: { forceReset?: boolean }): void {
 
   // ── Seed agent context store ──────────────────────────────────────────────
   const contextCount = sqlite.prepare('SELECT COUNT(*) as cnt FROM agent_context_store').get() as { cnt: number };
-  if (contextCount.cnt === 0) {
+  if (seedDemo && contextCount.cnt === 0) {
     const insert = sqlite.prepare(`
       INSERT INTO agent_context_store (game_id, agent_id, context_key, context_value, confidence, ttl_seconds, created_at)
       VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -385,7 +392,7 @@ export function seed(options?: { forceReset?: boolean }): void {
 
   // ── Seed decision audit trail ────────────────────────────────────────────
   const auditCount = sqlite.prepare('SELECT COUNT(*) as cnt FROM decision_audit').get() as { cnt: number };
-  if (auditCount.cnt === 0) {
+  if (seedDemo && auditCount.cnt === 0) {
     const insert = sqlite.prepare(`
       INSERT INTO decision_audit (trace_id, agent_id, action, reason, input_payload, output_payload, confidence, timestamp)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
@@ -418,7 +425,7 @@ export function seed(options?: { forceReset?: boolean }): void {
 
   // ── Seed hedging opportunities ───────────────────────────────────────────
   const hedgeCount = sqlite.prepare('SELECT COUNT(*) as cnt FROM hedging_opportunities').get() as { cnt: number };
-  if (hedgeCount.cnt === 0) {
+  if (seedDemo && hedgeCount.cnt === 0) {
     const insertHedge = sqlite.prepare(`
       INSERT INTO hedging_opportunities (bet_id, hedged_player, original_line, original_odds, live_line, live_odds, potential_profit, hedge_instructions, created_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)

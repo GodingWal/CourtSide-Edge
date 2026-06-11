@@ -1,6 +1,8 @@
+import { useEffect, useState } from 'react';
 import { Database, AlertTriangle, Users, Shield, Activity } from 'lucide-react';
+import { API_BASE } from '../lib/config';
 
-/* ── Mock Data ── */
+/* ── Types ── */
 
 type InjuryStatus = 'out' | 'questionable' | 'active';
 
@@ -11,41 +13,76 @@ interface InjuryItem {
   injury: string;
 }
 
-const injuries: InjuryItem[] = [
-  { player: "A'ja Wilson", team: 'LVA', status: 'out', injury: 'Right ankle sprain' },
-  { player: 'Alyssa Thomas', team: 'CON', status: 'questionable', injury: 'Knee soreness' },
-  { player: 'Kelsey Plum', team: 'LVA', status: 'questionable', injury: 'Rest day — load management' },
-  { player: 'Breanna Stewart', team: 'NYL', status: 'active', injury: 'Full practice participant' },
-  { player: 'Sabrina Ionescu', team: 'NYL', status: 'active', injury: 'Cleared — no limitations' },
-];
-
-interface TeamFatigue {
+interface SentimentItem {
   team: string;
-  fatigue: number;
-  motivation: string;
-  isB2B: boolean;
+  fatigue: number; // 0-100 derived from fatigue_penalty (-1..0)
+  motivation: number; // 0-100 derived from motivation_score (0..1)
 }
 
-const teams: TeamFatigue[] = [
-  { team: 'Las Vegas Aces', fatigue: 78, motivation: 'Playoff push', isB2B: true },
-  { team: 'New York Liberty', fatigue: 45, motivation: 'Playoff push', isB2B: false },
-  { team: 'Indiana Fever', fatigue: 32, motivation: 'Rebuild', isB2B: false },
-  { team: 'Los Angeles Sparks', fatigue: 85, motivation: 'Eliminated', isB2B: true },
-];
-
-interface Referee {
-  name: string;
-  games: number;
-  avgFouls: number;
-  ouTendency: number;
-  style: string;
+interface RefereeItem {
+  crew: string;
+  game: string;
+  foulsPer40: number | null;
+  paceEffect: number | null;
+  ouTendency: string;
 }
 
-const referees: Referee[] = [
-  { name: 'Maj Forsberg', games: 142, avgFouls: 22.4, ouTendency: 56, style: 'Tight whistle' },
-  { name: 'Danielle Scott', games: 198, avgFouls: 18.1, ouTendency: 48, style: 'Player-friendly' },
-  { name: 'Isaac Barnett', games: 87, avgFouls: 20.7, ouTendency: 52, style: 'Tight whistle' },
-];
+/* ── Mapping real agent events → view models ── */
+
+function mapInjuryStatus(status: string): InjuryStatus {
+  const s = String(status).toUpperCase();
+  if (s === 'OUT') return 'out';
+  if (s === 'ACTIVE') return 'active';
+  return 'questionable'; // DOUBTFUL / QUESTIONABLE / PROBABLE
+}
+
+function parseEvents(events: any[]) {
+  const injuries: InjuryItem[] = [];
+  const sentiment: SentimentItem[] = [];
+  const referees: RefereeItem[] = [];
+  const seenPlayers = new Set<string>();
+  const seenTeams = new Set<string>();
+  const seenCrews = new Set<string>();
+
+  for (const ev of events) {
+    const p = ev.payload;
+    if (!p || typeof p !== 'object') continue;
+
+    if (ev.channel === 'channel_roster_updates' && p.player_name) {
+      if (seenPlayers.has(p.player_name)) continue;
+      seenPlayers.add(p.player_name);
+      injuries.push({
+        player: p.player_name,
+        team: p.team ?? '—',
+        status: mapInjuryStatus(p.injury_status ?? 'QUESTIONABLE'),
+        injury: p.injury_status
+          ? `${p.injury_status}${p.game_impact && p.game_impact !== 'NONE' ? ` · impact: ${p.game_impact}` : ''}`
+          : 'Status update',
+      });
+    } else if (ev.channel === 'channel_sentiment_context') {
+      const team = p.team ?? 'UNKNOWN';
+      if (seenTeams.has(team)) continue;
+      seenTeams.add(team);
+      sentiment.push({
+        team,
+        fatigue: Math.round(Math.min(1, Math.abs(p.fatigue_penalty ?? 0)) * 100),
+        motivation: Math.round(Math.min(1, Math.max(0, p.motivation_score ?? 0)) * 100),
+      });
+    } else if (ev.channel === 'channel_referee_context' && p.crew) {
+      if (seenCrews.has(p.crew)) continue;
+      seenCrews.add(p.crew);
+      const t = p.tendencies ?? {};
+      referees.push({
+        crew: p.crew,
+        game: p.game_id ?? '—',
+        foulsPer40: t.fouls_per_40 ?? null,
+        paceEffect: t.pace_effect ?? null,
+        ouTendency: t.ou_hit_rate ?? '—',
+      });
+    }
+  }
+  return { injuries: injuries.slice(0, 8), sentiment: sentiment.slice(0, 6), referees: referees.slice(0, 6) };
+}
 
 /* ── Helpers ── */
 
@@ -67,23 +104,20 @@ function fatigueColor(score: number): string {
   return 'bg-emerald-500';
 }
 
-function motivationColor(tag: string): string {
-  switch (tag) {
-    case 'Playoff push':
-      return 'text-emerald-400 bg-emerald-500/10 border-emerald-500/30';
-    case 'Eliminated':
-      return 'text-red-400 bg-red-500/10 border-red-500/30';
-    default:
-      return 'text-yellow-400 bg-yellow-500/10 border-yellow-500/30';
-  }
+function EmptyState({ text }: { text: string }) {
+  return (
+    <p className="text-xs text-cs-muted font-mono text-center py-8">{text}</p>
+  );
 }
 
-/* ── Ticker ── */
+/* ── Ticker (built from live injuries) ── */
 
-const tickerText =
-  "🔴 A. Thomas (Q) — Knee soreness  ·  🟡 K. Plum (P) — Rest day  ·  🟢 B. Stewart — Full practice  ·  🔴 A'ja Wilson (O) — Right ankle  ·  🟢 S. Ionescu — Cleared";
+function Ticker({ injuries }: { injuries: InjuryItem[] }) {
+  const dot = (s: InjuryStatus) => (s === 'out' ? '🔴' : s === 'questionable' ? '🟡' : '🟢');
+  const tickerText = injuries.length
+    ? injuries.map((i) => `${dot(i.status)} ${i.player} — ${i.injury}`).join('  ·  ')
+    : 'Awaiting live injury intel from Agent 2…';
 
-function Ticker() {
   return (
     <div className="relative w-full overflow-hidden rounded-xl bg-cs-dark/80 border border-cs-border/40 mb-6">
       <div className="flex items-center">
@@ -116,6 +150,29 @@ function Ticker() {
 /* ── Component ── */
 
 export default function IntelligenceFeed() {
+  const [injuries, setInjuries] = useState<InjuryItem[]>([]);
+  const [sentiment, setSentiment] = useState<SentimentItem[]>([]);
+  const [referees, setReferees] = useState<RefereeItem[]>([]);
+
+  useEffect(() => {
+    const fetchEvents = async () => {
+      try {
+        const res = await fetch(`${API_BASE}/events/recent`);
+        if (!res.ok) return;
+        const events = await res.json();
+        const parsed = parseEvents(events);
+        setInjuries(parsed.injuries);
+        setSentiment(parsed.sentiment);
+        setReferees(parsed.referees);
+      } catch (err) {
+        console.error('Failed to fetch intelligence events:', err);
+      }
+    };
+    fetchEvents();
+    const interval = setInterval(fetchEvents, 15000);
+    return () => clearInterval(interval);
+  }, []);
+
   return (
     <div className="min-h-screen bg-cs-black p-6 animate-fade-in">
       {/* Header */}
@@ -130,7 +187,7 @@ export default function IntelligenceFeed() {
       </div>
 
       {/* Ticker */}
-      <Ticker />
+      <Ticker injuries={injuries} />
 
       {/* 3 Column Grid */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -142,28 +199,29 @@ export default function IntelligenceFeed() {
           </div>
 
           <div className="space-y-1">
-            {injuries.map((item) => (
-              <div
-                key={item.player}
-                className="flex items-center gap-3 p-3 rounded-xl hover:bg-white/[0.02] transition-colors"
-              >
-                {/* Status dot */}
-                <span
-                  className={`shrink-0 w-2.5 h-2.5 rounded-full ${statusColors[item.status]} ${statusGlow[item.status]}`}
-                />
-
-                {/* Info */}
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm font-semibold text-white truncate">{item.player}</span>
-                    <span className="shrink-0 text-[10px] font-bold text-cs-muted bg-cs-border/30 px-1.5 py-0.5 rounded">
-                      {item.team}
-                    </span>
+            {injuries.length === 0 ? (
+              <EmptyState text="No live injury intel yet — Agent 2 publishes here." />
+            ) : (
+              injuries.map((item) => (
+                <div
+                  key={item.player}
+                  className="flex items-center gap-3 p-3 rounded-xl hover:bg-white/[0.02] transition-colors"
+                >
+                  <span
+                    className={`shrink-0 w-2.5 h-2.5 rounded-full ${statusColors[item.status]} ${statusGlow[item.status]}`}
+                  />
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-semibold text-white truncate">{item.player}</span>
+                      <span className="shrink-0 text-[10px] font-bold text-cs-muted bg-cs-border/30 px-1.5 py-0.5 rounded">
+                        {item.team}
+                      </span>
+                    </div>
+                    <p className="text-xs text-cs-muted mt-0.5 truncate">{item.injury}</p>
                   </div>
-                  <p className="text-xs text-cs-muted mt-0.5 truncate">{item.injury}</p>
                 </div>
-              </div>
-            ))}
+              ))
+            )}
           </div>
         </div>
 
@@ -177,42 +235,48 @@ export default function IntelligenceFeed() {
           </div>
 
           <div className="space-y-4">
-            {teams.map((t) => (
-              <div
-                key={t.team}
-                className="bg-cs-black/60 border border-cs-border/40 rounded-xl p-4 space-y-3"
-              >
-                <div className="flex items-center justify-between">
-                  <span className="text-sm font-semibold text-white">{t.team}</span>
-                  {t.isB2B && (
-                    <span className="text-[10px] font-bold text-orange-400 bg-orange-500/10 border border-orange-500/30 px-2 py-0.5 rounded-full uppercase tracking-wider">
-                      B2B
-                    </span>
-                  )}
-                </div>
-
-                {/* Fatigue bar */}
-                <div>
-                  <div className="flex items-center justify-between mb-1.5">
-                    <span className="text-[10px] text-cs-muted uppercase tracking-wider">Fatigue</span>
-                    <span className="text-xs font-bold text-white">{t.fatigue}/100</span>
-                  </div>
-                  <div className="h-1.5 w-full bg-cs-border/30 rounded-full overflow-hidden">
-                    <div
-                      className={`h-full rounded-full transition-all duration-700 ${fatigueColor(t.fatigue)}`}
-                      style={{ width: `${t.fatigue}%` }}
-                    />
-                  </div>
-                </div>
-
-                {/* Motivation tag */}
-                <span
-                  className={`inline-block text-[10px] font-bold uppercase tracking-wider px-2.5 py-1 rounded-full border ${motivationColor(t.motivation)}`}
+            {sentiment.length === 0 ? (
+              <EmptyState text="No sentiment context yet — Agent 9 publishes here." />
+            ) : (
+              sentiment.map((t) => (
+                <div
+                  key={t.team}
+                  className="bg-cs-black/60 border border-cs-border/40 rounded-xl p-4 space-y-3"
                 >
-                  {t.motivation}
-                </span>
-              </div>
-            ))}
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm font-semibold text-white">{t.team}</span>
+                  </div>
+
+                  {/* Fatigue bar */}
+                  <div>
+                    <div className="flex items-center justify-between mb-1.5">
+                      <span className="text-[10px] text-cs-muted uppercase tracking-wider">Fatigue</span>
+                      <span className="text-xs font-bold text-white">{t.fatigue}/100</span>
+                    </div>
+                    <div className="h-1.5 w-full bg-cs-border/30 rounded-full overflow-hidden">
+                      <div
+                        className={`h-full rounded-full transition-all duration-700 ${fatigueColor(t.fatigue)}`}
+                        style={{ width: `${t.fatigue}%` }}
+                      />
+                    </div>
+                  </div>
+
+                  {/* Motivation bar */}
+                  <div>
+                    <div className="flex items-center justify-between mb-1.5">
+                      <span className="text-[10px] text-cs-muted uppercase tracking-wider">Motivation</span>
+                      <span className="text-xs font-bold text-white">{t.motivation}/100</span>
+                    </div>
+                    <div className="h-1.5 w-full bg-cs-border/30 rounded-full overflow-hidden">
+                      <div
+                        className="h-full rounded-full bg-gradient-to-r from-cs-red to-cs-red-bright transition-all duration-700"
+                        style={{ width: `${t.motivation}%` }}
+                      />
+                    </div>
+                  </div>
+                </div>
+              ))
+            )}
           </div>
         </div>
 
@@ -224,48 +288,40 @@ export default function IntelligenceFeed() {
           </div>
 
           <div className="space-y-4">
-            {referees.map((ref) => (
-              <div
-                key={ref.name}
-                className="bg-cs-black/60 border border-cs-border/40 rounded-xl p-4 space-y-3"
-              >
-                <div className="flex items-center justify-between">
-                  <span className="text-sm font-semibold text-white">{ref.name}</span>
-                  <span
-                    className={`text-[10px] font-bold uppercase tracking-wider px-2.5 py-1 rounded-full border ${
-                      ref.style === 'Tight whistle'
-                        ? 'text-red-400 bg-red-500/10 border-red-500/30'
-                        : 'text-emerald-400 bg-emerald-500/10 border-emerald-500/30'
-                    }`}
-                  >
-                    {ref.style}
-                  </span>
-                </div>
+            {referees.length === 0 ? (
+              <EmptyState text="No referee context yet — Agent 5 publishes here." />
+            ) : (
+              referees.map((ref) => (
+                <div
+                  key={ref.crew}
+                  className="bg-cs-black/60 border border-cs-border/40 rounded-xl p-4 space-y-3"
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm font-semibold text-white">{ref.crew}</span>
+                    <span className="text-[10px] font-bold uppercase tracking-wider px-2.5 py-1 rounded-full border text-cs-muted bg-cs-border/10 border-cs-border/40">
+                      {ref.game}
+                    </span>
+                  </div>
 
-                <div className="grid grid-cols-3 gap-2">
-                  <div className="text-center">
-                    <div className="text-lg font-black text-white">{ref.games}</div>
-                    <div className="text-[10px] text-cs-muted uppercase tracking-wider">Games</div>
-                  </div>
-                  <div className="text-center">
-                    <div className="text-lg font-black text-white">{ref.avgFouls}</div>
-                    <div className="text-[10px] text-cs-muted uppercase tracking-wider">Fouls/G</div>
-                  </div>
-                  <div className="text-center">
-                    <div className="text-lg font-black text-white">{ref.ouTendency}%</div>
-                    <div className="text-[10px] text-cs-muted uppercase tracking-wider">O/U %</div>
+                  <div className="grid grid-cols-3 gap-2">
+                    <div className="text-center">
+                      <div className="text-lg font-black text-white">{ref.foulsPer40 ?? '—'}</div>
+                      <div className="text-[10px] text-cs-muted uppercase tracking-wider">Fouls/40</div>
+                    </div>
+                    <div className="text-center">
+                      <div className="text-lg font-black text-white">
+                        {ref.paceEffect !== null ? (ref.paceEffect > 0 ? `+${ref.paceEffect}` : ref.paceEffect) : '—'}
+                      </div>
+                      <div className="text-[10px] text-cs-muted uppercase tracking-wider">Pace</div>
+                    </div>
+                    <div className="text-center">
+                      <div className="text-sm font-black text-white leading-6">{ref.ouTendency}</div>
+                      <div className="text-[10px] text-cs-muted uppercase tracking-wider">O/U Lean</div>
+                    </div>
                   </div>
                 </div>
-
-                {/* Visual tendency bar */}
-                <div className="h-1 w-full bg-cs-border/30 rounded-full overflow-hidden">
-                  <div
-                    className="h-full rounded-full bg-gradient-to-r from-cs-red to-cs-red-bright transition-all duration-700"
-                    style={{ width: `${ref.ouTendency}%` }}
-                  />
-                </div>
-              </div>
-            ))}
+              ))
+            )}
           </div>
         </div>
       </div>
