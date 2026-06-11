@@ -95,10 +95,10 @@ export default function MarketDivergence() {
 
   /* ── render ─────────────────────────────────────────────────────── */
   return (
-    <div className="p-8 space-y-6 max-w-[1440px] mx-auto w-full min-h-screen animate-fade-in">
+    <div className="p-4 md:p-8 space-y-6 max-w-[1440px] mx-auto w-full min-h-screen animate-fade-in">
       {/* ── Header ─────────────────────────────────────────────────── */}
       <div className="flex items-center justify-between">
-        <h1 className="text-3xl font-extrabold text-white tracking-tight flex items-center gap-3">
+        <h1 className="text-2xl md:text-3xl font-extrabold text-white tracking-tight flex items-center gap-3">
           <Activity className="w-7 h-7 text-cs-red drop-shadow-[0_0_8px_rgba(239,68,68,0.6)]" />
           Market Divergence Terminal
         </h1>

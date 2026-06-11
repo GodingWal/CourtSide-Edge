@@ -10,9 +10,12 @@ Provides:
 """
 
 import logging
+import os
+import re
 import signal
 import sqlite3
 import threading
+import time
 from contextlib import contextmanager
 from typing import Callable, Optional
 
@@ -21,9 +24,49 @@ DEFAULT_SQLITE_TIMEOUT = 5.0
 LOG_FORMAT = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
 
 
+HEARTBEAT_INTERVAL = 30
+HEARTBEAT_TTL = 90
+
+
+def _start_heartbeat(name: str) -> None:
+    """Maintain heartbeat:agent:<id> in Redis so the web API reports real
+    liveness for every agent. Best-effort: skipped silently when Redis is
+    unreachable or the redis package is unavailable (e.g. unit tests).
+    """
+    match = re.match(r"Agent(\d+(?:\.\d+)?)", name)
+    if not match:
+        return
+    agent_id = match.group(1)
+
+    def _beat():
+        client = None
+        while True:
+            try:
+                if client is None:
+                    import redis
+                    client = redis.Redis(
+                        host=os.getenv("REDIS_HOST", "localhost"),
+                        port=int(os.getenv("REDIS_PORT", 6379)),
+                        password=os.getenv("REDIS_PASSWORD") or None,
+                        socket_timeout=5,
+                    )
+                client.set(f"heartbeat:agent:{agent_id}", str(int(time.time())), ex=HEARTBEAT_TTL)
+            except Exception:
+                client = None  # reconnect next round
+            time.sleep(HEARTBEAT_INTERVAL)
+
+    threading.Thread(target=_beat, daemon=True, name=f"heartbeat-{agent_id}").start()
+
+
 def setup_logging(name: str, level: int = logging.INFO) -> logging.Logger:
-    """Configure root logging once (idempotent) and return a named logger."""
+    """Configure root logging once (idempotent) and return a named logger.
+
+    Also starts the agent's liveness heartbeat (once per process).
+    """
     logging.basicConfig(level=level, format=LOG_FORMAT)
+    if not getattr(setup_logging, "_heartbeat_started", False):
+        setup_logging._heartbeat_started = True
+        _start_heartbeat(name)
     return logging.getLogger(name)
 
 

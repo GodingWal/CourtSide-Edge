@@ -1,139 +1,171 @@
-import { Cpu, Send, Terminal, BarChart3 } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { Cpu, Send, Terminal } from 'lucide-react';
+import { API_BASE } from '../lib/config';
+
+interface ChatMessage {
+  role: 'user' | 'agent' | 'error';
+  text: string;
+  meta?: string;
+}
 
 export default function AlphaSandbox() {
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [input, setInput] = useState('');
+  const [sending, setSending] = useState(false);
+  const [lastMeta, setLastMeta] = useState<string | null>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
+  }, [messages, sending]);
+
+  const send = async () => {
+    const message = input.trim();
+    if (!message || sending) return;
+    setInput('');
+    setMessages((prev) => [...prev, { role: 'user', text: message }]);
+    setSending(true);
+    try {
+      const res = await fetch(`${API_BASE}/sandbox/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data?.error || `Request failed (${res.status})`);
+      }
+      const meta = `local Nemotron · ${data.elapsed_seconds ?? '?'}s`;
+      setLastMeta(meta);
+      setMessages((prev) => [...prev, { role: 'agent', text: data.reply ?? '(empty reply)', meta }]);
+    } catch (err: any) {
+      setMessages((prev) => [...prev, { role: 'error', text: err?.message || 'Failed to reach Agent 12.' }]);
+    } finally {
+      setSending(false);
+    }
+  };
+
   return (
-    <div className="flex flex-col h-full w-full animate-fade-in">
+    <div className="flex flex-col h-[calc(100vh-3.5rem)] w-full animate-fade-in">
       {/* ── Top Bar ── */}
-      <div className="flex items-center justify-between px-6 py-4 shrink-0">
+      <div className="flex flex-wrap items-center justify-between gap-2 px-4 md:px-6 py-3 shrink-0">
         <div className="flex items-center gap-3">
           <Cpu className="w-5 h-5 text-cs-red" />
           <span className="cs-badge">Agent 12 · Quantitative Signal</span>
         </div>
-
-        <div className="flex items-center gap-3">
-          <div className="cs-card px-4 py-2 flex items-center gap-3">
-            <span className="cs-stat-label">Information Coefficient</span>
-            <span className="cs-stat text-white">0.042</span>
-          </div>
-          <div className="cs-card px-4 py-2 flex items-center gap-3">
-            <span className="cs-stat-label">Backtest Win Rate</span>
-            <span className="cs-stat text-cs-red">58.3%</span>
-          </div>
+        <div className="cs-card px-3 py-1.5 flex items-center gap-2">
+          <span className="cs-stat-label">Engine</span>
+          <span className="text-xs font-mono text-white/80">{lastMeta ?? 'local Nemotron (GPU)'}</span>
         </div>
       </div>
 
-      {/* ── Main Area: Chat (60%) + Output (40%) ── */}
-      <div className="flex-1 flex gap-4 px-6 pb-6 min-h-0">
-        {/* ── Left Column: Chat ── */}
-        <div className="w-[60%] flex flex-col cs-card p-0 overflow-hidden">
-          {/* Chat header */}
+      {/* ── Main Area: stacks on mobile, splits on lg ── */}
+      <div className="flex-1 flex flex-col lg:flex-row gap-4 px-4 md:px-6 pb-4 md:pb-6 min-h-0">
+        {/* ── Chat ── */}
+        <div className="flex-1 lg:w-[60%] flex flex-col cs-card p-0 overflow-hidden min-h-[60vh] lg:min-h-0">
           <div className="flex items-center gap-2 px-5 py-3 border-b border-cs-border/30">
             <div className="w-2 h-2 rounded-full bg-cs-red shadow-glow-red-sm animate-pulse-slow" />
             <span className="text-sm font-medium text-white/70">Alpha Discovery Chat</span>
           </div>
 
           {/* Messages */}
-          <div className="flex-1 overflow-y-auto px-5 py-5 space-y-4">
-            {/* User bubble */}
-            <div className="flex justify-end animate-slide-up">
-              <div className="max-w-[75%] rounded-2xl rounded-br-md px-4 py-3 bg-cs-red/10 border border-cs-red/20">
-                <p className="text-sm text-white leading-relaxed">
-                  Analyze centers vs Liberty on back-to-back games
+          <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 md:px-5 py-5 space-y-4">
+            {messages.length === 0 && (
+              <div className="h-full flex items-center justify-center text-center px-6">
+                <p className="text-sm text-cs-muted leading-relaxed">
+                  Ask Agent 12 about today's matchups, prop lines, pace, fatigue or referee impact.
+                  <br />
+                  <span className="text-xs">Answers are generated live by the Nemotron model running on the GPU server.</span>
                 </p>
               </div>
-            </div>
-
-            {/* Agent bubble */}
-            <div className="flex justify-start animate-slide-up" style={{ animationDelay: '80ms' }}>
-              <div className="max-w-[80%] rounded-2xl rounded-bl-md px-4 py-4 bg-cs-dark border border-cs-border/30 space-y-3">
-                <div className="flex items-center gap-2 mb-1">
-                  <Cpu className="w-3.5 h-3.5 text-cs-red" />
-                  <span className="text-xs font-semibold text-cs-red tracking-wide uppercase">
-                    Agent 12
-                  </span>
+            )}
+            {messages.map((m, i) =>
+              m.role === 'user' ? (
+                <div key={i} className="flex justify-end animate-slide-up">
+                  <div className="max-w-[85%] md:max-w-[75%] rounded-2xl rounded-br-md px-4 py-3 bg-cs-red/10 border border-cs-red/20">
+                    <p className="text-sm text-white leading-relaxed whitespace-pre-wrap">{m.text}</p>
+                  </div>
                 </div>
-                <p className="text-sm text-white/80 leading-relaxed">
-                  Running quantitative analysis on <span className="text-cs-red font-medium">CEN vs NYL</span> back-to-back
-                  scenarios. Here's what the signal engine found:
-                </p>
-                <ul className="text-sm text-white/70 space-y-1.5 pl-1">
-                  <li className="flex items-start gap-2">
-                    <span className="text-cs-red mt-1 shrink-0">•</span>
-                    <span><span className="text-white/90 font-medium">Fatigue factor:</span> Centers show a 12.4% decline in paint scoring efficiency on the 2nd night of B2Bs</span>
-                  </li>
-                  <li className="flex items-start gap-2">
-                    <span className="text-cs-red mt-1 shrink-0">•</span>
-                    <span><span className="text-white/90 font-medium">Pace differential:</span> Liberty push pace +3.7 possessions/game at home — compounding fatigue effects</span>
-                  </li>
-                  <li className="flex items-start gap-2">
-                    <span className="text-cs-red mt-1 shrink-0">•</span>
-                    <span><span className="text-white/90 font-medium">Rebound margin:</span> B2B centers yield −4.1 RPG vs season average, creating 2nd-chance opportunities for NYL</span>
-                  </li>
-                  <li className="flex items-start gap-2">
-                    <span className="text-cs-red mt-1 shrink-0">•</span>
-                    <span><span className="text-white/90 font-medium">Edge detected:</span> +4.2% vs closing line — signal confirmed at p=0.031</span>
-                  </li>
-                </ul>
-                <p className="text-xs text-cs-muted pt-1">
-                  ✓ Backtest validated · 47 game sample · IC 0.042
-                </p>
+              ) : (
+                <div key={i} className="flex justify-start animate-slide-up">
+                  <div
+                    className={`max-w-[90%] md:max-w-[80%] rounded-2xl rounded-bl-md px-4 py-4 border space-y-2 ${
+                      m.role === 'error'
+                        ? 'bg-red-950/40 border-red-500/30'
+                        : 'bg-cs-dark border-cs-border/30'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2">
+                      <Cpu className="w-3.5 h-3.5 text-cs-red" />
+                      <span className="text-xs font-semibold text-cs-red tracking-wide uppercase">
+                        {m.role === 'error' ? 'Engine Error' : 'Agent 12'}
+                      </span>
+                    </div>
+                    <p className="text-sm text-white/80 leading-relaxed whitespace-pre-wrap">{m.text}</p>
+                    {m.meta && <p className="text-[10px] text-cs-muted pt-1">✓ {m.meta}</p>}
+                  </div>
+                </div>
+              )
+            )}
+            {sending && (
+              <div className="flex justify-start">
+                <div className="rounded-2xl rounded-bl-md px-4 py-3 bg-cs-dark border border-cs-border/30">
+                  <span className="text-sm text-cs-muted animate-pulse">Agent 12 is analyzing…</span>
+                </div>
               </div>
-            </div>
+            )}
           </div>
 
           {/* Input bar */}
-          <div className="px-4 py-3 border-t border-cs-border/30">
+          <div className="px-3 md:px-4 py-3 border-t border-cs-border/30">
             <div className="flex items-center gap-2">
               <input
                 type="text"
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && send()}
+                disabled={sending}
                 placeholder="Ask Agent 12 to discover a signal…"
                 className="cs-input flex-1"
               />
-              <button className="cs-btn-primary h-10 w-10 shrink-0 flex items-center justify-center !p-0">
+              <button
+                onClick={send}
+                disabled={sending || !input.trim()}
+                className="cs-btn-primary h-10 w-10 shrink-0 flex items-center justify-center !p-0 disabled:opacity-40"
+                aria-label="Send"
+              >
                 <Send className="w-4 h-4" />
               </button>
             </div>
           </div>
         </div>
 
-        {/* ── Right Column: Validation Output ── */}
-        <div className="w-[40%] flex flex-col gap-4 min-h-0">
-          {/* Code output card */}
-          <div className="cs-card flex-1 flex flex-col p-0 overflow-hidden">
+        {/* ── Session log ── */}
+        <div className="lg:w-[40%] flex flex-col gap-4 min-h-0">
+          <div className="cs-card flex-1 flex flex-col p-0 overflow-hidden min-h-[180px]">
             <div className="flex items-center gap-2 px-5 py-3 border-b border-cs-border/30">
               <Terminal className="w-4 h-4 text-cs-red" />
-              <span className="text-sm font-medium text-white/70">Validation Output</span>
+              <span className="text-sm font-medium text-white/70">Session Log</span>
             </div>
-
             <div className="flex-1 overflow-y-auto p-4">
-              <div className="bg-cs-black rounded-lg border border-cs-border/30 p-4 font-mono text-xs leading-6 text-white/70">
-                <p><span className="text-cs-muted">{'>'}</span> Running backtest: <span className="text-white">CEN vs NYL (B2B)</span></p>
-                <p><span className="text-cs-muted">{'>'}</span> Sample size: <span className="text-white">47 games</span></p>
-                <p><span className="text-cs-muted">{'>'}</span> Hit rate: <span className="text-cs-red font-semibold">58.3%</span> <span className="text-cs-muted">(p=0.031)</span></p>
-                <p><span className="text-cs-muted">{'>'}</span> Edge: <span className="text-cs-red-bright font-semibold">+4.2%</span> vs closing line</p>
-                <p><span className="text-cs-muted">{'>'}</span> IC: <span className="text-white">0.042</span></p>
-                <p className="mt-2 pt-2 border-t border-cs-border/20">
-                  <span className="text-cs-muted">{'>'}</span> Status: <span className="text-cs-red font-bold tracking-wider shadow-glow-red-sm">SIGNAL_CONFIRMED</span>
-                </p>
+              <div className="bg-cs-black rounded-lg border border-cs-border/30 p-4 font-mono text-xs leading-6 text-white/70 space-y-1">
+                {messages.length === 0 ? (
+                  <p className="text-cs-muted">{'>'} awaiting first query…</p>
+                ) : (
+                  messages.map((m, i) => (
+                    <p key={i}>
+                      <span className="text-cs-muted">{'>'}</span>{' '}
+                      {m.role === 'user' ? (
+                        <span className="text-white">{m.text.slice(0, 70)}</span>
+                      ) : m.role === 'error' ? (
+                        <span className="text-red-400">ERROR: {m.text.slice(0, 70)}</span>
+                      ) : (
+                        <span className="text-cs-red">reply · {m.meta ?? 'ok'}</span>
+                      )}
+                    </p>
+                  ))
+                )}
               </div>
-            </div>
-          </div>
-
-          {/* Metric cards */}
-          <div className="grid grid-cols-2 gap-3 shrink-0">
-            <div className="cs-card px-4 py-3 text-center">
-              <div className="flex items-center justify-center gap-1.5 mb-1">
-                <BarChart3 className="w-3.5 h-3.5 text-cs-red" />
-                <span className="cs-stat-label">Sharpe Ratio</span>
-              </div>
-              <span className="cs-stat text-white text-lg">1.24</span>
-            </div>
-            <div className="cs-card px-4 py-3 text-center">
-              <div className="flex items-center justify-center gap-1.5 mb-1">
-                <BarChart3 className="w-3.5 h-3.5 text-cs-red" />
-                <span className="cs-stat-label">Max Drawdown</span>
-              </div>
-              <span className="cs-stat text-cs-red text-lg">-8.2%</span>
             </div>
           </div>
         </div>

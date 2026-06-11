@@ -107,6 +107,14 @@ class NemotronClient:
         return json.loads(match.group(0))
 
     # ── public API ────────────────────────────────────────────────────────
+    def ask(self, question: str, system: str, temperature: float = 0.4) -> str:
+        """Free-form chat completion (e.g. Agent 12 sandbox). Raises on failure
+        when the server is up; returns a notice string when simulated."""
+        if self.simulated:
+            return ("[simulated] No local LLM server is reachable, so I can't run "
+                    "live analysis right now.")
+        return self._chat(system=system, user=question, temperature=temperature)
+
     def extract_injury_json(self, text: str) -> dict:
         """Agent 2: strict JSON injury extraction (temp=0)."""
         if self.simulated:
