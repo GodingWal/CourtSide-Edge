@@ -30,14 +30,15 @@ def _get(url: str, params: dict | None = None):
         return None
 
 
-def get_scoreboard() -> list[dict]:
+def get_scoreboard(date: str | None = None) -> list[dict]:
     """Today's WNBA games: id, teams, tipoff, live status, score, game odds.
 
     Returns a list of normalized games:
       {game_id, espn_id, home, away, tipoff (epoch), state (PRE|LIVE|FINAL),
        period, clock, home_score, away_score, odds: {spread, over_under, details} | None}
     """
-    data = _get(f"{BASE}/scoreboard")
+    params = {"dates": date} if date else None
+    data = _get(f"{BASE}/scoreboard", params=params)
     if not data:
         return []
     games = []
@@ -139,3 +140,80 @@ def get_boxscore_fouls(espn_event_id: str) -> list[dict]:
     except Exception as e:
         logger.warning(f"Failed to parse boxscore: {e}")
     return out
+
+
+def get_boxscore_player_stats(espn_event_id: str) -> list[dict]:
+    """Full per-player stat lines for a (final) game.
+
+    Returns rows with: player_id, player, team, minutes, points, rebounds,
+    assists, steals, blocks, turnovers, fgm, fga, tpm, tpa, ftm, fta, fouls.
+    """
+    data = _get(f"{BASE}/summary", params={"event": espn_event_id})
+    if not data:
+        return []
+
+    def split_made_att(value):
+        try:
+            made, att = str(value).split("-")
+            return int(made), int(att)
+        except (ValueError, AttributeError):
+            return None, None
+
+    rows = []
+    try:
+        for team in data.get("boxscore", {}).get("players", []):
+            team_abbr = team.get("team", {}).get("abbreviation", "UNK")
+            for stat_group in team.get("statistics", []):
+                keys = [str(k).upper() for k in (stat_group.get("keys") or stat_group.get("names") or [])]
+
+                def idx(*names):
+                    for n in names:
+                        if n in keys:
+                            return keys.index(n)
+                    return None
+
+                i_min, i_pts = idx("MIN", "MINUTES"), idx("PTS", "POINTS")
+                i_reb, i_ast = idx("REB", "TOTALREBOUNDS"), idx("AST", "ASSISTS")
+                i_stl, i_blk = idx("STL", "STEALS"), idx("BLK", "BLOCKS")
+                i_to, i_pf = idx("TO", "TURNOVERS"), idx("PF", "FOULS", "PERSONALFOULS")
+                i_fg, i_3pt, i_ft = idx("FG", "FIELDGOALSMADE-FIELDGOALSATTEMPTED"), idx("3PT", "THREEPOINTFIELDGOALSMADE-THREEPOINTFIELDGOALSATTEMPTED"), idx("FT", "FREETHROWSMADE-FREETHROWSATTEMPTED")
+                if i_pts is None:
+                    continue
+
+                for athlete in stat_group.get("athletes", []):
+                    stats = athlete.get("stats", [])
+                    if not stats or len(stats) <= i_pts:
+                        continue  # DNP rows have empty stats
+
+                    def num(i, cast=int):
+                        if i is None or i >= len(stats):
+                            return None
+                        try:
+                            return cast(str(stats[i]).replace("+", ""))
+                        except (ValueError, TypeError):
+                            return None
+
+                    fgm, fga = split_made_att(stats[i_fg]) if i_fg is not None and i_fg < len(stats) else (None, None)
+                    tpm, tpa = split_made_att(stats[i_3pt]) if i_3pt is not None and i_3pt < len(stats) else (None, None)
+                    ftm, fta = split_made_att(stats[i_ft]) if i_ft is not None and i_ft < len(stats) else (None, None)
+
+                    info = athlete.get("athlete", {})
+                    rows.append({
+                        "player_id": str(info.get("id", "")),
+                        "player": info.get("displayName", "Unknown"),
+                        "team": team_abbr,
+                        "minutes": num(i_min, float),
+                        "points": num(i_pts),
+                        "rebounds": num(i_reb),
+                        "assists": num(i_ast),
+                        "steals": num(i_stl),
+                        "blocks": num(i_blk),
+                        "turnovers": num(i_to),
+                        "fouls": num(i_pf),
+                        "fgm": fgm, "fga": fga,
+                        "tpm": tpm, "tpa": tpa,
+                        "ftm": ftm, "fta": fta,
+                    })
+    except Exception as e:
+        logger.warning(f"Failed to parse full boxscore: {e}")
+    return rows
