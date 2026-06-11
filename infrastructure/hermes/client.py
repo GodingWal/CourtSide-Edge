@@ -62,7 +62,7 @@ class HermesClient:
 
     # ── low-level call ────────────────────────────────────────────────────
     def _chat(self, system: str, user: str, temperature: float,
-              max_tokens: int | None = None) -> str:
+              max_tokens: int | None = None, timeout: int | None = None) -> str:
         """One OpenAI-compatible chat completion against the local server."""
         resp = requests.post(
             f"{HERMES_BASE_URL}/chat/completions",
@@ -79,7 +79,7 @@ class HermesClient:
                 "temperature": temperature,
                 "max_tokens": max_tokens or HERMES_MAX_TOKENS,
             },
-            timeout=REQUEST_TIMEOUT,
+            timeout=timeout or REQUEST_TIMEOUT,
         )
         resp.raise_for_status()
         return resp.json()["choices"][0]["message"]["content"]
@@ -94,14 +94,18 @@ class HermesClient:
 
     # ── public API ────────────────────────────────────────────────────────
     def ask(self, question: str, system: str, temperature: float = 0.4,
-            max_tokens: int | None = None) -> str:
+            max_tokens: int | None = None, timeout: int | None = None) -> str:
         """Free-form chat completion (e.g. Agent 12 sandbox). Raises on failure
-        when the server is up; returns an unavailability notice otherwise."""
+        when the server is up; returns an unavailability notice otherwise.
+
+        `timeout` caps this one call (seconds) for callers on a latency
+        budget, e.g. Agent 13's parlay summary behind the web proxy.
+        """
         if self.simulated:
             return ("No local LLM server is reachable, so I can't run live "
                     "analysis right now.")
         return self._chat(system=system, user=question, temperature=temperature,
-                          max_tokens=max_tokens)
+                          max_tokens=max_tokens, timeout=timeout)
 
     def extract_injury_json(self, text: str) -> dict | None:
         """Agent 2: strict JSON injury extraction (temp=0).
