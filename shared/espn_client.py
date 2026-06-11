@@ -236,7 +236,7 @@ def get_boxscore_player_stats(espn_event_id: str) -> list[dict]:
                     return None
 
                 i_min, i_pts = idx("MIN", "MINUTES"), idx("PTS", "POINTS")
-                i_reb, i_ast = idx("REB", "TOTALREBOUNDS"), idx("AST", "ASSISTS")
+                i_reb, i_ast = idx("REB", "REBOUNDS", "TOTALREBOUNDS"), idx("AST", "ASSISTS")
                 i_stl, i_blk = idx("STL", "STEALS"), idx("BLK", "BLOCKS")
                 i_to, i_pf = idx("TO", "TURNOVERS"), idx("PF", "FOULS", "PERSONALFOULS")
                 i_fg, i_3pt, i_ft = idx("FG", "FIELDGOALSMADE-FIELDGOALSATTEMPTED"), idx("3PT", "THREEPOINTFIELDGOALSMADE-THREEPOINTFIELDGOALSATTEMPTED"), idx("FT", "FREETHROWSMADE-FREETHROWSATTEMPTED")
