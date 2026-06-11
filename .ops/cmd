@@ -1,2 +1,2 @@
 vast
-cd ~/CourtSide-Edge && git fetch --all --prune -q && git reset --hard origin/main -q && bash deploy/scripts/deploy-agents.sh && sleep 5 && bash deploy/scripts/run-agents-native.sh status
+cd ~/CourtSide-Edge && git fetch --all --prune -q && git reset --hard origin/main -q && bash deploy/scripts/setup-local-llm.sh && bash deploy/scripts/run-agents-native.sh restart && sleep 8 && bash deploy/scripts/run-agents-native.sh status && echo "--- agent 9 log tail ---" && tail -5 logs/9_news_sentiment.log
