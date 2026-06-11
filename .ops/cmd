@@ -1,2 +1,2 @@
-vast
-cd ~/CourtSide-Edge && git fetch --all --prune -q && git reset --hard origin/main -q && bash deploy/scripts/deploy-agents.sh && sleep 5 && bash deploy/scripts/run-agents-native.sh status
+vps
+cd ~/CourtSide-Edge && docker compose --env-file deploy/env/web.env -f deploy/docker-compose.web.yml up -d --build --remove-orphans && sleep 10 && docker ps --format '{{.Names}} | {{.Status}}' && echo --- && curl -s http://127.0.0.1:3000/health && echo && curl -s -o /dev/null -w 'client:%{http_code}\n' http://127.0.0.1:8080/ && curl -s https://courtside-edge.com/api/health
