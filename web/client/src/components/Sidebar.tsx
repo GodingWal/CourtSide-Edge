@@ -2,6 +2,7 @@ import { useState, useCallback } from "react";
 import { Link, useLocation } from "react-router-dom";
 import {
   Activity,
+  BarChart3,
   Cpu,
   PieChart,
   Database,
@@ -16,6 +17,7 @@ const navItems = [
   { path: "/sandbox", label: "Alpha Sandbox", icon: Cpu },
   { path: "/diagnostics", label: "Bankroll", icon: PieChart },
   { path: "/intelligence", label: "Intelligence", icon: Database },
+  { path: "/stats", label: "Stats Center", icon: BarChart3 },
 ];
 
 const secondaryNavItems = [

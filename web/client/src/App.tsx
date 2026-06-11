@@ -11,6 +11,7 @@ import AlphaSandbox from "./views/AlphaSandbox";
 import BankrollDiagnostics from "./views/BankrollDiagnostics";
 import IntelligenceFeed from "./views/IntelligenceFeed";
 import BetTracker from "./views/BetTracker";
+import StatsCenter from "./views/StatsCenter";
 import Settings from "./views/Settings";
 import { ToastProvider } from "./components/ToastProvider";
 import CommandPalette from "./components/CommandPalette";
@@ -22,6 +23,7 @@ const pageTitles: Record<string, string> = {
   "/diagnostics": "Bankroll Diagnostics",
   "/intelligence": "Intelligence Feed",
   "/bets": "Bet Terminal",
+  "/stats": "Stats Center",
   "/settings": "Settings",
 };
 
@@ -138,6 +140,7 @@ function AppShell() {
             <Route path="/diagnostics" element={<BankrollDiagnostics />} />
             <Route path="/intelligence" element={<IntelligenceFeed />} />
             <Route path="/bets" element={<BetTracker />} />
+            <Route path="/stats" element={<StatsCenter />} />
             <Route path="/settings" element={<Settings />} />
           </Routes>
         </main>
