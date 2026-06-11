@@ -8,6 +8,7 @@ from typing import Any, Dict, List, Optional
 
 REDIS_HOST = os.getenv('REDIS_HOST', 'localhost')
 REDIS_PORT = int(os.getenv('REDIS_PORT', 6379))
+REDIS_PASSWORD = os.getenv('REDIS_PASSWORD') or None
 DB_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), '../data/hoopstats_wnba.db'))
 
 logger = logging.getLogger('ContextClient')
@@ -15,7 +16,7 @@ logger = logging.getLogger('ContextClient')
 class ContextClient:
     def __init__(self):
         try:
-            self.redis = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, decode_responses=True)
+            self.redis = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, password=REDIS_PASSWORD, decode_responses=True)
             self.redis.ping()
             self.redis_available = True
         except Exception:

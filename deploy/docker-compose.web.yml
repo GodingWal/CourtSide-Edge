@@ -1,0 +1,116 @@
+# CourtSideEdge — WEB tier (runs on the VPS: 76.13.100.125 / courtside-edge.com)
+#
+# Hosts: Redis (the shared bus), the Express API + WebSocket/SSE server, the
+# built React dashboard, and the agents that must share the SQLite ledger file
+# with the web server (they mount ./data).
+#
+# The stateless / compute agents run on the vast.ai box via
+# docker-compose.agents.yml and connect back to the Redis + API exposed here.
+#
+# Usage (from repo root, on the VPS):
+#   docker compose --env-file deploy/env/web.env -f deploy/docker-compose.web.yml up -d --build
+#
+# Ports are bound to 127.0.0.1 only; the host nginx (deploy/nginx) terminates
+# TLS for the public domain. Redis is published on the host so the remote
+# agents can reach it — lock it down with the firewall (see scripts/firewall.sh)
+# and the REDIS_PASSWORD in web.env.
+
+services:
+  redis:
+    image: redis:alpine
+    # Published on all interfaces so vast.ai agents can connect. Protected by
+    # REDIS_PASSWORD and the host firewall (allow only the agent box IP).
+    ports:
+      - "6379:6379"
+    volumes:
+      - ../infrastructure/redis/data:/data
+    command: sh -c 'exec redis-server --appendonly yes --requirepass "$$REDIS_PASSWORD"'
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" ping | grep -q PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  web_server:
+    build:
+      context: ../web/server
+      dockerfile: Dockerfile
+    env_file:
+      - env/web.env
+    container_name: courtside_web_server
+    # Bound to loopback; reached by host nginx and by web_client.
+    ports:
+      - "127.0.0.1:3000:3000"
+    volumes:
+      - ../data:/app/data
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  web_client:
+    build:
+      context: ../web/client
+      dockerfile: Dockerfile
+      args:
+        # Same-origin: the host nginx proxies /api (and injects the API key) so
+        # the browser bundle never carries a secret.
+        VITE_API_BASE: /api
+    container_name: courtside_web_client
+    ports:
+      - "127.0.0.1:8080:80"
+    depends_on:
+      web_server:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ── Ledger-coupled agents (share the SQLite file with web_server) ──────────
+  agent_0_historical_etl:
+    build: { context: .., dockerfile: agents/0_historical_etl/Dockerfile }
+    env_file: [env/web.env]
+    volumes: ["../data:/app/data"]
+    restart: unless-stopped
+
+  agent_13_parlay_generator:
+    build: { context: .., dockerfile: agents/13_parlay_generator/Dockerfile }
+    env_file: [env/web.env]
+    volumes: ["../data:/app/data"]
+    depends_on: { redis: { condition: service_healthy } }
+    restart: unless-stopped
+
+  agent_14_clv_tracker:
+    build: { context: .., dockerfile: agents/14_clv_tracker/Dockerfile }
+    env_file: [env/web.env]
+    volumes: ["../data:/app/data"]
+    depends_on: { redis: { condition: service_healthy } }
+    restart: unless-stopped
+
+  agent_15_drift_monitor:
+    build: { context: .., dockerfile: agents/15_drift_monitor/Dockerfile }
+    env_file: [env/web.env]
+    volumes: ["../data:/app/data"]
+    depends_on: { redis: { condition: service_healthy } }
+    restart: unless-stopped
+
+  agent_16_hedge_oracle:
+    build: { context: .., dockerfile: agents/16_hedge_oracle/Dockerfile }
+    env_file: [env/web.env]
+    volumes: ["../data:/app/data"]
+    depends_on: { redis: { condition: service_healthy } }
+    restart: unless-stopped
+
+  agent_20_hedge_executor:
+    build: { context: .., dockerfile: agents/20_hedge_executor/Dockerfile }
+    env_file: [env/web.env]
+    volumes: ["../data:/app/data"]
+    depends_on: { redis: { condition: service_healthy } }
+    restart: unless-stopped
