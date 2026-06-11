@@ -113,7 +113,7 @@ router.post('/bets', writeLimiter, validateRequest(createBetSchema), async (req,
   }
 });
 
-router.patch('/bets/:id/settle', validateRequest(settleBetSchema), async (req, res) => {
+router.patch('/bets/:id/settle', writeLimiter, validateRequest(settleBetSchema), async (req, res) => {
   try {
     const { id } = req.params;
     const { result, actual_value } = req.body;
@@ -154,18 +154,22 @@ router.patch('/bets/:id/settle', validateRequest(settleBetSchema), async (req, r
 router.get('/bets/stats', async (req, res) => {
   try {
     const allBets = await db.select().from(bets);
-    const total_bets = allBets.length;
-    const wins = allBets.filter(b => b.result === 'WIN').length;
-    const losses = allBets.filter(b => b.result === 'LOSS').length;
-    const pushes = allBets.filter(b => b.result === 'PUSH').length;
-    const pending = allBets.filter(b => b.result === null).length;
+    // Parlay legs (parent_id set) inherit the parent's result on settle and
+    // carry zero stake — counting them alongside the parent double-counts
+    // wagers and inflates the win rate.
+    const wagers = allBets.filter(b => b.parent_id === null);
+    const total_bets = wagers.length;
+    const wins = wagers.filter(b => b.result === 'WIN').length;
+    const losses = wagers.filter(b => b.result === 'LOSS').length;
+    const pushes = wagers.filter(b => b.result === 'PUSH').length;
+    const pending = wagers.filter(b => b.result === null).length;
 
     let total_profit = 0;
     let total_edge = 0;
     let edge_count = 0;
     let total_clv = 0;
     let clv_count = 0;
-    allBets.forEach(b => {
+    wagers.forEach(b => {
       if (b.profit_loss !== null) total_profit += b.profit_loss;
       if (b.edge_pct !== null) {
         total_edge += b.edge_pct;
@@ -205,7 +209,7 @@ router.post('/bets/upload', writeLimiter, async (req, res) => {
 });
 
 // ── CLV Tracking Endpoints ──────────────────────────────────────────────────
-router.patch('/bets/:id/clv', validateRequest(clvBetSchema), async (req, res) => {
+router.patch('/bets/:id/clv', writeLimiter, validateRequest(clvBetSchema), async (req, res) => {
   try {
     const { id } = req.params;
     const { closing_odds } = req.body;
@@ -287,12 +291,38 @@ router.get('/clv/summary', async (req, res) => {
 });
 
 // ── Export Bets CSV ─────────────────────────────────────────────────────────
+// Escape one CSV cell: quote/comma/newline-safe, and neutralize spreadsheet
+// formula injection (cells starting with = + - @).
+const csvCell = (v: unknown): string => {
+  if (v === null || v === undefined) return '';
+  let s = String(v);
+  // Plain numbers (incl. negatives like -110) are safe; only text starting
+  // with a formula trigger needs neutralizing.
+  if (typeof v !== 'number' && /^[=+\-@\t\r]/.test(s)) s = `'${s}`;
+  if (/[",\n\r]/.test(s)) s = `"${s.replace(/"/g, '""')}"`;
+  return s;
+};
+
 router.get('/export/bets', async (req, res) => {
   try {
     const allBets = await db.select().from(bets).orderBy(desc(bets.placed_at));
     let csv = 'ID,Placed At,Player,Opponent,Stat,Line,Side,Odds,Stake,Result,Actual,P&L,Notes\n';
     allBets.forEach(b => {
-      csv += `${b.id},"${new Date(b.placed_at).toISOString()}","${b.player}","${b.opposing_team || ''}","${b.stat}",${b.line},${b.over_under},${b.book_odds},${b.stake},${b.result || 'PENDING'},${b.actual_value !== null ? b.actual_value : ''},${b.profit_loss !== null ? b.profit_loss : ''},"${b.notes || ''}"\n`;
+      csv += [
+        b.id,
+        new Date(b.placed_at).toISOString(),
+        b.player,
+        b.opposing_team || '',
+        b.stat,
+        b.line,
+        b.over_under,
+        b.book_odds,
+        b.stake,
+        b.result || 'PENDING',
+        b.actual_value !== null ? b.actual_value : '',
+        b.profit_loss !== null ? b.profit_loss : '',
+        b.notes || ''
+      ].map(csvCell).join(',') + '\n';
     });
     res.setHeader('Content-Type', 'text/csv');
     res.setHeader('Content-Disposition', 'attachment; filename=courtside_bets.csv');

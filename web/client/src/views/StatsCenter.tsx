@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { BarChart3, Users, Swords, Search } from 'lucide-react';
+import type { LucideIcon } from 'lucide-react';
 import { API_BASE } from '../lib/config';
 
 /* ── Types ── */
@@ -153,28 +154,30 @@ export default function StatsCenter() {
   }, [players, playerSearch]);
 
   /* head-to-head fetch (team vs team) */
+  const h2hActive = compareMode === 'team-team' && !!teamA && !!teamB && teamA !== teamB;
   useEffect(() => {
-    if (compareMode !== 'team-team' || !teamA || !teamB || teamA === teamB) {
-      setH2h([]);
-      return;
-    }
+    if (!h2hActive) return;
+    let cancelled = false;
     fetch(`${API_BASE}/stats/h2h?a=${encodeURIComponent(teamA)}&b=${encodeURIComponent(teamB)}`)
       .then((r) => (r.ok ? r.json() : { games: [] }))
-      .then((d) => setH2h(d.games ?? []))
-      .catch(() => setH2h([]));
-  }, [compareMode, teamA, teamB]);
+      .then((d) => { if (!cancelled) setH2h(d.games ?? []); })
+      .catch(() => { if (!cancelled) setH2h([]); });
+    return () => { cancelled = true; };
+  }, [h2hActive, teamA, teamB]);
 
   /* player game log fetch (player vs team / matchups) */
+  const gamelogActive = compareMode === 'player-team' && !!playerA;
   useEffect(() => {
-    if (compareMode !== 'player-team' || !playerA) {
-      setGamelog([]);
-      return;
-    }
+    if (!gamelogActive) return;
     fetch(`${API_BASE}/stats/gamelog?player=${encodeURIComponent(playerA)}`)
       .then((r) => (r.ok ? r.json() : { games: [] }))
       .then((d) => setGamelog(d.games ?? []))
       .catch(() => setGamelog([]));
-  }, [compareMode, playerA]);
+  }, [gamelogActive, playerA]);
+
+  // Render-derived emptiness: when a compare mode is inactive its stale data
+  // must not show, without resetting state synchronously inside effects.
+  const h2hGames = h2hActive ? h2h : [];
 
   const pA = players.find((p) => p.player === playerA) ?? null;
   const pB = players.find((p) => p.player === playerB) ?? null;
@@ -182,8 +185,8 @@ export default function StatsCenter() {
   const tB = teams[teamB] ?? null;
 
   const vsTeamLog = useMemo(
-    () => gamelog.filter((g) => g.opp === teamB),
-    [gamelog, teamB]
+    () => (gamelogActive ? gamelog.filter((g) => g.opp === teamB) : []),
+    [gamelogActive, gamelog, teamB]
   );
   const vsTeamAvg = useMemo(() => {
     if (!vsTeamLog.length) return null;
@@ -225,7 +228,7 @@ export default function StatsCenter() {
             { id: 'teams', label: 'Teams', icon: BarChart3 },
             { id: 'players', label: 'Players', icon: Users },
             { id: 'compare', label: 'Compare', icon: Swords },
-          ] as { id: Tab; label: string; icon: any }[]).map(({ id, label, icon: Icon }) => (
+          ] as { id: Tab; label: string; icon: LucideIcon }[]).map(({ id, label, icon: Icon }) => (
             <button
               key={id}
               onClick={() => setTab(id)}
@@ -445,11 +448,11 @@ export default function StatsCenter() {
 
               <div className="cs-card p-6">
                 <h3 className="text-sm font-semibold text-white uppercase tracking-wider mb-4">Head-to-Head Meetings</h3>
-                {h2h.length === 0 ? (
+                {h2hGames.length === 0 ? (
                   <EmptyState text="No stored meetings between these teams yet." />
                 ) : (
                   <div className="space-y-2 max-h-[360px] overflow-y-auto">
-                    {h2h.map((g) => {
+                    {h2hGames.map((g) => {
                       const aPts = g.teams[teamA];
                       const bPts = g.teams[teamB];
                       return (

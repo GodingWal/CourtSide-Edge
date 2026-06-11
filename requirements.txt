@@ -1,5 +1,6 @@
 # Consolidated, pinned dependencies for all CourtSide-Edge agents.
-# Per-agent requirements.txt files (used by Dockerfiles) mirror these exact pins.
+# Per-agent requirements.txt files (used by Dockerfiles) are SUBSETS of these
+# pins - keep any version they share with this file in sync.
 curl_cffi==0.7.1
 fastapi==0.110.0
 numpy==1.26.4

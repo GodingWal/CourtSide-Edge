@@ -3,8 +3,11 @@ import os
 import random
 import time
 import threading
+from contextlib import asynccontextmanager
+
 from fastapi import Body, FastAPI, HTTPException
 import uvicorn
+from shared.odds_math import decimal_to_american
 from shared.redis_client import RedisPubSub
 from infrastructure.hermes.client import HermesClient
 
@@ -12,7 +15,15 @@ from shared.base_agent import run_polling_loop, setup_logging
 
 logger = setup_logging("Agent13_ParlayGenerator")
 
-app = FastAPI(title="Agent 13: Matchup Oracle & Parlay Generator")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Start subscription listener in background thread
+    threading.Thread(target=start_subscriptions, daemon=True).start()
+    yield
+
+
+app = FastAPI(title="Agent 13: Matchup Oracle & Parlay Generator", lifespan=lifespan)
 
 hermes = HermesClient()
 
@@ -48,26 +59,6 @@ def start_subscriptions():
     except Exception as e:
         logger.error(f"Subscription loop failed: {e}")
         pubsub.close()
-
-
-@app.on_event("startup")
-def startup_event():
-    # Start subscription listener in background thread
-    threading.Thread(target=start_subscriptions, daemon=True).start()
-
-
-def to_decimal(american):
-    if american > 0:
-        return (american / 100.0) + 1.0
-    else:
-        return (100.0 / abs(american)) + 1.0
-
-
-def to_american(decimal):
-    if decimal >= 2.0:
-        return int(round((decimal - 1.0) * 100.0))
-    else:
-        return int(round(-100.0 / (decimal - 1.0)))
 
 
 def generate_hermes_summary(legs, platform, multiplier):
@@ -157,7 +148,9 @@ def generate_parlay(payload: dict | None = Body(default=None)):
     with state_lock:
         games_in_window = []
         for g_id, game in active_games.items():
-            if game["status"] == "PRE":
+            # tipoff can be None when ESPN omits the start time - skip rather
+            # than crash the request with a TypeError.
+            if game["status"] == "PRE" and game.get("tipoff") is not None:
                 time_to_tipoff = game["tipoff"] - now
                 if 0 <= time_to_tipoff <= window_sec:
                     games_in_window.append(game)
@@ -265,7 +258,7 @@ def generate_parlay(payload: dict | None = Body(default=None)):
 
     # Pick'em entry payout: fixed multiplier (e.g. 3x for a 2-pick power play),
     # expressed also as equivalent American odds for the UI.
-    parlay_odds = to_american(multiplier)
+    parlay_odds = decimal_to_american(multiplier)
 
     summary = generate_hermes_summary(legs, platform, multiplier)
 

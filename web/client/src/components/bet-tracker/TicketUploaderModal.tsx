@@ -1,4 +1,5 @@
 import { Check, X, Loader2, FileImage, Plus, Trash2 } from 'lucide-react';
+import type { DraftLeg } from './types';
 
 interface TicketUploaderModalProps {
   uploadStep: 'select' | 'processing' | 'confirm';
@@ -21,8 +22,8 @@ interface TicketUploaderModalProps {
   setConfirmOverUnder: (v: 'OVER' | 'UNDER') => void;
   confirmOpponent: string;
   setConfirmOpponent: (v: string) => void;
-  confirmLegs: any[];
-  setConfirmLegs: (legs: any[]) => void;
+  confirmLegs: DraftLeg[];
+  setConfirmLegs: (legs: DraftLeg[]) => void;
   onSubmit: (e: React.FormEvent) => void;
   onClose: () => void;
 }
@@ -222,7 +223,7 @@ export default function TicketUploaderModal({
                       <label className="cs-label">Side</label>
                       <select
                         value={confirmOverUnder}
-                        onChange={(e) => setConfirmOverUnder(e.target.value as any)}
+                        onChange={(e) => setConfirmOverUnder(e.target.value as 'OVER' | 'UNDER')}
                         className="cs-input bg-cs-black"
                       >
                         <option value="OVER">OVER</option>

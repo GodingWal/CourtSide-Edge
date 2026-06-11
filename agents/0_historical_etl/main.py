@@ -44,10 +44,18 @@ def season_dates(year: int):
         d += timedelta(days=1)
 
 
-def ingest_date(d: date) -> int:
-    """Ingest all FINAL games for one calendar date. Returns games stored."""
+def ingest_date(d: date) -> int | None:
+    """Ingest all FINAL games for one calendar date.
+
+    Returns games stored, or None when the scoreboard fetch failed - the
+    caller must NOT mark the date as ingested in that case, or a transient
+    ESPN outage becomes a permanent hole in the training history.
+    """
     datestr = d.strftime("%Y%m%d")
-    games = [g for g in get_scoreboard(datestr) if g["state"] == "FINAL" and g.get("espn_id")]
+    scoreboard = get_scoreboard(datestr, none_on_error=True)
+    if scoreboard is None:
+        return None
+    games = [g for g in scoreboard if g["state"] == "FINAL" and g.get("espn_id")]
     if not games:
         return 0
 
@@ -168,6 +176,9 @@ def backfill():
             except Exception as e:
                 logger.error(f"Failed to ingest {d}: {e}")
                 continue
+            if games is None:
+                logger.warning(f"Scoreboard fetch failed for {d} - will retry on next run.")
+                continue
             conn = get_connection()
             conn.execute(
                 "INSERT OR REPLACE INTO etl_ingested_dates (date, games, ingested_at) VALUES (?,?,?)",
@@ -191,6 +202,8 @@ def nightly_etl_job():
     yesterday = date.today() - timedelta(days=1)
     try:
         games = ingest_date(yesterday)
+        if games is None:
+            raise RuntimeError("scoreboard fetch failed (will retry tomorrow's run)")
         conn = get_connection()
         conn.execute(
             "INSERT OR REPLACE INTO etl_ingested_dates (date, games, ingested_at) VALUES (?,?,?)",

@@ -28,6 +28,9 @@ def on_raw_odds(message):
     stat = message.get("stat") or ("TOTAL" if message.get("over_under") is not None else "LINE")
     logger.info(f"Real line movement on {book}: {subject} {stat} {prev} → {curr}")
 
+    # ESPN consensus movement is a real signal but NOT proof of sharp action;
+    # a fixed 0.95 confidence overstated it badly and cascaded straight into
+    # sizing. 0.6 keeps it above Agent 11's noise gate without dominating.
     sharp_event = {
         "source": "Agent 19",
         "type": "sharp_move",
@@ -39,7 +42,7 @@ def on_raw_odds(message):
             "direction": "UP" if curr > prev else "DOWN",
             "timestamp": time.time()
         },
-        "confidence": 0.95,
+        "confidence": 0.6,
         "timestamp": time.time()
     }
     if pubsub:

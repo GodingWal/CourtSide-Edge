@@ -5,6 +5,7 @@ import uvicorn
 import threading
 
 from shared.base_agent import setup_logging, db_transaction
+from shared.odds_math import american_to_decimal
 
 logger = setup_logging("Agent20_HedgeExecutor")
 
@@ -36,27 +37,42 @@ def check_and_execute_hedges():
             for id_opp, bet_id, player, orig_line, orig_odds, live_line, live_odds, profit, instructions in rows:
                 logger.info(f"🚨 Agent 20: Initiating automated hedge execution for Bet #{bet_id} ({player})")
 
-                # Fetch original bet details to get stat and opposing team
-                cursor.execute("SELECT stat, opposing_team FROM bets WHERE id = ?", (bet_id,))
+                # Original bet details: stat, opponent, side and stake. The
+                # hedge takes the OPPOSITE side of the original wager (the old
+                # code guessed the side from the odds sign, which is wrong).
+                cursor.execute(
+                    "SELECT stat, opposing_team, over_under, stake FROM bets WHERE id = ?",
+                    (bet_id,),
+                )
                 bet_details = cursor.fetchone()
-                stat = bet_details[0] if bet_details else "PTS"
-                opp = bet_details[1] if bet_details else "OPP"
+                if not bet_details:
+                    logger.warning(f"Original bet #{bet_id} not found - dropping opportunity.")
+                    cursor.execute("DELETE FROM hedging_opportunities WHERE id = ?", (id_opp,))
+                    continue
+                stat, opp, over_under, orig_stake = bet_details
+                hedge_side = "UNDER" if over_under == "OVER" else "OVER"
 
-                # Calculate dynamic hedge stake based on original stake and odds
-                cursor.execute("SELECT stake FROM bets WHERE id = ?", (bet_id,))
-                orig_stake_row = cursor.fetchone()
-                orig_stake = orig_stake_row[0] if orig_stake_row else 100.0
+                # Skip if a hedge was already placed for this wager - placing
+                # a fresh one every cycle was unbounded ledger pollution.
+                cursor.execute(
+                    "SELECT 1 FROM bets WHERE parent_id = ? AND is_hedge = 1 LIMIT 1",
+                    (bet_id,),
+                )
+                if cursor.fetchone():
+                    cursor.execute("DELETE FROM hedging_opportunities WHERE id = ?", (id_opp,))
+                    continue
 
-                # Convert live odds to decimal to calculate stake
-                def to_dec(american):
-                    if american > 0:
-                        return (american / 100.0) + 1.0
-                    else:
-                        return (100.0 / abs(american)) + 1.0
-
-                dec_orig = to_dec(orig_odds)
-                dec_live = to_dec(live_odds)
-                hedge_stake = round((orig_stake * dec_orig) / dec_live, 2)
+                try:
+                    dec_orig = american_to_decimal(orig_odds)
+                    dec_live = american_to_decimal(live_odds)
+                except ValueError as e:
+                    logger.warning(f"Skipping hedge for bet #{bet_id}: bad odds ({e})")
+                    cursor.execute("DELETE FROM hedging_opportunities WHERE id = ?", (id_opp,))
+                    continue
+                hedge_stake = round(((orig_stake or 0.0) * dec_orig) / dec_live, 2)
+                if hedge_stake <= 0:
+                    cursor.execute("DELETE FROM hedging_opportunities WHERE id = ?", (id_opp,))
+                    continue
 
                 # Insert hedge wager into bets table
                 cursor.execute("""
@@ -68,12 +84,12 @@ def check_and_execute_hedges():
                     player,
                     stat,
                     live_line,
-                    "UNDER" if orig_odds < 0 else "OVER", # opposite side
+                    hedge_side,
                     live_odds,
                     hedge_stake,
                     int(time.time() * 1000),
                     opp,
-                    f"Agent 20: Auto-Hedge placed to secure +${profit:.2f} EV."
+                    f"Agent 20: Auto-Hedge ({hedge_side} {live_line}) locking in ${profit:.2f}."
                 ))
 
                 # Delete this opportunity so we don't double execute

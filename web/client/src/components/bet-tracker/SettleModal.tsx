@@ -51,7 +51,7 @@ export default function SettleModal({
             <label className="cs-label">Outcome Result</label>
             <select
               value={settleResult}
-              onChange={(e) => setSettleResult(e.target.value as any)}
+              onChange={(e) => setSettleResult(e.target.value as 'WIN' | 'LOSS' | 'PUSH')}
               className="cs-input bg-cs-black"
             >
               <option value="WIN">WIN</option>

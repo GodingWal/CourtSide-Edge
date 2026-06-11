@@ -37,7 +37,7 @@ def get_game_status(game_id: str):
         return games_db[game_id]
 
 
-@app.get('/game/{game_id}/set_status')
+@app.post('/game/{game_id}/set_status')
 def set_game_status(game_id: str, status: str = Query(..., regex="^(PRE|LIVE|FINAL)$")):
     with db_lock:
         if game_id not in games_db:

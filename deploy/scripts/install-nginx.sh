@@ -18,6 +18,20 @@ command -v nginx >/dev/null 2>&1 || { echo "→ Installing nginx…"; apt-get up
 API_KEY="$(grep -E '^API_KEY=' "$ENV_FILE" | cut -d= -f2-)"
 [ -z "$API_KEY" ] && { echo "✗ API_KEY not found in $ENV_FILE" >&2; exit 1; }
 
+# Dashboard login: nginx injects the API key for authenticated visitors, so
+# the site itself must be gated or the whole API is effectively public.
+DASH_USER="$(grep -E '^DASHBOARD_USER=' "$ENV_FILE" | cut -d= -f2- || true)"
+DASH_PASS="$(grep -E '^DASHBOARD_PASSWORD=' "$ENV_FILE" | cut -d= -f2- || true)"
+if [ -z "$DASH_USER" ] || [ -z "$DASH_PASS" ]; then
+  echo "✗ DASHBOARD_USER / DASHBOARD_PASSWORD not set in $ENV_FILE (re-run gen-secrets.sh)." >&2
+  exit 1
+fi
+HTPASSWD="/etc/nginx/.htpasswd-courtside"
+printf '%s:%s\n' "$DASH_USER" "$(openssl passwd -apr1 "$DASH_PASS")" > "$HTPASSWD"
+chmod 640 "$HTPASSWD"
+chown root:www-data "$HTPASSWD" 2>/dev/null || true
+echo "→ Dashboard basic-auth credentials installed at $HTPASSWD."
+
 mkdir -p /var/www/certbot
 
 # If certs aren't issued yet, install an HTTP-only stub so nginx can start

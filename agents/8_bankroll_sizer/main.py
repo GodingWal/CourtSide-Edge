@@ -1,5 +1,9 @@
+import json
 import os
 import time
+import urllib.request
+
+from shared.odds_math import american_to_decimal
 from shared.redis_client import StreamConsumer
 from shared.audit_logger import AuditLogger
 
@@ -10,18 +14,64 @@ logger = setup_logging('Agent8_BankrollSizer')
 audit = AuditLogger()
 DB_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../data/hoopstats_wnba.db'))
 KELLY_MAX_FRACTION = float(os.environ.get('KELLY_MAX_FRACTION', '0.03'))
+# Agent 18 (Liquidity Oracle). In docker compose the service name resolves;
+# localhost only works when both agents run natively on one host.
+AGENT18_URL = os.environ.get('AGENT18_URL', 'http://localhost:8014')
+DEFAULT_BANKROLL = float(os.environ.get('DEFAULT_BANKROLL', '1000.0'))
+BANKROLL_REFRESH_SECONDS = 60
 
 
 class BankrollSizer:
-    def __init__(self):
-        self.bankroll = 1000.00
-    
-    def _american_to_decimal(self, american: int) -> float:
-        if american > 0:
-            return (american / 100.0) + 1.0
+    def __init__(self, redis_client=None):
+        self.redis_client = redis_client
+        self._bankroll = DEFAULT_BANKROLL
+        self._bankroll_fetched_at = 0.0
+
+    @property
+    def bankroll(self) -> float:
+        """Current bankroll from the real ledger, cached briefly.
+
+        Prefers the latest bankroll_history row in SQLite (web tier); falls
+        back to the bankroll:current key the web server mirrors into Redis
+        (agent tier); only then the configured default.
+        """
+        now = time.time()
+        if now - self._bankroll_fetched_at < BANKROLL_REFRESH_SECONDS:
+            return self._bankroll
+        self._bankroll_fetched_at = now
+        balance = self._fetch_bankroll_sqlite()
+        if balance is None:
+            balance = self._fetch_bankroll_redis()
+        if balance is not None and balance > 0:
+            self._bankroll = balance
         else:
-            return (100.0 / abs(american)) + 1.0
-    
+            logger.warning(f'No real bankroll found; using default ${self._bankroll:.2f}')
+        return self._bankroll
+
+    def _fetch_bankroll_sqlite(self):
+        try:
+            if not os.path.exists(DB_PATH):
+                return None
+            conn = db_connect(DB_PATH)
+            row = conn.execute(
+                'SELECT balance FROM bankroll_history ORDER BY timestamp DESC LIMIT 1'
+            ).fetchone()
+            conn.close()
+            return float(row[0]) if row else None
+        except Exception as e:
+            logger.warning(f'Could not read bankroll from SQLite: {e}')
+            return None
+
+    def _fetch_bankroll_redis(self):
+        if self.redis_client is None:
+            return None
+        try:
+            raw = self.redis_client.get('bankroll:current')
+            return float(raw) if raw else None
+        except Exception as e:
+            logger.warning(f'Could not read bankroll from Redis: {e}')
+            return None
+
     def _fetch_recent_win_rate(self, n: int = 50) -> float:
         """Query SQLite for the realized win rate over the last N settled bets."""
         try:
@@ -29,7 +79,9 @@ class BankrollSizer:
                 return 0.55  # Default fallback
             conn = db_connect(DB_PATH)
             cursor = conn.execute(
-                'SELECT result FROM bets WHERE result IS NOT NULL AND is_parlay != 1 AND parent_id IS NULL ORDER BY settled_at DESC LIMIT ?',
+                """SELECT result FROM bets
+                   WHERE result IN ('WIN', 'LOSS') AND is_parlay != 1 AND parent_id IS NULL
+                   ORDER BY settled_at DESC LIMIT ?""",
                 (n,)
             )
             results = [row[0] for row in cursor.fetchall()]
@@ -45,14 +97,19 @@ class BankrollSizer:
             return 0.55
         
     def calculate_sizing(self, edge_data) -> tuple[float, str]:
-        # Pull actual probability from Agent 3's true_odds
-        prob_win = edge_data.get('true_odds', 0.55)
-        if isinstance(prob_win, str):
-            prob_win = float(prob_win)
-        book_odds = edge_data.get('book_odds', -110)
-        if isinstance(book_odds, str):
-            book_odds = int(book_odds)
-        decimal_odds = self._american_to_decimal(book_odds)
+        # Real model probability and posted price are REQUIRED. Sizing used to
+        # default to p=0.55 @ -110, which made every "Kelly" stake fictional.
+        try:
+            prob_win = float(edge_data['true_odds'])
+            book_odds = int(edge_data['book_odds'])
+        except (KeyError, TypeError, ValueError):
+            return 0.0, 'MISSING_PRICING'
+        if not 0.0 < prob_win < 1.0:
+            return 0.0, 'MISSING_PRICING'
+        try:
+            decimal_odds = american_to_decimal(book_odds)
+        except ValueError:
+            return 0.0, 'MISSING_PRICING'
         
         # Scale Kelly by signal confidence
         signal_confidence = edge_data.get('confidence', 0.5)
@@ -95,10 +152,8 @@ class BankrollSizer:
         # Cap based on Agent 18 (Liquidity Oracle) limits if available
         book = edge_data.get('book', 'FanDuel')
         max_book_limit = 250.0 # default fallback
-        import urllib.request
-        import json
         try:
-            with urllib.request.urlopen("http://localhost:8014/limits", timeout=1) as response:
+            with urllib.request.urlopen(f"{AGENT18_URL}/limits", timeout=1) as response:
                 limits = json.loads(response.read().decode())
                 if book in limits:
                     max_book_limit = limits[book].get("max_limit", 250.0)
@@ -121,7 +176,19 @@ def on_approved_edge(msg_id, message, stream_producer, sizer):
     logger.info(f'Received approved edge (trace: {trace_id[:8]}...)')
     
     bet_amount, regime = sizer.calculate_sizing(message)
-    
+
+    if regime == 'MISSING_PRICING':
+        audit.log_decision(
+            trace_id=trace_id,
+            agent_id='Agent_8',
+            action='ABSTAIN',
+            reason='Edge carries no real model probability/book price - refusing to size on defaults.',
+            input_payload=message,
+            confidence=message.get('confidence', 0.5)
+        )
+        logger.warning('Edge abstained: missing true_odds/book_odds (no fabricated sizing).')
+        return
+
     if regime == 'HALTED':
         logger.error('⛔ SIZING HALTED: Win rate below 48%. All bets suspended.')
         audit.log_decision(
@@ -171,7 +238,7 @@ def on_approved_edge(msg_id, message, stream_producer, sizer):
 
 def main():
     stream = StreamConsumer(group_name='agent_8_group', consumer_name='agent_8_worker')
-    sizer = BankrollSizer()
+    sizer = BankrollSizer(redis_client=stream.client)
     logger.info('Agent 8 (Bankroll & Kelly Sizer) started.')
     
     stream.consume(

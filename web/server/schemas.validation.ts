@@ -63,7 +63,9 @@ export const createContextSchema = z.object({
 });
 
 export const createAuditSchema = z.object({
-  trace_id: z.string().uuid('Trace ID must be a valid UUID'),
+  // Agents fall back to non-UUID ids like 'unknown' for messages that
+  // arrived without one; rejecting those would drop the audit entry.
+  trace_id: z.string().min(1, 'Trace ID is required'),
   agent_id: z.string().min(1, 'Agent ID is required'),
   action: z.string().min(1, 'Action is required'),
   reason: z.string().optional().nullable(),
@@ -85,5 +87,6 @@ export const createHedgeSchema = z.object({
 
 export const updateSettingSchema = z.object({
   key: z.string().min(1, 'Setting key is required'),
-  value: z.any(),
+  // Scalars only: objects would be stored as "[object Object]".
+  value: z.union([z.string(), z.number(), z.boolean()]),
 });

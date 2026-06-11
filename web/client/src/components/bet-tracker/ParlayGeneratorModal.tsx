@@ -1,3 +1,4 @@
+import type { SVGProps } from 'react';
 import { X, Sparkles, Loader2 } from 'lucide-react';
 import type { GeneratedParlay } from './types';
 import { formatOdds } from './types';
@@ -189,7 +190,7 @@ export default function ParlayGeneratorModal({
 }
 
 // Small mock Cpu icon helper since it wasn't imported from lucide
-function Cpu(props: any) {
+function Cpu(props: SVGProps<SVGSVGElement>) {
   return (
     <svg
       {...props}

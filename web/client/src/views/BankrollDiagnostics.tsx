@@ -3,8 +3,65 @@ import { PieChart as PieChartIcon, TrendingUp, TrendingDown, Shield, Sparkles, A
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
 import { API_BASE } from '../lib/config';
 
+interface BetRow {
+  id: number;
+  player?: string | null;
+  stat?: string | null;
+  line?: number | null;
+  over_under?: string | null;
+  book_odds?: number | null;
+  stake?: number | null;
+  clv_pct?: number | null;
+  settled_at?: number | null;
+  is_hedge?: number | null;
+}
+
+interface HedgeOpportunity {
+  id: number;
+  bet_id: number;
+  hedged_player: string;
+  original_line: number;
+  original_odds: number;
+  live_line: number;
+  live_odds: number;
+  potential_profit: number;
+  hedge_instructions: string;
+}
+
+interface BookLimit {
+  book?: string;
+  type?: string;
+  limit?: number;
+}
+
+interface BankrollPoint {
+  timestamp: number;
+  balance: number;
+  drawdown_pct?: number;
+}
+
+interface ClvSummary {
+  total_tracked: number;
+  avg_clv: number;
+  positive_clv_pct: number;
+  clv_by_stat?: Record<string, number>;
+  clv_by_result?: Record<string, number>;
+}
+
+interface BetStatsSummary {
+  total_bets: number;
+  wins: number;
+  losses: number;
+  pushes: number;
+  pending: number;
+  total_profit: number;
+  win_rate: number;
+  avg_edge: number;
+  avg_clv?: number;
+}
+
 // Daily average CLV computed from real settled bets (clv_pct + settled_at).
-function buildClvSeries(betRows: any[]): { date: string; clv: number }[] {
+function buildClvSeries(betRows: BetRow[]): { date: string; clv: number }[] {
   const byDay: Record<string, number[]> = {};
   betRows.forEach((b) => {
     if (b.clv_pct === null || b.clv_pct === undefined || !b.settled_at) return;
@@ -63,12 +120,12 @@ function DrawdownGauge({ percentage = 0 }: { percentage?: number }) {
 }
 
 export default function BankrollDiagnostics() {
-  const [hedges, setHedges] = useState<any[]>([]);
-  const [limits, setLimits] = useState<any[]>([]);
-  const [recentHedges, setRecentHedges] = useState<any[]>([]);
-  const [bankrollHistory, setBankrollHistory] = useState<any[]>([]);
-  const [clvSummary, setClvSummary] = useState<any | null>(null);
-  const [betStats, setBetStats] = useState<any | null>(null);
+  const [hedges, setHedges] = useState<HedgeOpportunity[]>([]);
+  const [limits, setLimits] = useState<BookLimit[]>([]);
+  const [recentHedges, setRecentHedges] = useState<BetRow[]>([]);
+  const [bankrollHistory, setBankrollHistory] = useState<BankrollPoint[]>([]);
+  const [clvSummary, setClvSummary] = useState<ClvSummary | null>(null);
+  const [betStats, setBetStats] = useState<BetStatsSummary | null>(null);
   const [startingBankroll, setStartingBankroll] = useState<number | null>(null);
   const [clvData, setClvData] = useState<{ date: string; clv: number }[]>([]);
 
@@ -193,7 +250,7 @@ export default function BankrollDiagnostics() {
         const res = await fetch(`${API_BASE}/bets`);
         if (res.ok) {
           const data = await res.json();
-          const hedgeBets = data.filter((b: any) => b.is_hedge === 1);
+          const hedgeBets = (data as BetRow[]).filter((b) => b.is_hedge === 1);
           setRecentHedges(hedgeBets);
         }
       } catch (err) {
@@ -287,7 +344,7 @@ export default function BankrollDiagnostics() {
                     color: '#fff',
                     fontSize: '12px',
                   }}
-                  formatter={(value: any) => [`${value}%`, 'CLV']}
+                  formatter={(value) => [`${value}%`, 'CLV']}
                 />
                 <Area
                   type="monotone"
@@ -491,7 +548,7 @@ export default function BankrollDiagnostics() {
                       </div>
                       <div className="text-right">
                         <span className="text-[9px] text-cs-muted block">ODDS</span>
-                        <span className="text-xs text-white font-bold">{hedge.book_odds > 0 ? `+${hedge.book_odds}` : hedge.book_odds}</span>
+                        <span className="text-xs text-white font-bold">{(hedge.book_odds ?? 0) > 0 ? `+${hedge.book_odds}` : hedge.book_odds}</span>
                       </div>
                     </div>
                   </div>

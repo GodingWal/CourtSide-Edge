@@ -14,13 +14,52 @@ function RadarPulse() {
   );
 }
 
+interface StreamMessage {
+  channel: string;
+  message: unknown;
+}
+
+interface VelocityAlert {
+  player?: string;
+  stat?: string;
+  direction?: string;
+  delta?: string;
+  odds_delta?: string;
+  duration_seconds?: number;
+  reason?: string;
+  timestamp?: number;
+}
+
+interface SharpMove {
+  player?: string;
+  stat?: string;
+  book?: string;
+  move?: string;
+  direction?: string;
+  timestamp?: number;
+}
+
+interface MarketEdge {
+  trace_id?: string;
+  player?: string | null;
+  stat?: string | null;
+  market_classification?: string;
+  book?: string | null;
+  line?: number;
+  odds?: number | null;
+  true_line?: number | null;
+  divergence_score?: number;
+  edge?: number;
+  confidence?: number;
+}
+
 /* ═══════════════════════════════════════════════════════════════════ */
 export default function MarketDivergence() {
-  const [messages, setMessages] = useState<any[]>([]);
-  const [velocityAlerts, setVelocityAlerts] = useState<any[]>([]);
-  const [sharpConsensus, setSharpConsensus] = useState<any[]>([]);
-  const [edges, setEdges] = useState<any[]>([]);
-  const [betStats, setBetStats] = useState<any | null>(null);
+  const [messages, setMessages] = useState<StreamMessage[]>([]);
+  const [velocityAlerts, setVelocityAlerts] = useState<VelocityAlert[]>([]);
+  const [sharpConsensus, setSharpConsensus] = useState<SharpMove[]>([]);
+  const [edges, setEdges] = useState<MarketEdge[]>([]);
+  const [betStats, setBetStats] = useState<{ avg_edge: number; avg_clv?: number; win_rate: number; wins: number; losses: number; total_profit: number } | null>(null);
 
   /* real edges + bet stats */
   useEffect(() => {

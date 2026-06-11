@@ -6,8 +6,7 @@ Endpoints are unofficial but long-stable; every call degrades to None/[] on
 failure so agents keep running through outages.
 """
 import logging
-import time
-from datetime import datetime
+from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
 import requests
@@ -32,12 +31,16 @@ def _get(url: str, params: dict | None = None):
         return None
 
 
-def get_scoreboard(date: str | None = None) -> list[dict]:
+def get_scoreboard(date: str | None = None, none_on_error: bool = False) -> list[dict] | None:
     """Today's WNBA games: id, teams, tipoff, live status, score, game odds.
 
     Returns a list of normalized games:
       {game_id, espn_id, home, away, tipoff (epoch), state (PRE|LIVE|FINAL),
        period, clock, home_score, away_score, odds: {spread, over_under, details} | None}
+
+    With none_on_error=True a failed fetch returns None instead of [], so
+    callers that persist "this date had no games" (the ETL) can tell a feed
+    outage apart from a genuinely empty slate.
     """
     # WNBA schedule days are US/Eastern. Without an explicit date, pin the
     # request to today-in-ET so late-night UTC doesn't show the wrong slate.
@@ -45,7 +48,7 @@ def get_scoreboard(date: str | None = None) -> list[dict]:
         date = datetime.now(ZoneInfo("America/New_York")).strftime("%Y%m%d")
     data = _get(f"{BASE}/scoreboard", params={"dates": date})
     if not data:
-        return []
+        return None if none_on_error else []
     games = []
     for event in data.get("events", []):
         try:
@@ -71,7 +74,11 @@ def get_scoreboard(date: str | None = None) -> list[dict]:
 
             tipoff = None
             try:
-                tipoff = time.mktime(time.strptime(event.get("date", ""), "%Y-%m-%dT%H:%MZ")) - time.timezone
+                # ESPN dates are UTC; parse as UTC explicitly (time.mktime +
+                # time.timezone misconverts by an hour on DST hosts).
+                tipoff = datetime.strptime(
+                    event.get("date", ""), "%Y-%m-%dT%H:%MZ"
+                ).replace(tzinfo=timezone.utc).timestamp()
             except Exception:
                 pass
 

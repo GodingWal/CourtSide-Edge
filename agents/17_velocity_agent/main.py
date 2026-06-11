@@ -30,11 +30,18 @@ def process_odds_message(message):
     player = message.get("player") or message.get("game_id", "GAME")
     stat = message.get("stat") or ("TOTAL" if message.get("over_under") is not None else "LINE")
     line = message.get("line", message.get("over_under"))
-    odds = message.get("odds", -110)
+    odds = message.get("odds")  # may be None for ESPN game lines / odds-less props
     ts = message.get("timestamp", time.time())
 
-    key = f"{player}:{stat}"
+    # Per-book history: cross-book differences are not line velocity.
+    book = message.get("book") or message.get("provider") or "consensus"
+    key = f"{player}:{stat}:{book}"
     if key not in price_histories:
+        if len(price_histories) > 2000:
+            # Bound total tracked markets; drop the stalest half.
+            stale = sorted(price_histories, key=lambda k: price_histories[k][-1][0])
+            for k in stale[: len(stale) // 2]:
+                price_histories.pop(k, None)
         price_histories[key] = []
         
     price_histories[key].append((ts, line, odds))
@@ -51,13 +58,13 @@ def process_odds_message(message):
             # Line delta per minute
             line_delta = line - prev_line
             line_velocity_per_min = (line_delta / time_delta_seconds) * 60.0
-            
-            # Odds delta per minute
-            odds_delta = odds - prev_odds
+
+            # Odds delta per minute (only when both updates carried a price)
+            odds_delta = (odds - prev_odds) if odds is not None and prev_odds is not None else 0
             odds_velocity_per_min = (odds_delta / time_delta_seconds) * 60.0
-            
+
             logger.info(f"Line Velocity for {key}: {line_velocity_per_min:.2f} line/min, {odds_velocity_per_min:.2f} odds/min")
-            
+
             # Anomaly check: if line changes by >= 1.0 or odds change by >= 15 cents in a short window
             if abs(line_delta) >= 1.0 or abs(odds_delta) >= 15:
                 direction = "UP" if (line_delta > 0 or odds_delta < 0) else "DOWN"

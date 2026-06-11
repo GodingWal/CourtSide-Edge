@@ -30,9 +30,15 @@ class MarketIntelligence:
         if market is None or curr is None:
             return 'noise', 0.35
 
-        key = f'{market}:{stat}'
+        # Key per book: different books legitimately post different numbers
+        # for the same market, and mixing them reads as phantom movement.
+        book = odds_data.get('book') or odds_data.get('provider') or 'consensus'
+        key = f'{market}:{stat}:{book}'
         last_ts = self.line_history.get(key)
         self.line_history[key] = ts
+        if len(self.line_history) > 2000:
+            cutoff = time.time() - 24 * 3600
+            self.line_history = {k: v for k, v in self.line_history.items() if v >= cutoff}
 
         if prev is None or last_ts is None or ts <= last_ts:
             return 'noise', 0.35  # opening line / first sighting: no velocity yet
@@ -48,15 +54,37 @@ class MarketIntelligence:
         else:
             return 'noise', 0.35
 
-def lookup_true_line(pubsub, player, stat):
-    """Agent 3's cached projection for this market, if one exists."""
+def lookup_projection(pubsub, player, stat):
+    """Agent 3's cached projection dict for this market, if one exists."""
     if not player or not stat:
         return None
     try:
         raw = pubsub.client.hget("props:projections", f"{player}|{stat}")
-        return json.loads(raw)["projected_value"] if raw else None
+        return json.loads(raw) if raw else None
     except Exception:
         return None
+
+
+def model_pricing(projection, message):
+    """Real (side, true_odds, book_odds) for the model's edge side, or Nones.
+
+    The model's side is OVER when its projection exceeds the posted line.
+    true_odds is the model's win probability for that side (p_over_line from
+    Agent 3's simulation); book_odds is the posted American price for the same
+    side from the live odds message. Downstream Kelly sizing (Agent 8) refuses
+    to size edges that lack this real pricing — it must never run on defaults.
+    """
+    if not projection:
+        return None, None, None
+    p_over = projection.get("p_over_line")
+    line = projection.get("market_line")
+    projected = projection.get("projected_value")
+    if p_over is None or line is None or projected is None:
+        return None, None, None
+    side = "OVER" if projected >= line else "UNDER"
+    true_odds = p_over if side == "OVER" else round(1.0 - p_over, 4)
+    book_odds = message.get("odds") if side == "OVER" else message.get("under_odds")
+    return side, true_odds, book_odds
 
 
 def on_live_odds(message, stream_producer, intelligence, pubsub):
@@ -80,7 +108,10 @@ def on_live_odds(message, stream_producer, intelligence, pubsub):
     if divergence_score <= 0:
         return
     trace_id = generate_trace_id()
-    
+
+    projection = lookup_projection(pubsub, message.get('player'), message.get('stat'))
+    side, true_odds, book_odds = model_pricing(projection, message)
+
     alert = {
         'source': 'Agent 11',
         'type': 'market_divergence',
@@ -92,7 +123,11 @@ def on_live_odds(message, stream_producer, intelligence, pubsub):
         'prev_line': prev,
         'odds': message.get('odds'),
         'book': message.get('book'),
-        'true_line': lookup_true_line(pubsub, message.get('player'), message.get('stat')),
+        'true_line': projection.get('projected_value') if projection else None,
+        # Real model pricing for the edge side — required by Agent 8's Kelly.
+        'side': side,
+        'true_odds': true_odds,
+        'book_odds': book_odds,
         'divergence_score': divergence_score,
         'confidence': confidence,
         'sample_size': len(intelligence.line_history),
@@ -141,6 +176,9 @@ def on_sharp_move(message, stream_producer, pubsub):
 
     trace_id = generate_trace_id()
 
+    projection = lookup_projection(pubsub, player, sharp_data.get('stat'))
+    side, true_odds, _ = model_pricing(projection, {})
+
     alert = {
         'source': 'Agent 11',
         'type': 'market_divergence',
@@ -150,7 +188,12 @@ def on_sharp_move(message, stream_producer, pubsub):
         'line': curr_line,
         'prev_line': prev_line,
         'book': book,
-        'true_line': lookup_true_line(pubsub, player, sharp_data.get('stat')),
+        'true_line': projection.get('projected_value') if projection else None,
+        # Sharp-move triggers carry no book price; Agent 8 will abstain on
+        # these rather than size them against fabricated odds.
+        'side': side,
+        'true_odds': true_odds,
+        'book_odds': None,
         'divergence_score': divergence_score,
         'confidence': confidence,
         'sample_size': 1,
