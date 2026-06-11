@@ -36,9 +36,21 @@ def build_context(pubsub: RedisPubSub) -> str:
                 + (f" O/U {g['odds']['over_under']}" if g.get("odds") and g["odds"].get("over_under") is not None else "")
                 for g in games
             ]
-            parts.append("Today's WNBA games:\n" + "\n".join(lines))
+            parts.append(f"Today's WNBA games ({len(games)} total, US/Eastern date):\n" + "\n".join(lines))
     except Exception as e:
         logger.warning(f"Could not fetch scoreboard for context: {e}")
+
+    # Bookmaker slate: distinct upcoming games that have live betting markets.
+    try:
+        raw = pubsub.client.hgetall("props:lines")
+        market_games = sorted({json.loads(v).get("game") for v in raw.values() if v} - {None})
+        if market_games:
+            parts.append(
+                f"Upcoming games with live betting markets ({len(market_games)}):\n"
+                + "\n".join(f"- {g}" for g in market_games)
+            )
+    except Exception as e:
+        logger.warning(f"Could not fetch market games for context: {e}")
     try:
         props = pubsub.client.hgetall("props:lines")
         if props:

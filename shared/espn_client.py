@@ -7,6 +7,8 @@ failure so agents keep running through outages.
 """
 import logging
 import time
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 import requests
 
@@ -37,8 +39,11 @@ def get_scoreboard(date: str | None = None) -> list[dict]:
       {game_id, espn_id, home, away, tipoff (epoch), state (PRE|LIVE|FINAL),
        period, clock, home_score, away_score, odds: {spread, over_under, details} | None}
     """
-    params = {"dates": date} if date else None
-    data = _get(f"{BASE}/scoreboard", params=params)
+    # WNBA schedule days are US/Eastern. Without an explicit date, pin the
+    # request to today-in-ET so late-night UTC doesn't show the wrong slate.
+    if date is None:
+        date = datetime.now(ZoneInfo("America/New_York")).strftime("%Y%m%d")
+    data = _get(f"{BASE}/scoreboard", params={"dates": date})
     if not data:
         return []
     games = []
