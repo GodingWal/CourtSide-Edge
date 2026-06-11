@@ -36,3 +36,11 @@ __pycache__/
 *.pyo
 *.pyd
 .pytest_cache/
+
+# Production database (recreated via schema bootstrap/migrations)
+data/hoopstats_wnba.db
+*.db
+
+# Logs
+logs/
+*.log

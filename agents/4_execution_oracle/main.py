@@ -1,13 +1,13 @@
 import time
-import logging
 import threading
 from fastapi import FastAPI
 import uvicorn
 from shared.redis_client import StreamConsumer, RedisPubSub
 from shared.audit_logger import AuditLogger
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger('Agent4_ExecutionOracle')
+from shared.base_agent import setup_logging, run_polling_loop
+
+logger = setup_logging('Agent4_ExecutionOracle')
 
 audit = AuditLogger()
 
@@ -181,8 +181,9 @@ def start_stream_consumer():
     )
     
     try:
-        while True:
-            time.sleep(1)
+        # Idle keepalive: actual work happens in Redis callback threads.
+        # Block in long interruptible waits instead of waking every second.
+        run_polling_loop(interval=30.0)
     except Exception as e:
         logger.error(f'Stream consumer error: {e}')
         stream.close()

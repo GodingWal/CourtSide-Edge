@@ -1,11 +1,11 @@
 import time
-import logging
 from scipy.stats import poisson
 import numpy as np
 from shared.redis_client import RedisPubSub
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("Agent10_GameTotalProjector")
+from shared.base_agent import setup_logging, run_polling_loop
+
+logger = setup_logging("Agent10_GameTotalProjector")
 
 class GameTotalModel:
     def __init__(self):
@@ -48,8 +48,9 @@ def main():
     pubsub.subscribe("channel_game_context", lambda m: on_game_context(m, pubsub, model))
     
     try:
-        while True:
-            time.sleep(1)
+        # Idle keepalive: actual work happens in Redis callback threads.
+        # Block in long interruptible waits instead of waking every second.
+        run_polling_loop(interval=30.0)
     except KeyboardInterrupt:
         pubsub.close()
 

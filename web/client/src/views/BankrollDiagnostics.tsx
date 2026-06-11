@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { PieChart as PieChartIcon, TrendingUp, TrendingDown, Shield, Sparkles, AlertCircle } from 'lucide-react';
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
+import { API_BASE } from '../lib/config';
 
 // Generate 30 days of mock CLV data
 const clvData = Array.from({ length: 30 }, (_, i) => {
@@ -95,7 +96,7 @@ export default function BankrollDiagnostics() {
   useEffect(() => {
     const fetchHedges = async () => {
       try {
-        const res = await fetch('http://localhost:3000/api/hedges');
+        const res = await fetch(`${API_BASE}/hedges`);
         if (res.ok) {
           const data = await res.json();
           setHedges(data);
@@ -112,7 +113,7 @@ export default function BankrollDiagnostics() {
   useEffect(() => {
     const fetchLimits = async () => {
       try {
-        const res = await fetch('http://localhost:3000/api/liquidity/limits');
+        const res = await fetch(`${API_BASE}/liquidity/limits`);
         if (res.ok) {
           const data = await res.json();
           setLimits(data);
@@ -123,7 +124,7 @@ export default function BankrollDiagnostics() {
     };
     const fetchRecentHedges = async () => {
       try {
-        const res = await fetch('http://localhost:3000/api/bets');
+        const res = await fetch(`${API_BASE}/bets`);
         if (res.ok) {
           const data = await res.json();
           const hedgeBets = data.filter((b: any) => b.is_hedge === 1);

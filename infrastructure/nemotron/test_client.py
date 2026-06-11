@@ -1,10 +1,9 @@
 import os
 import unittest
 import importlib
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 import infrastructure.nemotron.client as client_module
-from infrastructure.nemotron.client import NemotronClient
 
 class TestNemotronClient(unittest.TestCase):
 

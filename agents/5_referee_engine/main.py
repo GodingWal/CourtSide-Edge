@@ -1,10 +1,10 @@
 import time
-import logging
 from shared.redis_client import RedisPubSub
 from shared.context_client import ContextClient
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("Agent5_RefereeEngine")
+from shared.base_agent import setup_logging
+
+logger = setup_logging("Agent5_RefereeEngine")
 
 context = ContextClient()
 

@@ -1,11 +1,11 @@
 import time
-import logging
 from shared.redis_client import RedisPubSub
 from shared.context_client import ContextClient
 from infrastructure.nemotron.client import NemotronClient
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("Agent9_NewsSentiment")
+from shared.base_agent import setup_logging
+
+logger = setup_logging("Agent9_NewsSentiment")
 
 context = ContextClient()
 

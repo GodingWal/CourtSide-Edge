@@ -1,5 +1,4 @@
 import time
-import logging
 import threading
 from fastapi import FastAPI
 import uvicorn
@@ -7,8 +6,9 @@ from shared.redis_client import RedisPubSub
 from shared.context_client import ContextClient
 from ensemble import EnsembleMathCore
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("Agent3_ProjectionEngine")
+from shared.base_agent import setup_logging, run_polling_loop
+
+logger = setup_logging("Agent3_ProjectionEngine")
 
 app = FastAPI(title="Projection Engine API")
 ensemble = EnsembleMathCore()
@@ -27,7 +27,7 @@ def get_projection(player_id: str):
     return proj
 
 def on_live_odds(message):
-    logger.info(f"Agent 3 received live odds trigger. Running ensemble...")
+    logger.info("Agent 3 received live odds trigger. Running ensemble...")
     
     # Read shared context from other agents before running projection
     game_id = message.get("game_id", "UNKNOWN")
@@ -99,8 +99,9 @@ def start_redis_listener():
     pubsub.subscribe("channel_live_odds", on_live_odds)
     logger.info("Subscribed to channel_live_odds")
     try:
-        while True:
-            time.sleep(1)
+        # Idle keepalive: actual work happens in Redis callback threads.
+        # Block in long interruptible waits instead of waking every second.
+        run_polling_loop(interval=30.0)
     except Exception as e:
         logger.error(f"Redis listener error: {e}")
 

@@ -1,14 +1,12 @@
 import os
-import time
-import sqlite3
-import logging
 import threading
 from fastapi import FastAPI
 import uvicorn
 from shared.redis_client import RedisPubSub
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger('Agent14_CLVTracker')
+from shared.base_agent import run_polling_loop, setup_logging, db_connect
+
+logger = setup_logging('Agent14_CLVTracker')
 
 app = FastAPI(title='Agent 14: CLV Tracker')
 
@@ -48,7 +46,7 @@ def clv_summary():
         if not os.path.exists(DB_PATH):
             return {'error': 'Database not found'}
         
-        conn = sqlite3.connect(DB_PATH)
+        conn = db_connect(DB_PATH)
         cursor = conn.execute(
             'SELECT clv_pct, stat, result FROM bets WHERE clv_pct IS NOT NULL AND parent_id IS NULL'
         )
@@ -108,7 +106,7 @@ def record_closing_line(data: dict):
         return {'error': 'bet_id and closing_odds required'}
     
     try:
-        conn = sqlite3.connect(DB_PATH)
+        conn = db_connect(DB_PATH)
         cursor = conn.execute('SELECT book_odds FROM bets WHERE id = ?', (bet_id,))
         row = cursor.fetchone()
         
@@ -140,13 +138,13 @@ def record_closing_line(data: dict):
 
 def on_live_odds(message):
     """When live odds update comes in, check if any active bets need CLV recorded."""
-    logger.info(f'Agent 14 received live odds update for CLV tracking')
+    logger.info('Agent 14 received live odds update for CLV tracking')
     
     try:
         if not os.path.exists(DB_PATH):
             return
         
-        conn = sqlite3.connect(DB_PATH)
+        conn = db_connect(DB_PATH)
         # Find unsettled bets that don't yet have closing odds recorded
         cursor = conn.execute(
             'SELECT id, book_odds, player, stat FROM bets WHERE closing_odds IS NULL AND result IS NULL AND is_parlay != 1 AND parent_id IS NULL'
@@ -180,8 +178,9 @@ def start_redis_listener():
     pubsub.subscribe('channel_live_odds', on_live_odds)
     logger.info('Subscribed to channel_live_odds for CLV tracking')
     try:
-        while True:
-            time.sleep(1)
+        # Idle keepalive: actual work happens in Redis callback threads.
+        # Block in long interruptible waits instead of waking every second.
+        run_polling_loop(interval=30.0)
     except Exception as e:
         logger.error(f'Redis listener error: {e}')
 

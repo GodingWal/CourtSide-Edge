@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { Settings as SettingsIcon, Save, Bell, Monitor, Cpu, Volume2, ShieldAlert, Sparkles, Scale } from 'lucide-react';
 import { useToast } from '../components/ToastProvider';
 import { SkeletonCard } from '../components/Skeleton';
+import { API_BASE } from '../lib/config';
 
 interface AgentHealth {
   id: string;
@@ -37,7 +38,6 @@ export default function Settings() {
     settled_bets_analyzed: 27
   });
 
-  const API_BASE = 'http://localhost:3000/api';
 
   const fetchData = async () => {
     try {

@@ -1,5 +1,4 @@
 import time
-import json
 from shared.redis_client import RedisPubSub
 
 def main():

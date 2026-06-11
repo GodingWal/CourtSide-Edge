@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Activity, TrendingUp, Zap, CircleDot, ArrowUpRight, ArrowDownRight, Sparkles } from 'lucide-react';
+import { API_BASE } from '../lib/config';
 
 /* ── mock data ─────────────────────────────────────────────────────── */
 const MOCK_EDGES = [
@@ -50,7 +51,7 @@ export default function MarketDivergence() {
 
   /* SSE listener */
   useEffect(() => {
-    const sse = new EventSource('http://localhost:3000/api/stream/alerts');
+    const sse = new EventSource(`${API_BASE}/stream/alerts`);
     sse.onmessage = (e) => {
       if (e.data !== 'heartbeat') {
         try {
@@ -68,7 +69,7 @@ export default function MarketDivergence() {
   useEffect(() => {
     const fetchVelocity = async () => {
       try {
-        const res = await fetch('http://localhost:3000/api/velocity/alerts');
+        const res = await fetch(`${API_BASE}/velocity/alerts`);
         if (res.ok) {
           const data = await res.json();
           setVelocityAlerts(data);
@@ -86,7 +87,7 @@ export default function MarketDivergence() {
   useEffect(() => {
     const fetchSharp = async () => {
       try {
-        const res = await fetch('http://localhost:3000/api/sharp/consensus');
+        const res = await fetch(`${API_BASE}/sharp/consensus`);
         if (res.ok) {
           const data = await res.json();
           setSharpConsensus(data);
