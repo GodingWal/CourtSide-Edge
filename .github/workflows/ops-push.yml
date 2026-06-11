@@ -1,0 +1,42 @@
+name: OpsPush
+
+# Push-triggered remote-hands: pushing a branch named ops/** runs the command
+# in .ops/cmd (first line: target host "vps" or "vast"; remaining lines: the
+# shell command) on that host over SSH. Workflow file and command travel on
+# the ops branch itself; same trust level as the Deploy workflow (push access
+# + deploy-key secrets). Gated on DEPLOY_ENABLED.
+
+on:
+  push:
+    branches: ['ops/**']
+
+jobs:
+  run:
+    if: vars.DEPLOY_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run command from .ops/cmd on target host
+        env:
+          VPS_KEY: ${{ secrets.VPS_SSH_KEY }}
+          VAST_KEY: ${{ secrets.VAST_SSH_KEY }}
+        run: |
+          set -euo pipefail
+          TARGET="$(head -n1 .ops/cmd)"
+          REMOTE_CMD="$(tail -n +2 .ops/cmd)"
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          if [ "$TARGET" = "vps" ]; then
+            printf '%s\n' "$VPS_KEY" > ~/.ssh/id_ops
+            HOST='${{ vars.VPS_HOST || '76.13.100.125' }}'
+            USER='${{ vars.VPS_USER || 'root' }}'
+            PORT='${{ vars.VPS_PORT || '22' }}'
+          else
+            printf '%s\n' "$VAST_KEY" > ~/.ssh/id_ops
+            HOST='${{ vars.VAST_HOST || '151.237.25.234' }}'
+            USER='${{ vars.VAST_USER || 'root' }}'
+            PORT='${{ vars.VAST_PORT || '26918' }}'
+          fi
+          chmod 600 ~/.ssh/id_ops
+          ssh-keyscan -p "$PORT" -H "$HOST" >> ~/.ssh/known_hosts 2>/dev/null
+          echo "── output from $TARGET ($HOST) ──"
+          ssh -i ~/.ssh/id_ops -p "$PORT" "$USER@$HOST" "$REMOTE_CMD"

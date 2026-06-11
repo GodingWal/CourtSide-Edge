@@ -1,0 +1,2 @@
+vps
+docker ps --format '{{.Names}} | {{.Status}} | {{.Ports}}'; echo ---; ss -tlnp | grep 6379 || echo NO-6379-LISTENER; echo ---; ufw status verbose 2>/dev/null | head -25 || echo NO-UFW; echo ---; iptables -L INPUT -n 2>/dev/null | head -12; echo ---; ls /etc/nginx/sites-enabled/ 2>/dev/null
