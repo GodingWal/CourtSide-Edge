@@ -1,0 +1,79 @@
+name: Deploy
+
+# Deploys after CI passes on main, or on demand. Opt-in: set the repository
+# variable DEPLOY_ENABLED=true once the secrets below are configured, otherwise
+# the jobs are skipped (no red builds).
+#
+# Required repository secrets:
+#   VPS_SSH_KEY    private key authorized on the VPS (root@76.13.100.125)
+#   VAST_SSH_KEY   private key authorized on the vast.ai box
+# Optional repository variables (defaults shown):
+#   VPS_HOST=76.13.100.125   VPS_USER=root   VPS_PORT=22    VPS_REPO_PATH=~/CourtSide-Edge
+#   VAST_HOST=151.237.25.234 VAST_USER=root  VAST_PORT=26918 VAST_REPO_PATH=~/CourtSide-Edge
+#   DEPLOY_ENABLED=true      master switch
+#
+# Env files (deploy/env/web.env, deploy/env/agents.env) must already exist on
+# each host — they hold secrets and are never shipped through CI.
+
+on:
+  workflow_run:
+    workflows: ["CourtSideEdge CI"]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      tier:
+        description: Which tier to deploy
+        type: choice
+        default: both
+        options: [both, web, agents]
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  deploy-web:
+    # Only on a successful CI run (or manual dispatch), and only when enabled.
+    if: >-
+      vars.DEPLOY_ENABLED == 'true' &&
+      (github.event_name == 'workflow_dispatch' && (inputs.tier == 'both' || inputs.tier == 'web')
+       || github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy web tier to the VPS
+        env:
+          SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+          HOST: ${{ vars.VPS_HOST || '76.13.100.125' }}
+          USER: ${{ vars.VPS_USER || 'root' }}
+          PORT: ${{ vars.VPS_PORT || '22' }}
+          REPO_PATH: ${{ vars.VPS_REPO_PATH || '~/CourtSide-Edge' }}
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/id_deploy && chmod 600 ~/.ssh/id_deploy
+          ssh-keyscan -p "$PORT" -H "$HOST" >> ~/.ssh/known_hosts 2>/dev/null
+          ssh -i ~/.ssh/id_deploy -p "$PORT" "$USER@$HOST" \
+            "set -euo pipefail; cd $REPO_PATH && git fetch --all --prune && git reset --hard origin/main && bash deploy/scripts/deploy-web.sh"
+
+  deploy-agents:
+    if: >-
+      vars.DEPLOY_ENABLED == 'true' &&
+      (github.event_name == 'workflow_dispatch' && (inputs.tier == 'both' || inputs.tier == 'agents')
+       || github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy agent tier to the vast.ai box
+        env:
+          SSH_KEY: ${{ secrets.VAST_SSH_KEY }}
+          HOST: ${{ vars.VAST_HOST || '151.237.25.234' }}
+          USER: ${{ vars.VAST_USER || 'root' }}
+          PORT: ${{ vars.VAST_PORT || '26918' }}
+          REPO_PATH: ${{ vars.VAST_REPO_PATH || '~/CourtSide-Edge' }}
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/id_deploy && chmod 600 ~/.ssh/id_deploy
+          ssh-keyscan -p "$PORT" -H "$HOST" >> ~/.ssh/known_hosts 2>/dev/null
+          ssh -i ~/.ssh/id_deploy -p "$PORT" "$USER@$HOST" \
+            "set -euo pipefail; cd $REPO_PATH && git fetch --all --prune && git reset --hard origin/main && bash deploy/scripts/deploy-agents.sh"
