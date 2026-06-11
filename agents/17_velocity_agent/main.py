@@ -77,9 +77,9 @@ def process_odds_message(message):
                         "stat": stat,
                         "direction": direction,
                         "line_delta": f"{line_delta:+.1f}",
-                        "odds_delta": f"{odds_delta:+d}",
+                        "odds_delta": f"{odds_delta:+.0f}",
                         "duration_seconds": int(time_delta_seconds),
-                        "reason": f"Rapid {direction} line move detected: {line_delta:+.1f} line, {odds_delta:+d} odds in {int(time_delta_seconds)}s"
+                        "reason": f"Rapid {direction} line move detected: {line_delta:+.1f} line, {odds_delta:+.0f} odds in {int(time_delta_seconds)}s"
                     },
                     "confidence": 0.88,
                     "sample_size": len(price_histories[key]),
@@ -97,7 +97,7 @@ def process_odds_message(message):
                         "stat": stat,
                         "direction": direction,
                         "delta": f"{line_delta:+.1f}",
-                        "odds_delta": f"{odds_delta:+d}",
+                        "odds_delta": f"{odds_delta:+.0f}",
                         "duration_seconds": int(time_delta_seconds),
                         "reason": alert_payload["data"]["reason"],
                         "timestamp": int(time.time() * 1000),

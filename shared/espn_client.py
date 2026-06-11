@@ -87,6 +87,10 @@ def get_scoreboard(date: str | None = None, none_on_error: bool = False) -> list
                 "espn_id": event.get("id"),
                 "home": home_abbr,
                 "away": away_abbr,
+                # Full names so feeds keyed by them (The Odds API) can be
+                # mapped onto this game_id.
+                "home_name": home.get("team", {}).get("displayName"),
+                "away_name": away.get("team", {}).get("displayName"),
                 "tipoff": tipoff,
                 "state": status,
                 "period": event.get("status", {}).get("period"),
