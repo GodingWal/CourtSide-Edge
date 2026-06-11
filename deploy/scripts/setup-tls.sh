@@ -13,7 +13,28 @@ EMAIL="${CERTBOT_EMAIL:-gwal325@gmail.com}"
 
 command -v certbot >/dev/null 2>&1 || { echo "→ Installing certbot…"; apt-get update -y && apt-get install -y certbot; }
 
-mkdir -p /var/www/certbot
+mkdir -p /var/www/certbot/.well-known/acme-challenge
+
+# Ensure the HTTP bootstrap nginx config (which serves the ACME webroot from
+# /var/www/certbot) is active BEFORE certbot runs. Without this, the challenge
+# path returns 404 and authentication fails. install-nginx.sh installs the
+# HTTP-only bootstrap when certs are not yet present.
+echo "→ Ensuring ACME webroot is served by nginx…"
+bash deploy/scripts/install-nginx.sh
+
+# Self-test the challenge path over the public hostname before bothering the CA.
+TOKEN="selftest-$(date +%s)"
+echo "$TOKEN" > "/var/www/certbot/.well-known/acme-challenge/$TOKEN"
+if curl -fsS "http://${DOMAIN}/.well-known/acme-challenge/${TOKEN}" 2>/dev/null | grep -q "$TOKEN"; then
+  echo "✓ ACME challenge path reachable."
+else
+  echo "✗ http://${DOMAIN}/.well-known/acme-challenge/ is not serving from /var/www/certbot." >&2
+  echo "  Check: DNS A records -> this VPS, port 80 open, 'nginx -t', and the" >&2
+  echo "  /etc/nginx/sites-enabled/${DOMAIN} symlink. Aborting before contacting the CA." >&2
+  rm -f "/var/www/certbot/.well-known/acme-challenge/$TOKEN"
+  exit 1
+fi
+rm -f "/var/www/certbot/.well-known/acme-challenge/$TOKEN"
 
 echo "→ Requesting certificate via webroot…"
 certbot certonly --webroot -w /var/www/certbot \
