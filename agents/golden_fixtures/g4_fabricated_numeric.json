@@ -1,0 +1,30 @@
+{
+  "id": "G4",
+  "description": "2026-06-11 slate: narrative claims '+0.1 edge' while the payload edge is -0.6",
+  "pick": {
+    "pick_id": "g4",
+    "player": "Caitlin Clark",
+    "team": "Indiana Fever",
+    "stat": "PTS",
+    "book": "prizepicks",
+    "entry_type": "power",
+    "legs": 3,
+    "recommendation": "Sell",
+    "projection": 18.9,
+    "std": 5.5,
+    "line": 19.5,
+    "hit_probability": 0.62,
+    "breakeven_probability": 0.5848
+  },
+  "payload": {
+    "player": {"name": "Caitlin Clark", "team": "Indiana Fever", "position": "G", "career_games": 70, "seasons": 3},
+    "stat": {"category": "PTS", "line": 19.5, "book": "prizepicks"},
+    "projection": {"mean": 18.9, "std": 5.5, "hit_probability": 0.62},
+    "form": {"l5_avg": 18.2, "l10_avg": 19.1, "minutes_l5": 33.0},
+    "matchup": {"opponent": "Chicago Sky", "opp_def_rank_vs_stat": 4, "pace_rank": 9},
+    "game": {"spread": -3.5, "total": 165.5, "win_probability": 0.58, "home": true},
+    "injuries": []
+  },
+  "narrative": "Caitlin Clark carries a +0.1 edge at 19.5 points tonight.",
+  "expect": {"published": false, "status": "REJECTED", "codes": ["FABRICATED_NUMERIC"]}
+}

@@ -1,0 +1,71 @@
+{
+  "publish_margin_pp": 2.0,
+  "injury_staleness_hours": 24,
+  "starter_minutes_l5": 24.0,
+  "league_size": 13,
+  "payouts": {
+    "prizepicks": {
+      "power": {
+        "2": {"2": 3.0},
+        "3": {"3": 5.0},
+        "4": {"4": 10.0},
+        "5": {"5": 20.0},
+        "6": {"6": 37.5}
+      },
+      "flex": {
+        "3": {"3": 2.25, "2": 1.25},
+        "4": {"4": 5.0, "3": 1.5},
+        "5": {"5": 10.0, "4": 2.0, "3": 0.4},
+        "6": {"6": 25.0, "5": 2.6, "4": 0.4}
+      }
+    },
+    "underdog": {
+      "power": {
+        "2": {"2": 3.0},
+        "3": {"3": 6.0},
+        "4": {"4": 10.0},
+        "5": {"5": 20.0},
+        "6": {"6": 35.0}
+      },
+      "flex": {
+        "3": {"3": 3.0, "2": 1.0},
+        "4": {"4": 6.0, "3": 1.5},
+        "5": {"5": 10.0, "4": 2.5, "3": 0.25}
+      }
+    }
+  },
+  "blowout": {
+    "haircut_win_prob_start": 0.70,
+    "haircut_win_prob_max": 0.85,
+    "haircut_at_start": 0.08,
+    "haircut_at_max": 0.15,
+    "flag_spread": 15.0,
+    "flag_win_prob": 0.80,
+    "escalation_pp": 3.0
+  },
+  "adverse_line_move": {
+    "threshold": 0.5,
+    "snapshot_max_age_minutes": 15
+  },
+  "correlation": {
+    "same_team_same_stat": 0.25,
+    "same_team_other_stat": 0.20,
+    "cross_team": 0.15,
+    "default_same_game": 0.10
+  },
+  "dispersion": {
+    "min_games": 15,
+    "fallback_r_by_position": {
+      "G": {"PTS": 9.0, "REB": 6.0, "AST": 5.0},
+      "F": {"PTS": 8.0, "REB": 7.0, "AST": 4.0},
+      "C": {"PTS": 7.0, "REB": 8.0, "AST": 3.0}
+    },
+    "fallback_r_default": 8.0
+  },
+  "grading": {
+    "a_margin_pp": 5.0,
+    "b_margin_pp": 2.0,
+    "a_min_factors": 3,
+    "b_min_factors": 2
+  }
+}

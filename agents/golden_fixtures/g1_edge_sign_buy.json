@@ -1,0 +1,22 @@
+{
+  "id": "G1",
+  "description": "2026-06-11 slate: Clark labeled Buy with projection 18.9 under line 19.5",
+  "pick": {
+    "pick_id": "g1",
+    "player": "Caitlin Clark",
+    "team": "Indiana Fever",
+    "stat": "PTS",
+    "book": "prizepicks",
+    "entry_type": "power",
+    "legs": 3,
+    "recommendation": "Buy",
+    "projection": 18.9,
+    "std": 5.5,
+    "line": 19.5,
+    "hit_probability": 0.55,
+    "breakeven_probability": 0.5848
+  },
+  "payload": null,
+  "narrative": null,
+  "expect": {"published": false, "status": "REJECTED", "codes": ["EDGE_SIGN_MISMATCH"]}
+}

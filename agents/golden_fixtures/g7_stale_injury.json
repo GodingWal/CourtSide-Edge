@@ -1,0 +1,37 @@
+{
+  "id": "G7",
+  "description": "Unverifiable injury narrative (Vandersloot/Ionescu class): injury record 25h old at pick-generation time",
+  "pick": {
+    "pick_id": "g7",
+    "player": "Angel Reese",
+    "team": "Chicago Sky",
+    "stat": "REB",
+    "book": "prizepicks",
+    "entry_type": "power",
+    "legs": 3,
+    "recommendation": "Buy",
+    "projection": 13.4,
+    "std": 4.1,
+    "line": 11.5,
+    "hit_probability": 0.64,
+    "breakeven_probability": 0.5848
+  },
+  "payload": {
+    "player": {"name": "Angel Reese", "team": "Chicago Sky", "position": "F", "career_games": 80, "seasons": 3},
+    "stat": {"category": "REB", "line": 11.5, "book": "prizepicks"},
+    "projection": {"mean": 13.4, "std": 4.1, "hit_probability": 0.64},
+    "form": {"l5_avg": 12.8, "l10_avg": 12.1, "minutes_l5": 32.0},
+    "matchup": {"opponent": "Indiana Fever", "opp_def_rank_vs_stat": 9, "pace_rank": 4},
+    "game": {"spread": 4.5, "total": 165.5, "win_probability": 0.38, "home": false},
+    "injuries": [
+      {
+        "player": "Courtney Vandersloot",
+        "team": "Chicago Sky",
+        "status": "OUT",
+        "last_updated_hours_ago": 25
+      }
+    ]
+  },
+  "narrative": null,
+  "expect": {"published": false, "status": "REJECTED", "codes": ["STALE_INJURY_DATA"]}
+}

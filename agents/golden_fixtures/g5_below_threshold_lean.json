@@ -1,0 +1,22 @@
+{
+  "id": "G5",
+  "description": "Sub-noise edge: 52% hit probability in a 3-leg power context (breakeven 58.5%) must stay internal as LEAN",
+  "pick": {
+    "pick_id": "g5",
+    "player": "Kelsey Plum",
+    "team": "Los Angeles Sparks",
+    "stat": "PTS",
+    "book": "prizepicks",
+    "entry_type": "power",
+    "legs": 3,
+    "recommendation": "Buy",
+    "projection": 19.8,
+    "std": 5.6,
+    "line": 19.5,
+    "hit_probability": 0.52,
+    "breakeven_probability": 0.5848
+  },
+  "payload": null,
+  "narrative": null,
+  "expect": {"published": false, "status": "LEAN", "codes": ["BELOW_THRESHOLD"]}
+}
