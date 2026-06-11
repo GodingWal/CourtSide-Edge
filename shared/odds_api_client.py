@@ -12,7 +12,10 @@ import requests
 ODDS_API_KEY = os.getenv("ODDS_API_KEY")
 BASE = "https://api.the-odds-api.com/v4"
 SPORT = "basketball_wnba"
-REGION = "us"
+# Game lines (totals/spreads context) come from US sportsbooks; player props
+# come from the DFS pick'em platforms we actually play on.
+REGION = os.getenv("ODDS_REGIONS", "us")
+PROP_BOOKMAKERS = os.getenv("ODDS_PROP_BOOKMAKERS", "prizepicks,underdog")
 TIMEOUT = 20
 
 # Player-prop markets requested per event (availability depends on plan/books).
@@ -90,7 +93,8 @@ def get_player_props(event_id: str) -> list:
     Cost: scales with markets requested — use sparingly.
     """
     data = _get(f"/sports/{SPORT}/events/{event_id}/odds", {
-        "regions": REGION,
+        "regions": "us_dfs",
+        "bookmakers": PROP_BOOKMAKERS,
         "markets": PROP_MARKETS,
         "oddsFormat": "american",
     })
@@ -107,7 +111,7 @@ def get_player_props(event_id: str) -> list:
                 player = outcome.get("description")
                 if not player:
                     continue
-                key = (player, stat)
+                key = (player, stat, book)
                 entry = props.setdefault(key, {
                     "player": player, "stat": stat, "line": outcome.get("point"),
                     "over_odds": None, "under_odds": None, "book": book,
