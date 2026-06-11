@@ -64,7 +64,8 @@ def compute_team_stats(conn):
             })
             t["games"] += 1
             t["wins" if own["pts"] > opp["pts"] else "losses"] += 1
-            t["pts"] += own["pts"]; t["opp_pts"] += opp["pts"]
+            t["pts"] += own["pts"]
+            t["opp_pts"] += opp["pts"]
             for k in ("reb", "ast", "stl", "blk", "tov", "fgm", "fga", "tpm", "tpa", "ftm", "fta"):
                 t[k] += own[k]
             t["results"].append((own["date"], "W" if own["pts"] > opp["pts"] else "L"))
