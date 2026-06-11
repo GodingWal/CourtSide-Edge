@@ -78,9 +78,11 @@ def on_live_odds(message, stream_producer, intelligence):
 
 def on_sharp_move(message, stream_producer):
     sharp_data = message.get("data", {})
-    player = sharp_data.get("player", "A'ja Wilson")
-    book = sharp_data.get("book", "Pinnacle")
-    move = sharp_data.get("move", "22.5 → 23.5")
+    player = sharp_data.get("player")
+    book = sharp_data.get("book", "Consensus")
+    move = sharp_data.get("move", "")
+    if not player or not move:
+        return  # no real movement data — nothing to act on
     
     logger.info(f"Agent 11 received sharp move trigger from Agent 19: {player} on {book} {move}")
     
@@ -90,13 +92,17 @@ def on_sharp_move(message, stream_producer):
         'source': 'Agent 11',
         'type': 'market_divergence',
         'market_classification': 'sharp_money',
+        'player': player,
+        'stat': sharp_data.get('stat'),
+        'line': sharp_data.get('move', '').split('→')[-1].strip() if '→' in move else None,
+        'prev_line': sharp_data.get('move', '').split('→')[0].strip() if '→' in move else None,
+        'book': book,
         'divergence_score': 8.5, # high EV due to sharp book leader movement
         'confidence': 0.95,
         'sample_size': 30,
         'decay_seconds': 300,
         'trace_id': trace_id,
         'timestamp': time.time(),
-        'book': 'FanDuel' # retail book lagging behind Pinnacle/Circa
     }
     
     audit.log_decision(

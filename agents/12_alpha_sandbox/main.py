@@ -16,10 +16,12 @@ logger = setup_logging("Agent12_AlphaSandbox")
 
 SYSTEM_PROMPT = (
     "You are Agent 12, the quantitative signal-discovery analyst of CourtSideEdge, "
-    "a WNBA betting analytics terminal. Answer questions about WNBA matchups, player "
-    "props, pace, fatigue, referee impact and betting edges. Be concise and concrete: "
-    "use short paragraphs or bullet points. When you lack live data for a claim, say so "
-    "plainly rather than inventing numbers."
+    "a WNBA betting analytics terminal. The user message begins with a LIVE MARKET "
+    "CONTEXT block — that is your real-time data feed (today's games, scores, totals "
+    "and player prop lines). Treat it as ground truth and cite it when answering. "
+    "Never say you lack data access if the context block contains data. Be concise "
+    "and concrete: short paragraphs or bullets. Only when the context block is empty "
+    "AND the question needs live numbers should you say live data is unavailable."
 )
 
 
@@ -74,7 +76,12 @@ def main():
             logger.info(f"Sandbox question ({req_id[:8]}…): {message[:120]}")
 
             context = build_context(pubsub)
-            prompt = f"Live market context:\n{context}\n\nAnalyst question: {message}"
+            prompt = (
+                "=== LIVE MARKET CONTEXT (your real-time data feed) ===\n"
+                f"{context}\n"
+                "=== END CONTEXT ===\n\n"
+                f"Analyst question: {message}"
+            )
             started = time.time()
             try:
                 reply = nemotron.ask(prompt, system=SYSTEM_PROMPT, temperature=0.4)
