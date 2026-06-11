@@ -1,2 +1,2 @@
-vps
-nginx -t && systemctl reload nginx && echo RELOADED; sleep 1; curl -s https://courtside-edge.com/api/health; echo; grep -c "528cc145" /etc/nginx/sites-available/courtside-edge.com || true; docker inspect courtside_web_server --format 'health={{.State.Health.Status}}'
+vast
+cat ~/AGENTS.md 2>/dev/null | head -30; echo ---; pgrep dockerd && echo dockerd-already-running || (nohup dockerd > /tmp/dockerd.log 2>&1 & sleep 10; docker ps >/dev/null 2>&1 && echo DOCKER-WORKS || (echo DOCKER-FAILED; tail -15 /tmp/dockerd.log))
