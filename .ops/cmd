@@ -1,0 +1,2 @@
+vps
+cd ~/CourtSide-Edge && git fetch --all --prune -q && git reset --hard origin/main -q && bash deploy/scripts/install-nginx.sh && docker compose --env-file deploy/env/web.env -f deploy/docker-compose.web.yml up -d web_server && sleep 8 && echo "--- api health via domain ---" && curl -s https://courtside-edge.com/api/health && echo && docker inspect courtside_web_server --format 'container health: {{.State.Health.Status}}'
