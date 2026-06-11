@@ -1,22 +1,22 @@
 import unittest
 from unittest.mock import patch, MagicMock
 
-import infrastructure.nemotron.client as client_module
+import infrastructure.hermes.client as client_module
 
 
 def _client_with_server():
-    """NemotronClient whose startup probe sees a live local server."""
+    """HermesClient whose startup probe sees a live local server."""
     with patch.object(client_module.requests, "get", return_value=MagicMock()):
-        return client_module.NemotronClient()
+        return client_module.HermesClient()
 
 
 def _client_without_server():
-    """NemotronClient whose startup probe finds no local server."""
+    """HermesClient whose startup probe finds no local server."""
     with patch.object(client_module.requests, "get", side_effect=Exception("no server")):
-        return client_module.NemotronClient()
+        return client_module.HermesClient()
 
 
-class TestNemotronClient(unittest.TestCase):
+class TestHermesClient(unittest.TestCase):
 
     def test_no_server_returns_none(self):
         client = _client_without_server()

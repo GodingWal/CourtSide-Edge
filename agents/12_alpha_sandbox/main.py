@@ -1,6 +1,6 @@
 """Agent 12: Alpha Sandbox — interactive quant analysis chat.
 
-Bridges the dashboard's sandbox chat to the local Nemotron model on this GPU
+Bridges the dashboard's sandbox chat to the local Hermes model on this GPU
 box. Requests arrive on the Redis list sandbox:requests (pushed by the web
 server); replies are written to sandbox:response:<id> with a short TTL.
 """
@@ -10,7 +10,7 @@ import time
 from shared.base_agent import setup_logging
 from shared.espn_client import get_scoreboard
 from shared.redis_client import RedisPubSub
-from infrastructure.nemotron.client import NemotronClient
+from infrastructure.hermes.client import HermesClient
 
 logger = setup_logging("Agent12_AlphaSandbox")
 
@@ -71,7 +71,7 @@ def build_context(pubsub: RedisPubSub) -> str:
 
 def main():
     pubsub = RedisPubSub()
-    nemotron = NemotronClient()
+    hermes = HermesClient()
     logger.info("Agent 12 (Alpha Sandbox) started. Waiting for chat requests…")
 
     while True:
@@ -96,7 +96,7 @@ def main():
             )
             started = time.time()
             try:
-                reply = nemotron.ask(prompt, system=SYSTEM_PROMPT, temperature=0.4)
+                reply = hermes.ask(prompt, system=SYSTEM_PROMPT, temperature=0.4)
             except Exception as e:
                 logger.error(f"LLM call failed: {e}")
                 reply = "Analysis engine error — the local model did not return a response. Try again."
@@ -104,7 +104,7 @@ def main():
 
             pubsub.client.set(
                 f"sandbox:response:{req_id}",
-                json.dumps({"reply": reply, "elapsed_seconds": elapsed, "model": "local-nemotron"}),
+                json.dumps({"reply": reply, "elapsed_seconds": elapsed, "model": "local-hermes"}),
                 ex=180,
             )
             logger.info(f"Replied to {req_id[:8]}… in {elapsed}s")

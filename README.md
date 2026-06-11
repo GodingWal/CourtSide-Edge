@@ -36,7 +36,7 @@ graph TD
         A11[Agent 11: Market Value Detector] -->|Confidence-Scored Divergence| Streams((Redis Streams))
         A7[Agent 7: Correlation Guard] -->|Correlation Coefficients| Streams
         A8[Agent 8: Bankroll Sizer] -->|Dynamic Kelly Sizing| Streams
-        A13[Agent 13: Parlay Gen & Matchup Oracle] -->|FastAPI EV Parlays + Nemotron Rationale| Redis
+        A13[Agent 13: Parlay Gen & Matchup Oracle] -->|FastAPI EV Parlays + Hermes Rationale| Redis
     end
 
     %% Decision Pipeline (Redis Streams with DLQ)

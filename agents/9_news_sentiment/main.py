@@ -4,7 +4,7 @@ from shared.base_agent import setup_logging
 from shared.context_client import ContextClient
 from shared.espn_client import get_news
 from shared.redis_client import RedisPubSub
-from infrastructure.nemotron.client import NemotronClient
+from infrastructure.hermes.client import HermesClient
 
 logger = setup_logging("Agent9_NewsSentiment")
 
@@ -15,7 +15,7 @@ POLL_SECONDS = 180
 
 def main():
     pubsub = RedisPubSub()
-    nemotron = NemotronClient()
+    hermes = HermesClient()
     logger.info("Agent 9 (News/Sentiment) started. Analyzing real long-form WNBA coverage (ESPN).")
 
     seen = set()
@@ -31,12 +31,12 @@ def main():
             content = f"{article['headline']}. {article['description']}".strip()
             logger.info(f"New content: '{article['headline'][:90]}'")
 
-            # Score with the local Nemotron model (temp=0.3).
-            analysis = nemotron.analyze_sentiment(content)
+            # Score with the local Hermes model (temp=0.3).
+            analysis = hermes.analyze_sentiment(content)
             if analysis is None:
                 logger.warning("LLM unavailable/failed for this article — skipping (no fabricated scores).")
                 continue
-            logger.info(f"Nemotron analysis: {analysis}")
+            logger.info(f"Hermes analysis: {analysis}")
 
             analysis["headline"] = article["headline"]
             analysis["confidence"] = 0.72
