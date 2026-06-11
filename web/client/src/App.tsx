@@ -65,8 +65,9 @@ function useAgentCount() {
         } else if (typeof data.count === "number") {
           setCount(data.count);
         }
-      } catch {
-        // silently fail — header will show 0
+      } catch (err) {
+        // graceful fallback — header will show 0
+        console.error("Failed to fetch agent health:", err);
       }
     }
 
