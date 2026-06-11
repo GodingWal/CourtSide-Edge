@@ -246,6 +246,7 @@ const AGENTS_LIST = [
   { id: '9', name: 'News Sentiment' },
   { id: '10', name: 'Game Total Projector' },
   { id: '11', name: 'Market Value Detector' },
+  { id: '12', name: 'Alpha Sandbox' },
   { id: '13', name: 'Matchup Oracle / Parlay Gen' },
   { id: '14', name: 'CLV Tracker' },
   { id: '15', name: 'Drift Monitor' },
