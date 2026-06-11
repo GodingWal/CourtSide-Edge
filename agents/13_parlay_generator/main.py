@@ -1,3 +1,4 @@
+import json
 import os
 import random
 import time
@@ -154,53 +155,57 @@ def generate_parlay():
 
     logger.info(f"Generating parlay. Games in window: {[g['gameId'] for g in games_in_window]}")
 
-    players = get_active_players()
-    if len(players) < 2:
-        players = DEFAULT_PLAYERS
-        
-    p1, p2 = random.sample(players, 2)
-    
-    # Generate Leg 1
-    s1 = random.choice(STATS)
-    line1 = round(random.uniform(s1["line_min"], s1["line_max"]) * 2) / 2
-    opp1 = random.choice([t for t in TEAMS if t != p1["team"]])
-    odds1 = random.choice([-115, -110, -105, +100])
-    edge1 = round(random.uniform(2.5, 9.5), 2)
-    true_odds1 = round(1.0 / (to_decimal(odds1) - (edge1 / 100.0)), 2) if odds1 < 0 else round(1.0 / (to_decimal(odds1) - (edge1 / 100.0)), 2)
-    # Ensure true odds is bounded
-    true_odds1 = max(0.40, min(0.70, true_odds1))
+    # Build legs from REAL player props cached by Agent 1 (The Odds API).
+    # We never fabricate lines: if no live props exist, refuse with 503.
+    try:
+        pubsub = RedisPubSub()
+        raw_props = pubsub.client.hgetall("props:lines")
+        pubsub.close()
+    except Exception as e:
+        logger.error(f"Failed to read live props from Redis: {e}")
+        raw_props = {}
 
-    leg1 = {
-        "player": p1["name"],
-        "team": p1["team"],
-        "stat": s1["stat"],
-        "line": line1,
-        "over_under": "OVER",
-        "book_odds": odds1,
-        "true_odds": true_odds1,
-        "edge_pct": edge1,
-        "opposing_team": opp1
-    }
-    
-    # Generate Leg 2
-    s2 = random.choice(STATS)
-    line2 = round(random.uniform(s2["line_min"], s2["line_max"]) * 2) / 2
-    opp2 = random.choice([t for t in TEAMS if t != p2["team"]])
-    odds2 = random.choice([-115, -110, -105, +100])
-    edge2 = round(random.uniform(2.5, 9.5), 2)
-    true_odds2 = max(0.40, min(0.70, round(1.0 / (to_decimal(odds2) - (edge2 / 100.0)), 2)))
+    props = []
+    for raw in raw_props.values():
+        try:
+            props.append(json.loads(raw))
+        except (TypeError, ValueError):
+            continue
+    # One prop per player; require a line and odds.
+    by_player = {}
+    for prop in props:
+        if prop.get("line") is not None and prop.get("odds") is not None:
+            by_player.setdefault(prop["player"], prop)
+    candidates = list(by_player.values())
 
-    leg2 = {
-        "player": p2["name"],
-        "team": p2["team"],
-        "stat": s2["stat"],
-        "line": line2,
-        "over_under": "OVER",
-        "book_odds": odds2,
-        "true_odds": true_odds2,
-        "edge_pct": edge2,
-        "opposing_team": opp2
-    }
+    if len(candidates) < 2:
+        raise HTTPException(
+            status_code=503,
+            detail="No live player props available to build a parlay from (Odds API feed empty). Try closer to game time."
+        )
+
+    chosen = random.sample(candidates, 2)
+
+    def to_leg(prop):
+        odds = int(prop["odds"])
+        # Edge model placeholder: market-implied edge unknown without our own
+        # projections; report 0 rather than a fabricated edge.
+        true_odds = max(0.40, min(0.70, round(1.0 / to_decimal(odds), 2)))
+        return {
+            "player": prop["player"],
+            "team": prop.get("team", ""),
+            "stat": prop["stat"],
+            "line": prop["line"],
+            "over_under": "OVER",
+            "book_odds": odds,
+            "true_odds": true_odds,
+            "edge_pct": 0.0,
+            "opposing_team": prop.get("game", ""),
+            "book": prop.get("book"),
+        }
+
+    leg1, leg2 = to_leg(chosen[0]), to_leg(chosen[1])
+    odds1, odds2 = leg1["book_odds"], leg2["book_odds"]
     
     # Calculate Parlay Odds
     dec_odds1 = to_decimal(odds1)
