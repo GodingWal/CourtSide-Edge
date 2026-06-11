@@ -2,7 +2,8 @@
 
 Provides:
 - setup_logging():   standardized logging configuration for every agent.
-- db_connect():      sqlite3.connect wrapper that always applies timeout=5.0.
+- db_connect():      connection wrapper (Postgres via DATABASE_URL, else
+                     SQLite with timeout=5.0) — see shared/db.py.
 - db_transaction():  context manager wrapping multi-step writes in a single
                      transaction (commit on success, rollback on error).
 - shutdown_event / install_signal_handlers / run_polling_loop:
@@ -13,11 +14,11 @@ import logging
 import os
 import re
 import signal
-import sqlite3
 import threading
 import time
-from contextlib import contextmanager
 from typing import Callable, Optional
+
+from shared import db as shared_db
 
 DEFAULT_SQLITE_TIMEOUT = 5.0
 
@@ -70,12 +71,15 @@ def setup_logging(name: str, level: int = logging.INFO) -> logging.Logger:
     return logging.getLogger(name)
 
 
-def db_connect(db_path: str, timeout: float = DEFAULT_SQLITE_TIMEOUT) -> sqlite3.Connection:
-    """Open a SQLite connection with a busy timeout always set (default 5.0s)."""
-    return sqlite3.connect(db_path, timeout=timeout)
+def db_connect(db_path: str, timeout: float = DEFAULT_SQLITE_TIMEOUT):
+    """Open a database connection with a busy timeout always set (default 5.0s).
+
+    Connects to PostgreSQL when DATABASE_URL is set; otherwise SQLite at
+    db_path. The returned object supports the shared DB-API subset either way.
+    """
+    return shared_db.connect(db_path, timeout=timeout)
 
 
-@contextmanager
 def db_transaction(db_path: str, timeout: float = DEFAULT_SQLITE_TIMEOUT):
     """Context manager yielding a connection whose work is one transaction.
 
@@ -86,15 +90,7 @@ def db_transaction(db_path: str, timeout: float = DEFAULT_SQLITE_TIMEOUT):
             conn.execute("DELETE ...")
             conn.execute("INSERT ...")
     """
-    conn = sqlite3.connect(db_path, timeout=timeout)
-    try:
-        yield conn
-        conn.commit()
-    except BaseException:
-        conn.rollback()
-        raise
-    finally:
-        conn.close()
+    return shared_db.transaction(db_path, timeout=timeout)
 
 
 # ── Graceful shutdown / polling-loop scaffold ────────────────────────────────

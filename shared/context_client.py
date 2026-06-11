@@ -1,10 +1,11 @@
 import redis
 import json
 import os
-import sqlite3
 import time
 import logging
 from typing import Any, Dict, List, Optional
+
+from shared import db as shared_db
 
 REDIS_HOST = os.getenv('REDIS_HOST', 'localhost')
 REDIS_PORT = int(os.getenv('REDIS_PORT', 6379))
@@ -43,12 +44,15 @@ class ContextClient:
             except Exception as e:
                 logger.error(f'Failed to write context to Redis: {e}')
 
-        # Write to SQLite for persistence
+        # Write to the database for persistence. The table has no unique key
+        # on (game_id, agent_id, context_key) — entries accumulate and readers
+        # take the newest by created_at, so a plain INSERT is correct (the old
+        # INSERT OR REPLACE never replaced anything without that constraint).
         try:
-            if os.path.exists(DB_PATH):
-                conn = sqlite3.connect(DB_PATH, timeout=5.0)
+            if shared_db.db_available(DB_PATH):
+                conn = shared_db.connect(DB_PATH)
                 conn.execute(
-                    '''INSERT OR REPLACE INTO agent_context_store 
+                    '''INSERT INTO agent_context_store
                        (game_id, agent_id, context_key, context_value, confidence, ttl_seconds, created_at)
                        VALUES (?, ?, ?, ?, ?, ?, ?)''',
                     (game_id, agent_id, context_key, payload, confidence, ttl_seconds, int(time.time() * 1000))
@@ -56,7 +60,7 @@ class ContextClient:
                 conn.commit()
                 conn.close()
         except Exception as e:
-            logger.error(f'Failed to write context to SQLite: {e}')
+            logger.error(f'Failed to write context to database: {e}')
 
     def read_context(self, game_id: str) -> List[Dict]:
         """Read all context entries for a game. Prefers Redis, falls back to SQLite."""
@@ -82,10 +86,10 @@ class ContextClient:
             except Exception as e:
                 logger.error(f'Failed to read context from Redis: {e}')
 
-        # Fallback to SQLite
+        # Fallback to the database
         try:
-            if os.path.exists(DB_PATH):
-                conn = sqlite3.connect(DB_PATH, timeout=5.0)
+            if shared_db.db_available(DB_PATH):
+                conn = shared_db.connect(DB_PATH)
                 cursor = conn.execute(
                     'SELECT agent_id, context_key, context_value, confidence, created_at FROM agent_context_store WHERE game_id = ? ORDER BY created_at DESC',
                     (game_id,)
@@ -104,7 +108,7 @@ class ContextClient:
                     })
                 conn.close()
         except Exception as e:
-            logger.error(f'Failed to read context from SQLite: {e}')
+            logger.error(f'Failed to read context from database: {e}')
 
         return entries
 
@@ -120,12 +124,14 @@ class ContextClient:
             except Exception:
                 pass
 
-        # SQLite fallback
+        # Database fallback — newest entry wins (entries accumulate).
         try:
-            if os.path.exists(DB_PATH):
-                conn = sqlite3.connect(DB_PATH, timeout=5.0)
+            if shared_db.db_available(DB_PATH):
+                conn = shared_db.connect(DB_PATH)
                 cursor = conn.execute(
-                    'SELECT context_value, confidence, created_at FROM agent_context_store WHERE game_id = ? AND agent_id = ? AND context_key = ?',
+                    '''SELECT context_value, confidence, created_at FROM agent_context_store
+                       WHERE game_id = ? AND agent_id = ? AND context_key = ?
+                       ORDER BY created_at DESC LIMIT 1''',
                     (game_id, agent_id, context_key)
                 )
                 row = cursor.fetchone()

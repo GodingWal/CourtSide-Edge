@@ -1,6 +1,6 @@
 # CourtSideEdge: Real-Time WNBA Quantitative Analytics & Wager Terminal
 
-CourtSideEdge is an agentic sports-betting system built for real-time edge detection, portfolio risk sizers, referee telemetry analysis, and high-EV parlay formulation. It orchestrates a **21-agent decoupled microservice architecture** communicating via Redis Pub/Sub and Redis Streams, backing up to SQLite, and exposing live data via WebSockets and SSE to a premium dashboard.
+CourtSideEdge is an agentic sports-betting system built for real-time edge detection, portfolio risk sizers, referee telemetry analysis, and high-EV parlay formulation. It orchestrates a **21-agent decoupled microservice architecture** communicating via Redis Pub/Sub and Redis Streams, persisting to PostgreSQL (or SQLite for single-host setups), and exposing live data via WebSockets and SSE to a premium dashboard.
 
 ---
 
@@ -163,8 +163,10 @@ Agent 21 tracks game flow fouls and rotation changes. It publishes minutes adjus
 
 ## 2.3 Architecture Improvements (v5.3)
 
-### SQLite Concurrency Hardening
-The SQLite database now runs in **WAL (Write-Ahead Logging) mode** with a 5-second `busy_timeout`, eliminating `SQLITE_BUSY` errors from concurrent agent writes. Foreign key enforcement is enabled.
+### Database: PostgreSQL or SQLite
+Set `DATABASE_URL=postgresql://...` (see `.env.example`) and both the Express server and every Python agent switch from the SQLite file to PostgreSQL — one network endpoint shared by all tiers. This removes the single-host constraint on the ledger-coupled agents (the remote agent tier reads/writes the ledger directly instead of going through the HTTP audit fallback and Redis bankroll mirrors), and a wrong connection string fails loudly at startup instead of silently writing to a stray file. The bundled `postgres` compose service starts with `COMPOSE_PROFILES=postgres`; copy an existing ledger over with `deploy/scripts/migrate_sqlite_to_postgres.py`.
+
+Without `DATABASE_URL`, SQLite remains fully supported: **WAL (Write-Ahead Logging) mode** with a 5-second `busy_timeout` eliminates `SQLITE_BUSY` errors from concurrent agent writes, and foreign key enforcement is enabled.
 
 ### Docker Healthchecks & Service Dependencies
 All containers now include `healthcheck` definitions. Redis uses `redis-cli ping` and the web server uses an HTTP `/health` endpoint. `depends_on` entries use `condition: service_healthy` to prevent premature startup.
@@ -182,7 +184,7 @@ Write endpoints (`POST`, `PUT`, `PATCH`) are rate-limited to **100 requests per 
 All server logs use **Pino** for structured JSON output in production and pretty-printed colored output in development. This enables integration with log aggregation tools (ELK, Loki, Datadog).
 
 ### Graceful Shutdown
-The server handles `SIGTERM` and `SIGINT` signals by draining HTTP connections, closing WebSocket clients, disconnecting Redis, and closing the SQLite database before exiting.
+The server handles `SIGTERM` and `SIGINT` signals by draining HTTP connections, closing WebSocket clients, disconnecting Redis, and closing the database before exiting.
 
 ### Database Indexes
 Performance indexes added to frequently-queried columns:

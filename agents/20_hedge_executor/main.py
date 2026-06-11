@@ -6,6 +6,7 @@ import threading
 
 from shared.base_agent import setup_logging, db_transaction
 from shared.odds_math import american_to_decimal
+from shared.db import db_available
 
 logger = setup_logging("Agent20_HedgeExecutor")
 
@@ -19,7 +20,7 @@ def health():
 
 def check_and_execute_hedges():
     """Checks the database for new hedging opportunities and automatically executes them."""
-    if not os.path.exists(DB_PATH):
+    if not db_available(DB_PATH):
         return
         
     try:

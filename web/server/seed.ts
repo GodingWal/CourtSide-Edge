@@ -1,6 +1,8 @@
 import Database from 'better-sqlite3';
+import { sql } from 'drizzle-orm';
 import { config } from './config';
 import { runMigrations } from './migrate';
+import { db, isPostgres, players, settings, rawRun } from './db';
 
 // ── WNBA Players (reference roster for manual bet entry / settle UI) ─────────
 // Status starts ACTIVE for everyone; real injury intel comes from Agent 2's
@@ -38,12 +40,24 @@ const PLAYERS: { id: string; name: string; team: string; status: string }[] = [
   { id: 'p030', name: 'Dearica Hamby', team: 'LAX', status: 'ACTIVE' },
 ];
 
-// ── Legacy demo-data purge ───────────────────────────────────────────────────
+const DEFAULT_SETTINGS: Record<string, string> = {
+  bankroll_starting: '10000',
+  kelly_fraction: '0.25',
+  notifications_enabled: 'true',
+  auto_halt_drawdown: '15',
+};
+
+const SEED_TABLES = [
+  'bets', 'players', 'bankroll_history', 'settings', 'qualitative_events',
+  'agent_context_store', 'decision_audit', 'hedging_opportunities',
+];
+
+// ── Legacy demo-data purge (SQLite only) ─────────────────────────────────────
 // Older builds seeded mock bets, bankroll history, hedges, audits and sample
-// qualitative events. The code that seeded them is long gone, but databases
-// created by those builds still carry the rows, so the dashboard kept showing
-// fabricated data. Detect the old seed's unmistakable fingerprints and delete
-// exactly those cohorts; databases without the fingerprints are untouched.
+// qualitative events into SQLite databases. Detect the old seed's unmistakable
+// fingerprints and delete exactly those cohorts; databases without the
+// fingerprints are untouched. Postgres databases postdate those builds, so
+// the purge never applies there.
 function purgeLegacyDemoRows(sqlite: InstanceType<typeof Database>): void {
   const tableExists = (name: string): boolean =>
     !!sqlite.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name=?`).get(name);
@@ -120,81 +134,73 @@ function purgeLegacyDemoRows(sqlite: InstanceType<typeof Database>): void {
   }
 }
 
-export function seed(options?: { forceReset?: boolean }): void {
+// Reference data (players roster, default settings) through the dialect-
+// agnostic drizzle API — identical for SQLite and Postgres.
+async function seedReferenceData(): Promise<void> {
+  const playerRows = await db.select().from(players);
+  if (playerRows.length === 0) {
+    await db.insert(players).values(PLAYERS);
+    console.log(`✓ Seeded ${PLAYERS.length} players`);
+  } else {
+    console.log(`⏭ Players already seeded (${playerRows.length} rows)`);
+  }
+
+  const settingRows = await db.select().from(settings);
+  if (settingRows.length === 0) {
+    await db.insert(settings).values(
+      Object.entries(DEFAULT_SETTINGS).map(([key, value]) => ({ key, value }))
+    );
+    console.log('✓ Seeded default settings');
+  } else {
+    console.log(`⏭ Settings already seeded (${settingRows.length} rows)`);
+  }
+}
+
+export async function seed(options?: { forceReset?: boolean }): Promise<void> {
   // Only reference data (players roster, default settings) is ever seeded.
   // Bets, bankroll history, events, contexts and audits come exclusively
   // from real usage and live agents — no demo/mock rows.
-  let sqlite = new Database(config.DATABASE_PATH);
-  sqlite.pragma('journal_mode = WAL');
-
   if (options?.forceReset) {
     console.log('⚠️ Force reset requested. Dropping all tables...');
-    sqlite.exec(`DROP TABLE IF EXISTS bets;`);
-    sqlite.exec(`DROP TABLE IF EXISTS players;`);
-    sqlite.exec(`DROP TABLE IF EXISTS bankroll_history;`);
-    sqlite.exec(`DROP TABLE IF EXISTS settings;`);
-    sqlite.exec(`DROP TABLE IF EXISTS qualitative_events;`);
-    sqlite.exec(`DROP TABLE IF EXISTS agent_context_store;`);
-    sqlite.exec(`DROP TABLE IF EXISTS decision_audit;`);
-    sqlite.exec(`DROP TABLE IF EXISTS hedging_opportunities;`);
-    sqlite.close();
-
+    if (isPostgres) {
+      for (const table of SEED_TABLES) {
+        await rawRun(sql.raw(`DROP TABLE IF EXISTS "${table}" CASCADE`));
+      }
+      // The drizzle migration journal must go too or migrations won't rerun.
+      await rawRun(sql.raw('DROP SCHEMA IF EXISTS drizzle CASCADE'));
+    } else {
+      const raw = new Database(config.DATABASE_PATH);
+      for (const table of SEED_TABLES) {
+        raw.exec(`DROP TABLE IF EXISTS ${table};`);
+      }
+      raw.close();
+    }
     // Rerun migrations to recreate empty tables
-    runMigrations();
-
-    sqlite = new Database(config.DATABASE_PATH);
-    sqlite.pragma('journal_mode = WAL');
+    await runMigrations();
   }
 
-  // One-time cleanup of mock rows left behind by old seed versions.
-  try {
-    purgeLegacyDemoRows(sqlite);
-  } catch (err) {
-    console.error('Failed to purge legacy demo rows:', err);
+  // One-time cleanup of mock rows left behind by old SQLite seed versions.
+  if (!isPostgres) {
+    const raw = new Database(config.DATABASE_PATH);
+    raw.pragma('journal_mode = WAL');
+    try {
+      purgeLegacyDemoRows(raw);
+    } catch (err) {
+      console.error('Failed to purge legacy demo rows:', err);
+    } finally {
+      raw.close();
+    }
   }
 
-  // ── Seed players ───────────────────────────────────────────────────────────
-  const playerCount = sqlite.prepare('SELECT COUNT(*) as cnt FROM players').get() as { cnt: number };
-  if (playerCount.cnt === 0) {
-    const insert = sqlite.prepare('INSERT INTO players (id, name, team, status) VALUES (?, ?, ?, ?)');
-    const tx = sqlite.transaction(() => {
-      for (const p of PLAYERS) {
-        insert.run(p.id, p.name, p.team, p.status);
-      }
-    });
-    tx();
-    console.log(`✓ Seeded ${PLAYERS.length} players`);
-  } else {
-    console.log(`⏭ Players already seeded (${playerCount.cnt} rows)`);
-  }
-
-  // ── Seed settings ─────────────────────────────────────────────────────────
-  const settingsCount = sqlite.prepare('SELECT COUNT(*) as cnt FROM settings').get() as { cnt: number };
-  if (settingsCount.cnt === 0) {
-    const insert = sqlite.prepare('INSERT INTO settings (key, value) VALUES (?, ?)');
-    const defaults: Record<string, string> = {
-      bankroll_starting: '10000',
-      kelly_fraction: '0.25',
-      notifications_enabled: 'true',
-      auto_halt_drawdown: '15',
-    };
-    const tx = sqlite.transaction(() => {
-      for (const [k, v] of Object.entries(defaults)) {
-        insert.run(k, v);
-      }
-    });
-    tx();
-    console.log('✓ Seeded default settings');
-  } else {
-    console.log(`⏭ Settings already seeded (${settingsCount.cnt} rows)`);
-  }
-
-  sqlite.close();
+  await seedReferenceData();
   console.log('✅ Seed complete');
 }
 
 // Run if executed directly
 if (require.main === module) {
   const forceReset = process.argv.includes('--reset');
-  seed({ forceReset });
+  seed({ forceReset }).catch((err) => {
+    console.error('Seed failed:', err);
+    process.exit(1);
+  });
 }

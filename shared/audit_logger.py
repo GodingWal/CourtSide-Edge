@@ -3,10 +3,11 @@ import json
 import uuid
 import time
 import logging
-import sqlite3
 from typing import Optional
 
 import requests
+
+from shared import db as shared_db
 
 BACKEND_URL = os.getenv('BACKEND_URL', 'http://localhost:3000')
 API_KEY = os.getenv('API_KEY')
@@ -30,21 +31,22 @@ class AuditLogger:
                      confidence: Optional[float] = None):
         """Log an agent decision to the audit trail.
 
-        Writes SQLite directly when the ledger file is on this host;
-        otherwise (the remote agent tier) posts to the web API so the
-        decision is persisted instead of silently dropped.
+        Writes the database directly when one is reachable (always, with
+        DATABASE_URL set; when the SQLite ledger file is on this host
+        otherwise). Falls back to the web API so the decision is persisted
+        instead of silently dropped.
 
         action: 'APPROVE', 'REJECT', 'ABSTAIN', 'SIZE', 'EXECUTE', 'HALT'
         """
         try:
-            if not os.path.exists(DB_PATH):
+            if not shared_db.db_available(DB_PATH):
                 self._log_decision_http(
                     trace_id, agent_id, action, reason,
                     input_payload, output_payload, confidence,
                 )
                 return
 
-            conn = sqlite3.connect(DB_PATH, timeout=5.0)
+            conn = shared_db.connect(DB_PATH)
             conn.execute(
                 '''INSERT INTO decision_audit 
                    (trace_id, agent_id, action, reason, input_payload, output_payload, confidence, timestamp)
@@ -92,9 +94,9 @@ class AuditLogger:
     def get_decisions(self, trace_id: str) -> list:
         """Retrieve all decisions for a given trace ID."""
         try:
-            if not os.path.exists(DB_PATH):
+            if not shared_db.db_available(DB_PATH):
                 return []
-            conn = sqlite3.connect(DB_PATH, timeout=5.0)
+            conn = shared_db.connect(DB_PATH)
             cursor = conn.execute(
                 'SELECT agent_id, action, reason, input_payload, output_payload, confidence, timestamp FROM decision_audit WHERE trace_id = ? ORDER BY timestamp ASC',
                 (trace_id,)

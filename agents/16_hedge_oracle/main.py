@@ -8,6 +8,7 @@ import threading
 from shared.base_agent import setup_logging, db_transaction
 from shared.odds_math import american_to_decimal
 from shared.redis_client import RedisPubSub
+from shared.db import db_available
 
 logger = setup_logging("Agent16_HedgeOracle")
 
@@ -61,7 +62,7 @@ def load_live_props(pubsub):
 def scan_for_hedges(pubsub):
     logger.info("Scanning for dynamic hedging and middle opportunities...")
 
-    if not os.path.exists(DB_PATH):
+    if not db_available(DB_PATH):
         logger.warning("Database not found. Skipping hedge scan.")
         return
 

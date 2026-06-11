@@ -8,6 +8,13 @@ dotenv.config();
 const configSchema = z.object({
   PORT: z.coerce.number().default(3000),
   REDIS_URL: z.string().default('redis://localhost:6379'),
+  // When set (postgresql://user:pass@host:5432/db), the server uses
+  // PostgreSQL and DATABASE_PATH is ignored. Empty string = unset, so an
+  // uncommented-but-blank env line doesn't kill startup.
+  DATABASE_URL: z.preprocess(
+    (v) => (v === '' ? undefined : v),
+    z.string().startsWith('postgres').optional()
+  ),
   DATABASE_PATH: z.string().default(
     path.resolve(__dirname, '../../data/hoopstats_wnba.db')
   ),

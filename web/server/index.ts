@@ -1,7 +1,6 @@
 import express from 'express';
 import cors from 'cors';
-import { db, sqlite } from './db';
-import { qualitative_events } from './schema';
+import { db, qualitative_events, closeDb } from './db';
 import { seed } from './seed';
 import { createServer } from 'http';
 import { WebSocketServer } from 'ws';
@@ -53,11 +52,11 @@ app.use('/api', statsRouter);
 
 // ── Server Startup ──────────────────────────────────────────────────────────
 async function start() {
-  // Run SQLite migrations and seeding
+  // Run database migrations and seeding (SQLite or Postgres per DATABASE_URL)
   try {
-    runMigrations();
-    seed();
-    logger.info('SQLite database check & seed completed.');
+    await runMigrations();
+    await seed();
+    logger.info('Database check & seed completed.');
   } catch (err) {
     logger.error({ err }, 'Failed to run database seed');
   }
@@ -107,7 +106,7 @@ async function start() {
                   payload: message,
                   timestamp: Date.now()
                 });
-                logger.info({ channel }, 'Permanently logged qualitative event to SQLite');
+                logger.info({ channel }, 'Permanently logged qualitative event to the database');
               } catch (dbErr) {
                 logger.error({ err: dbErr, channel }, 'Failed to log qualitative event');
               }
@@ -162,12 +161,12 @@ async function start() {
       }
     }
 
-    // 4. Close SQLite database
+    // 4. Close the database
     try {
-      sqlite.close();
-      logger.info('SQLite database closed');
+      await closeDb();
+      logger.info('Database closed');
     } catch (err) {
-      logger.warn({ err }, 'Error closing SQLite');
+      logger.warn({ err }, 'Error closing database');
     }
 
     process.exit(0);

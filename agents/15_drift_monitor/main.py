@@ -6,6 +6,7 @@ import threading
 from shared.context_client import ContextClient
 
 from shared.base_agent import setup_logging, db_connect
+from shared.db import db_available
 
 logger = setup_logging("Agent15_DriftMonitor")
 
@@ -22,7 +23,7 @@ def analyze_drift():
     """Queries SQLite for settled wagers, calculates MAE and bias, and updates shared memory context."""
     logger.info("Starting projection drift analysis cycle...")
     
-    if not os.path.exists(DB_PATH):
+    if not db_available(DB_PATH):
         logger.warning(f"Database not found at {DB_PATH}. Aborting drift analysis.")
         return
         

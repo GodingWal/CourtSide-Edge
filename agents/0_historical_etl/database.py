@@ -1,25 +1,28 @@
 import os
 
 from shared.base_agent import db_connect
+from shared.db import AUTO_PK, IS_POSTGRES
 
 DB_PATH = os.path.join(os.path.dirname(__file__), '../../data/hoopstats_wnba.db')
 
 def get_connection():
-    os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
+    if not IS_POSTGRES:
+        os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
     return db_connect(DB_PATH)
 
 def init_db():
     conn = get_connection()
     cursor = conn.cursor()
-    
-    # Create tables for Box Scores and Rolling Baselines
-    cursor.execute('''
+
+    # Create tables for Box Scores and Rolling Baselines.
+    # Dates are stored as ISO TEXT so both SQLite and Postgres return strings.
+    cursor.execute(f'''
     CREATE TABLE IF NOT EXISTS player_box_scores (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        id {AUTO_PK},
         player_id TEXT,
         player_name TEXT,
         game_id TEXT,
-        date DATE,
+        date TEXT,
         team TEXT,
         opponent TEXT,
         minutes REAL,
@@ -41,12 +44,12 @@ def init_db():
     )
     ''')
     
-    cursor.execute('''
+    cursor.execute(f'''
     CREATE TABLE IF NOT EXISTS team_box_scores (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        id {AUTO_PK},
         team TEXT,
         game_id TEXT,
-        date DATE,
+        date TEXT,
         opponent TEXT,
         pace REAL,
         offensive_efficiency REAL,
@@ -58,7 +61,7 @@ def init_db():
     CREATE TABLE IF NOT EXISTS rolling_baselines (
         player_id TEXT PRIMARY KEY,
         player_name TEXT,
-        last_updated DATE,
+        last_updated TEXT,
         l5_minutes REAL,
         l5_usage_rate REAL,
         l10_usage_rate REAL,

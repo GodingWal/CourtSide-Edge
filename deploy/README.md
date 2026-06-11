@@ -8,7 +8,10 @@ Two-host split:
 | **vast.ai** `151.237.25.234` | Agent tier | The 18 stateless/compute agents, dialing back to the VPS Redis + API |
 
 The ledger agents stay on the VPS because they read/write the SQLite file
-directly — SQLite can't be shared across hosts. Everything else talks over
+directly — SQLite can't be shared across hosts. (With PostgreSQL enabled —
+`COMPOSE_PROFILES=postgres` + `DATABASE_URL` in `env/web.env`, mirrored in
+`env/agents.env` — that constraint disappears: any agent on any host can
+read/write the ledger over the network.) Everything else talks over
 Redis (authenticated, firewalled) and HTTPS.
 
 ```

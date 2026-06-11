@@ -57,9 +57,10 @@ def ingest_final_game(game) -> int:
     with db_transaction(DB_PATH) as conn:
         for ref in officials:
             conn.execute(
-                """INSERT OR IGNORE INTO referee_game_log
+                """INSERT INTO referee_game_log
                    (espn_id, referee, game_id, date, total_points, total_fouls)
-                   VALUES (?,?,?,?,?,?)""",
+                   VALUES (?,?,?,?,?,?)
+                   ON CONFLICT(espn_id, referee) DO NOTHING""",
                 (espn_id, ref, game["game_id"], date.today().isoformat(), total_points, total_fouls),
             )
     return len(officials)
@@ -90,7 +91,7 @@ def referee_profiles():
     try:
         league = conn.execute(
             "SELECT AVG(total_points), AVG(total_fouls) FROM "
-            "(SELECT DISTINCT espn_id, total_points, total_fouls FROM referee_game_log)"
+            "(SELECT DISTINCT espn_id, total_points, total_fouls FROM referee_game_log) AS games"
         ).fetchone()
         if not league or league[0] is None:
             return {}, None

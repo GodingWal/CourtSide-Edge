@@ -77,15 +77,29 @@ def ingest_date(d: date) -> int | None:
             opponent = game["home"] if r["team"] == game["away"] else game["away"]
             poss = (r["fga"] or 0) + 0.44 * (r["fta"] or 0) + (r["turnovers"] or 0)
             usage = round(100 * poss / team_poss[r["team"]], 2) if team_poss.get(r["team"]) else None
-            # REPLACE (unique on game_id+player_id) so re-ingesting a date
+            # Upsert (unique on game_id+player_id) so re-ingesting a date
             # heals rows stored by an older parser instead of skipping them.
             conn.execute(
-                """INSERT OR REPLACE INTO player_box_scores
+                """INSERT INTO player_box_scores
                    (player_id, player_name, game_id, date, team, opponent, minutes, points,
                     assists, rebounds, steals, blocks, turnovers, field_goals_made,
                     field_goals_attempted, threes_made, threes_attempted, free_throws_made,
                     free_throws_attempted, usage_rate)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                   ON CONFLICT(game_id, player_id) DO UPDATE SET
+                     player_name=excluded.player_name, date=excluded.date,
+                     team=excluded.team, opponent=excluded.opponent,
+                     minutes=excluded.minutes, points=excluded.points,
+                     assists=excluded.assists, rebounds=excluded.rebounds,
+                     steals=excluded.steals, blocks=excluded.blocks,
+                     turnovers=excluded.turnovers,
+                     field_goals_made=excluded.field_goals_made,
+                     field_goals_attempted=excluded.field_goals_attempted,
+                     threes_made=excluded.threes_made,
+                     threes_attempted=excluded.threes_attempted,
+                     free_throws_made=excluded.free_throws_made,
+                     free_throws_attempted=excluded.free_throws_attempted,
+                     usage_rate=excluded.usage_rate""",
                 (r["player_id"], r["player"], game["game_id"] + "_" + datestr, d.isoformat(),
                  r["team"], opponent, r["minutes"], r["points"], r["assists"], r["rebounds"],
                  r["steals"], r["blocks"], r["turnovers"], r["fgm"], r["fga"], r["tpm"],
@@ -138,7 +152,7 @@ def repair_corrupt_history():
     An earlier parser missed ESPN's 'rebounds' key, so every historical row
     has NULL rebounds. When most rows with points lack rebounds, clear the
     ingested-dates markers — backfill() then re-fetches each date and the
-    INSERT OR REPLACE upsert heals the rows in place.
+    ON CONFLICT upsert heals the rows in place.
     """
     conn = get_connection()
     try:
@@ -181,7 +195,8 @@ def backfill():
                 continue
             conn = get_connection()
             conn.execute(
-                "INSERT OR REPLACE INTO etl_ingested_dates (date, games, ingested_at) VALUES (?,?,?)",
+                """INSERT INTO etl_ingested_dates (date, games, ingested_at) VALUES (?,?,?)
+                   ON CONFLICT(date) DO UPDATE SET games=excluded.games, ingested_at=excluded.ingested_at""",
                 (d.isoformat(), games, datetime.utcnow().isoformat()),
             )
             conn.commit()
@@ -206,7 +221,8 @@ def nightly_etl_job():
             raise RuntimeError("scoreboard fetch failed (will retry tomorrow's run)")
         conn = get_connection()
         conn.execute(
-            "INSERT OR REPLACE INTO etl_ingested_dates (date, games, ingested_at) VALUES (?,?,?)",
+            """INSERT INTO etl_ingested_dates (date, games, ingested_at) VALUES (?,?,?)
+               ON CONFLICT(date) DO UPDATE SET games=excluded.games, ingested_at=excluded.ingested_at""",
             (yesterday.isoformat(), games, datetime.utcnow().isoformat()),
         )
         conn.commit()
