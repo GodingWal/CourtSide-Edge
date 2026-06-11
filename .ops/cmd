@@ -1,2 +1,2 @@
 vast
-cd ~/CourtSide-Edge && git fetch --all --prune -q && git reset --hard origin/main -q && bash deploy/scripts/deploy-agents.sh && sleep 5 && bash deploy/scripts/run-agents-native.sh status
+cd ~/CourtSide-Edge && for f in logs/*.log; do echo "=== $f (last 4 lines) ==="; tail -4 "$f"; done 2>/dev/null | head -120; echo; echo "=== error counts ==="; grep -ciE "error|exception|traceback" logs/*.log 2>/dev/null | grep -v ":0" || echo "no errors in any agent log"
