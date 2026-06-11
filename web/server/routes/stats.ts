@@ -54,6 +54,17 @@ router.get('/stats/h2h', async (req, res) => {
   }
 });
 
+// Walk-forward model validation summary (Agent 3 backtest, refreshed weekly).
+router.get('/stats/model', async (req, res) => {
+  try {
+    const snapshot = await readJsonKey('stats:model_validation');
+    res.json(snapshot ?? { updated: null, per_stat: {} });
+  } catch (err) {
+    logger.error({ err }, 'Failed to fetch model validation summary');
+    res.status(500).json({ error: 'Failed to fetch model validation summary' });
+  }
+});
+
 // Full game log for one player (used for player-vs-team and matchup views).
 router.get('/stats/gamelog', async (req, res) => {
   try {

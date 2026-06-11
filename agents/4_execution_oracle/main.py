@@ -4,6 +4,7 @@ from fastapi import FastAPI
 import uvicorn
 from shared.redis_client import StreamConsumer, RedisPubSub
 from shared.audit_logger import AuditLogger
+from shared.notifier import notify
 
 from shared.base_agent import setup_logging, run_polling_loop
 
@@ -109,6 +110,10 @@ def on_execution_order(msg_id, message, stream):
             input_payload=message,
             confidence=confidence
         )
+        notify(
+            f"⛔ CourtSideEdge circuit breaker: drawdown {current_drawdown:.1%} >= "
+            f"{MAX_DRAWDOWN:.0%} — bet blocked, manual reset required."
+        )
         return
     
     # Confidence gate
@@ -134,7 +139,18 @@ def on_execution_order(msg_id, message, stream):
         'status': 'EXECUTED'
     }
     execution_log.append(execution_record)
-    
+
+    # Telegram/Discord execution alert (manual-execution workflow): the
+    # human places the bet; this is the real-time prompt to do so.
+    player = edge.get('player') or 'game line'
+    stat = edge.get('stat') or ''
+    line = edge.get('line')
+    notify(
+        f"✅ CourtSideEdge +EV order: ${bet_amount} on {player} {stat}"
+        + (f" @ line {line}" if line is not None else "")
+        + f" ({game_id}) — confidence {confidence:.0%}, trace {trace_id[:8]}"
+    )
+
     audit.log_decision(
         trace_id=trace_id,
         agent_id='Agent_4',

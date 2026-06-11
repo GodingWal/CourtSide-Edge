@@ -77,11 +77,27 @@ router.get('/drift/status', async (req, res) => {
     const mae = count > 0 ? Math.round((totalError / count) * 100) / 100 : null;
     const bias = count > 0 ? Math.round((totalBias / count) * 100) / 100 : null;
 
+    // Brier score (plan §9): model win probability (true_odds) vs. outcome,
+    // over settled straight bets that carried a model probability.
+    const brierBets = allBets.filter(
+      (b) => b.is_parlay === 0 && (b.result === 'WIN' || b.result === 'LOSS') && b.true_odds !== null
+    );
+    const brier_score = brierBets.length
+      ? Math.round(
+          (brierBets.reduce(
+            (sum, b) => sum + Math.pow(b.true_odds! - (b.result === 'WIN' ? 1 : 0), 2),
+            0
+          ) / brierBets.length) * 10000
+        ) / 10000
+      : null;
+
     res.json({
       calibration: calibration.length > 0 ? JSON.parse(calibration[0].context_value) : null,
       last_checked: calibration.length > 0 ? calibration[0].created_at : Date.now(),
       mae,
       bias,
+      brier_score,
+      brier_sample: brierBets.length,
       settled_bets_analyzed: count
     });
   } catch (err) {

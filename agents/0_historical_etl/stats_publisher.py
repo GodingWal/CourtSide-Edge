@@ -47,6 +47,7 @@ def compute_team_stats(conn):
 
     teams: dict = {}
     game_rows = []
+    team_game_rows = []
     for game_id, sides in games.items():
         if len(sides) != 2:
             continue  # partial boxscore — skip rather than fabricate a result
@@ -55,17 +56,29 @@ def compute_team_stats(conn):
             "game_id": game_id, "date": a["date"],
             "teams": {team_a: a["pts"], team_b: b["pts"]},
         })
+        # Per-game pace / efficiency rows for the team_box_scores table
+        # (plan §3 feature inputs: off_eff, def_eff, pace).
+        for team, own, opp_side in ((team_a, a, b), (team_b, b, a)):
+            own_p = own["fga"] + 0.44 * own["fta"] + own["tov"]
+            opp_p = opp_side["fga"] + 0.44 * opp_side["fta"] + opp_side["tov"]
+            team_game_rows.append((
+                team, game_id, own["date"], own["opponent"],
+                round(own_p, 1),
+                round(100 * own["pts"] / own_p, 1) if own_p else None,
+                round(100 * opp_side["pts"] / opp_p, 1) if opp_p else None,
+            ))
         for team, own, opp in ((team_a, a, b), (team_b, b, a)):
             t = teams.setdefault(team, {
                 "games": 0, "wins": 0, "losses": 0, "pts": 0, "opp_pts": 0,
                 "reb": 0, "ast": 0, "stl": 0, "blk": 0, "tov": 0,
                 "fgm": 0, "fga": 0, "tpm": 0, "tpa": 0, "ftm": 0, "fta": 0,
-                "results": [],
+                "opp_poss": 0.0, "results": [],
             })
             t["games"] += 1
             t["wins" if own["pts"] > opp["pts"] else "losses"] += 1
             t["pts"] += own["pts"]
             t["opp_pts"] += opp["pts"]
+            t["opp_poss"] += opp["fga"] + 0.44 * opp["fta"] + opp["tov"]
             for k in ("reb", "ast", "stl", "blk", "tov", "fgm", "fga", "tpm", "tpa", "ftm", "fta"):
                 t[k] += own[k]
             t["results"].append((own["date"], "W" if own["pts"] > opp["pts"] else "L"))
@@ -74,6 +87,9 @@ def compute_team_stats(conn):
     for team, t in teams.items():
         g = t["games"]
         last10 = [r for _, r in sorted(t["results"])[-10:]]
+        # Possessions estimate (no OReb split in the feed): FGA + 0.44*FTA + TOV.
+        own_poss = t["fga"] + 0.44 * t["fta"] + t["tov"]
+        opp = t["opp_poss"]
         snapshot[team] = {
             "team": team, "games": g, "wins": t["wins"], "losses": t["losses"],
             "ppg": round(t["pts"] / g, 1), "opp_ppg": round(t["opp_pts"] / g, 1),
@@ -83,9 +99,24 @@ def compute_team_stats(conn):
             "topg": round(t["tov"] / g, 1),
             "fg_pct": _pct(t["fgm"], t["fga"]), "fg3_pct": _pct(t["tpm"], t["tpa"]),
             "ft_pct": _pct(t["ftm"], t["fta"]),
+            "pace": round(own_poss / g, 1),
+            "ortg": round(100 * t["pts"] / own_poss, 1) if own_poss else None,
+            "drtg": round(100 * t["opp_pts"] / opp, 1) if opp else None,
             "last10": f"{last10.count('W')}-{last10.count('L')}",
         }
-    return snapshot, sorted(game_rows, key=lambda r: r["date"], reverse=True)
+    return snapshot, sorted(game_rows, key=lambda r: r["date"], reverse=True), team_game_rows
+
+
+def refresh_team_box_scores(conn, team_game_rows):
+    """Rebuild the derived team_box_scores table (pace + efficiency per game)."""
+    conn.execute("DELETE FROM team_box_scores")
+    conn.executemany(
+        """INSERT INTO team_box_scores
+           (team, game_id, date, opponent, pace, offensive_efficiency, defensive_efficiency)
+           VALUES (?,?,?,?,?,?,?)""",
+        team_game_rows,
+    )
+    conn.commit()
 
 
 def compute_player_stats(conn):
@@ -155,9 +186,14 @@ def publish_stats_snapshot():
     """Aggregate the box-score history and publish snapshots to Redis."""
     conn = get_connection()
     try:
-        teams, game_rows = compute_team_stats(conn)
+        teams, game_rows, team_game_rows = compute_team_stats(conn)
         players = compute_player_stats(conn)
         logs = compute_gamelogs(conn)
+        if team_game_rows:
+            try:
+                refresh_team_box_scores(conn, team_game_rows)
+            except Exception as e:
+                logger.warning(f"Could not refresh team_box_scores: {e}")
     finally:
         conn.close()
 
