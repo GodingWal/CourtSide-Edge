@@ -40,6 +40,8 @@ export const bets = sqliteTable('bets', {
   index('idx_bets_placed_at').on(table.placed_at),
   index('idx_bets_result').on(table.result),
   index('idx_bets_parent_id').on(table.parent_id),
+  index('idx_bets_settled_at').on(table.settled_at),
+  index('idx_bets_is_parlay').on(table.is_parlay),
 ]));
 
 export const settings = sqliteTable('settings', {
