@@ -69,8 +69,10 @@ def ingest_date(d: date) -> int:
             opponent = game["home"] if r["team"] == game["away"] else game["away"]
             poss = (r["fga"] or 0) + 0.44 * (r["fta"] or 0) + (r["turnovers"] or 0)
             usage = round(100 * poss / team_poss[r["team"]], 2) if team_poss.get(r["team"]) else None
+            # REPLACE (unique on game_id+player_id) so re-ingesting a date
+            # heals rows stored by an older parser instead of skipping them.
             conn.execute(
-                """INSERT OR IGNORE INTO player_box_scores
+                """INSERT OR REPLACE INTO player_box_scores
                    (player_id, player_name, game_id, date, team, opponent, minutes, points,
                     assists, rebounds, steals, blocks, turnovers, field_goals_made,
                     field_goals_attempted, threes_made, threes_attempted, free_throws_made,
@@ -122,9 +124,35 @@ def recompute_baselines():
     logger.info(f"Rolling baselines recomputed for {len(players)} players.")
 
 
+def repair_corrupt_history():
+    """Force re-ingest when stored rows are missing a stat the feed provides.
+
+    An earlier parser missed ESPN's 'rebounds' key, so every historical row
+    has NULL rebounds. When most rows with points lack rebounds, clear the
+    ingested-dates markers — backfill() then re-fetches each date and the
+    INSERT OR REPLACE upsert heals the rows in place.
+    """
+    conn = get_connection()
+    try:
+        total, null_reb = conn.execute(
+            """SELECT COUNT(*), SUM(CASE WHEN rebounds IS NULL THEN 1 ELSE 0 END)
+               FROM player_box_scores WHERE points IS NOT NULL"""
+        ).fetchone()
+        if total and null_reb and null_reb / total > 0.5:
+            logger.warning(
+                f"{null_reb}/{total} stored box-score rows are missing rebounds — "
+                "clearing ingest markers to re-fetch and heal history."
+            )
+            conn.execute("DELETE FROM etl_ingested_dates")
+            conn.commit()
+    finally:
+        conn.close()
+
+
 def backfill():
     """Resumable multi-season backfill. Skips dates already ingested."""
     ensure_etl_tables()
+    repair_corrupt_history()
     conn = get_connection()
     done = {row[0] for row in conn.execute("SELECT date FROM etl_ingested_dates").fetchall()}
     conn.close()
