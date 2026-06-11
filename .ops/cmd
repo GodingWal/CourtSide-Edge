@@ -1,2 +1,12 @@
 vast
-cd ~/CourtSide-Edge && git fetch --all --prune -q && git reset --hard origin/main -q && bash deploy/scripts/deploy-agents.sh && sleep 5 && bash deploy/scripts/run-agents-native.sh status
+cd ~/CourtSide-Edge && git fetch --all --prune -q && git reset --hard origin/main -q && .venv-agents/bin/python -c "
+import os, redis
+env = {}
+for line in open('deploy/env/agents.env'):
+    line = line.strip()
+    if '=' in line and not line.startswith('#'):
+        k, v = line.split('=', 1); env[k] = v
+r = redis.Redis(host=env['REDIS_HOST'], port=int(env['REDIS_PORT']), password=env['REDIS_PASSWORD'] or None)
+r.delete('props:lines')
+print('props cache cleared for fresh PP/UD fetch')
+" && bash deploy/scripts/run-agents-native.sh restart >/dev/null && sleep 40 && bash deploy/scripts/pipeline-status.sh 2>&1 | head -25
