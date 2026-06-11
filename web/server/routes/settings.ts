@@ -1,6 +1,5 @@
 import { Router } from 'express';
-import { db } from '../db';
-import { settings } from '../schema';
+import { db, settings } from '../db';
 import { writeLimiter, validateRequest } from '../middleware';
 import { updateSettingSchema } from '../schemas.validation';
 

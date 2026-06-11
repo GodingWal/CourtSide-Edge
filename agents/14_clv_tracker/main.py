@@ -6,6 +6,7 @@ from shared.odds_math import implied_probability
 from shared.redis_client import RedisPubSub
 
 from shared.base_agent import run_polling_loop, setup_logging, db_connect
+from shared.db import db_available
 
 logger = setup_logging('Agent14_CLVTracker')
 
@@ -33,7 +34,7 @@ def health():
 def clv_summary():
     """Return aggregate CLV statistics."""
     try:
-        if not os.path.exists(DB_PATH):
+        if not db_available(DB_PATH):
             return {'error': 'Database not found'}
         
         conn = db_connect(DB_PATH)
@@ -135,7 +136,7 @@ def on_live_odds(message):
     logger.info('Agent 14 received closing odds for CLV tracking')
 
     try:
-        if not os.path.exists(DB_PATH):
+        if not db_available(DB_PATH):
             return
         
         conn = db_connect(DB_PATH)

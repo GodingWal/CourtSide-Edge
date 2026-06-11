@@ -8,6 +8,7 @@ from shared.redis_client import StreamConsumer
 from shared.audit_logger import AuditLogger
 
 from shared.base_agent import run_polling_loop, setup_logging, db_connect
+from shared.db import db_available
 
 logger = setup_logging('Agent8_BankrollSizer')
 
@@ -50,7 +51,7 @@ class BankrollSizer:
 
     def _fetch_bankroll_sqlite(self):
         try:
-            if not os.path.exists(DB_PATH):
+            if not db_available(DB_PATH):
                 return None
             conn = db_connect(DB_PATH)
             row = conn.execute(
@@ -75,7 +76,7 @@ class BankrollSizer:
     def _fetch_recent_win_rate(self, n: int = 50) -> float:
         """Query SQLite for the realized win rate over the last N settled bets."""
         try:
-            if not os.path.exists(DB_PATH):
+            if not db_available(DB_PATH):
                 return 0.55  # Default fallback
             conn = db_connect(DB_PATH)
             cursor = conn.execute(

@@ -51,6 +51,8 @@ def evaluate_live_games(pubsub: RedisPubSub):
 
     snapshot = []
     for game in games:
+        if not game.get("espn_id"):
+            continue  # no event id — boxscore fetch can only fail
         fouls = get_boxscore_fouls(game["espn_id"])
         for row in fouls:
             status = foul_status(row["fouls"], game.get("period"))

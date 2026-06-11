@@ -1,8 +1,7 @@
 import { Router } from 'express';
 import { randomUUID } from 'crypto';
-import { db, sqlite } from '../db';
-import { bankroll_history, bets, agent_context_store, hedging_opportunities, qualitative_events } from '../schema';
-import { desc, eq } from 'drizzle-orm';
+import { db, rawQuery, bankroll_history, bets, agent_context_store, hedging_opportunities, qualitative_events } from '../db';
+import { desc, eq, sql } from 'drizzle-orm';
 import { logger } from '../logger';
 import { redisClient } from '../redis';
 import { writeLimiter, validateRequest } from '../middleware';
@@ -235,10 +234,9 @@ router.get('/live/rotations', async (req, res) => {
 // Historical rolling baselines (real ETL data from Agent 0).
 router.get('/baselines', async (req, res) => {
   try {
-    const rows = sqlite.prepare(
-      `SELECT player_id, player_name, last_updated, l5_minutes, l5_usage_rate, l10_usage_rate
-       FROM rolling_baselines ORDER BY l5_usage_rate DESC LIMIT 100`
-    ).all();
+    const rows = await rawQuery(sql`
+      SELECT player_id, player_name, last_updated, l5_minutes, l5_usage_rate, l10_usage_rate
+      FROM rolling_baselines ORDER BY l5_usage_rate DESC LIMIT 100`);
     res.json(rows);
   } catch (err) {
     // Table may not exist until Agent 0 completes its first backfill.

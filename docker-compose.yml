@@ -13,6 +13,26 @@ services:
       timeout: 5s
       retries: 5
 
+  # Started with COMPOSE_PROFILES=postgres (see .env.example). Setting
+  # DATABASE_URL switches the web server and every agent from SQLite to this.
+  postgres:
+    image: postgres:16-alpine
+    profiles: ["postgres"]
+    environment:
+      POSTGRES_USER: courtside
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-courtside}
+      POSTGRES_DB: courtside
+    volumes:
+      - ./infrastructure/postgres/data:/var/lib/postgresql/data
+    ports:
+      - "127.0.0.1:5432:5432"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U courtside -d courtside"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   agent_0_historical_etl:
     build:
       context: .

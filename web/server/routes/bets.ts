@@ -1,6 +1,5 @@
 import { Router } from 'express';
-import { db } from '../db';
-import { bets } from '../schema';
+import { db, bets, isPostgres } from '../db';
 import { desc, eq } from 'drizzle-orm';
 import { logger } from '../logger';
 import { writeLimiter, validateRequest } from '../middleware';
@@ -36,54 +35,61 @@ router.post('/bets', writeLimiter, validateRequest(createBetSchema), async (req,
     if (is_parlay === 1 || is_parlay === true) {
       // Insert parent parlay container and child legs atomically — if any leg
       // insert fails, the parent insert is rolled back.
-      db.transaction((tx) => {
-        const insertedParent = tx.insert(bets).values({
-          parent_id: null,
-          is_parlay: 1,
-          player: null,
-          stat: null,
-          line: null,
-          over_under: null,
-          book_odds: parseInt(book_odds, 10),
-          true_odds: true_odds ? parseFloat(true_odds) : null,
-          edge_pct: edge_pct ? parseFloat(edge_pct) : null,
-          stake: parseFloat(stake),
-          opposing_team: null,
-          notes: notes || `${Array.isArray(legs) ? legs.length : 2}-Leg Parlay`,
+      const parentValues = {
+        parent_id: null,
+        is_parlay: 1,
+        player: null,
+        stat: null,
+        line: null,
+        over_under: null,
+        book_odds: parseInt(book_odds, 10),
+        true_odds: true_odds ? parseFloat(true_odds) : null,
+        edge_pct: edge_pct ? parseFloat(edge_pct) : null,
+        stake: parseFloat(stake),
+        opposing_team: null,
+        notes: notes || `${Array.isArray(legs) ? legs.length : 2}-Leg Parlay`,
+        placed_at: Date.now(),
+        result: null,
+        actual_value: null,
+        profit_loss: null,
+        settled_at: null
+      };
+      const legValues = (parentId: number) =>
+        (Array.isArray(legs) ? legs : []).map((leg: any) => ({
+          parent_id: parentId,
+          is_parlay: 0,
+          player: leg.player,
+          stat: leg.stat,
+          line: leg.line ? parseFloat(leg.line) : null,
+          over_under: leg.over_under,
+          book_odds: leg.book_odds ? parseInt(leg.book_odds, 10) : 0,
+          true_odds: leg.true_odds ? parseFloat(leg.true_odds) : null,
+          edge_pct: leg.edge_pct ? parseFloat(leg.edge_pct) : null,
+          stake: 0, // 0 stake for legs to avoid double-counting bankroll
+          opposing_team: leg.opposing_team || null,
+          notes: leg.notes || 'Leg',
           placed_at: Date.now(),
           result: null,
           actual_value: null,
           profit_loss: null,
           settled_at: null
-        }).returning({ id: bets.id }).all();
+        }));
 
-        const parentId = insertedParent[0].id;
-
-        // Insert child legs
-        if (legs && Array.isArray(legs)) {
-          for (const leg of legs) {
-            tx.insert(bets).values({
-              parent_id: parentId,
-              is_parlay: 0,
-              player: leg.player,
-              stat: leg.stat,
-              line: leg.line ? parseFloat(leg.line) : null,
-              over_under: leg.over_under,
-              book_odds: leg.book_odds ? parseInt(leg.book_odds, 10) : 0,
-              true_odds: leg.true_odds ? parseFloat(leg.true_odds) : null,
-              edge_pct: leg.edge_pct ? parseFloat(leg.edge_pct) : null,
-              stake: 0, // 0 stake for legs to avoid double-counting bankroll
-              opposing_team: leg.opposing_team || null,
-              notes: leg.notes || 'Leg',
-              placed_at: Date.now(),
-              result: null,
-              actual_value: null,
-              profit_loss: null,
-              settled_at: null
-            }).run();
-          }
-        }
-      });
+      if (isPostgres) {
+        // pg transactions are async; better-sqlite3's are strictly sync —
+        // hence the two branches with the same shape.
+        await db.transaction(async (tx) => {
+          const insertedParent = await tx.insert(bets).values(parentValues).returning({ id: bets.id });
+          const rows = legValues(insertedParent[0].id);
+          if (rows.length > 0) await tx.insert(bets).values(rows);
+        });
+      } else {
+        db.transaction((tx) => {
+          const insertedParent = tx.insert(bets).values(parentValues).returning({ id: bets.id }).all();
+          const rows = legValues(insertedParent[0].id);
+          if (rows.length > 0) tx.insert(bets).values(rows).run();
+        });
+      }
     } else {
       // Regular straight bet
       await db.insert(bets).values({

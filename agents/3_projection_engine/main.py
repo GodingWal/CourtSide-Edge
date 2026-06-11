@@ -9,6 +9,7 @@ from shared.context_client import ContextClient
 from ensemble import EnsembleMathCore, STAT_COLUMNS
 
 from shared.base_agent import setup_logging, run_polling_loop, db_connect
+from shared.db import db_available
 
 logger = setup_logging("Agent3_ProjectionEngine")
 
@@ -21,7 +22,7 @@ DB_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../data/ho
 
 
 def _player_name_for_id(player_id: str):
-    if not os.path.exists(DB_PATH):
+    if not db_available(DB_PATH):
         return None
     conn = db_connect(DB_PATH)
     try:

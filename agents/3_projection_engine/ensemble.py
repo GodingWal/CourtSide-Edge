@@ -27,6 +27,7 @@ from datetime import date
 import numpy as np
 
 from shared.base_agent import db_connect
+from shared.db import db_available
 
 logger = logging.getLogger("EnsembleMathCore")
 
@@ -70,7 +71,7 @@ class EnsembleMathCore:
         self.db_path = db_path
 
     def _query(self, sql, params=()):
-        if not os.path.exists(self.db_path):
+        if not db_available(self.db_path):
             return []
         conn = db_connect(self.db_path)
         try:
@@ -90,7 +91,7 @@ class EnsembleMathCore:
         cut_sql, cut_params = self._date_filter(as_of_date)
         rows = self._query(
             f"""SELECT date, minutes, {stat_col} FROM player_box_scores
-                WHERE player_name = ? COLLATE NOCASE
+                WHERE LOWER(player_name) = LOWER(?)
                   AND minutes IS NOT NULL AND {stat_col} IS NOT NULL {cut_sql}
                 ORDER BY date DESC LIMIT ?""",
             (player_name, *cut_params, limit),
@@ -101,7 +102,7 @@ class EnsembleMathCore:
         cut_sql, cut_params = self._date_filter(as_of_date)
         rows = self._query(
             f"""SELECT minutes FROM player_box_scores
-                WHERE player_name = ? COLLATE NOCASE AND minutes IS NOT NULL {cut_sql}
+                WHERE LOWER(player_name) = LOWER(?) AND minutes IS NOT NULL {cut_sql}
                 ORDER BY date DESC LIMIT ?""",
             (player_name, *cut_params, SEASON_GAMES),
         )
@@ -111,7 +112,7 @@ class EnsembleMathCore:
         cut_sql, cut_params = self._date_filter(as_of_date)
         rows = self._query(
             f"""SELECT team FROM player_box_scores
-                WHERE player_name = ? COLLATE NOCASE {cut_sql}
+                WHERE LOWER(player_name) = LOWER(?) {cut_sql}
                 ORDER BY date DESC LIMIT 1""",
             (player_name, *cut_params),
         )
@@ -121,7 +122,7 @@ class EnsembleMathCore:
         cut_sql, cut_params = self._date_filter(as_of_date)
         rows = self._query(
             f"""SELECT usage_rate FROM player_box_scores
-                WHERE player_name = ? COLLATE NOCASE AND usage_rate IS NOT NULL {cut_sql}
+                WHERE LOWER(player_name) = LOWER(?) AND usage_rate IS NOT NULL {cut_sql}
                 ORDER BY date DESC LIMIT ?""",
             (player_name, *cut_params, last_n),
         )
@@ -142,7 +143,7 @@ class EnsembleMathCore:
         cut_sql, cut_params = self._date_filter(as_of_date)
         rows = self._query(
             f"SELECT AVG(total) FROM (SELECT game_id, SUM(points) AS total "
-            f"FROM player_box_scores WHERE 1=1 {cut_sql} GROUP BY game_id)",
+            f"FROM player_box_scores WHERE 1=1 {cut_sql} GROUP BY game_id) AS game_totals",
             cut_params,
         )
         if rows and rows[0][0]:

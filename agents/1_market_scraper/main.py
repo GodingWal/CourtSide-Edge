@@ -20,6 +20,25 @@ ODDS_POLL_SECONDS = int(os.getenv("ODDS_POLL_SECONDS", 7200))
 MAX_PROP_EVENTS = int(os.getenv("ODDS_MAX_PROP_EVENTS", 2))
 
 
+def map_events_to_game_ids() -> dict:
+    """Full-team-name → ESPN game_id map for today's slate.
+
+    The Odds API names games by full team names ("Las Vegas Aces"); the rest
+    of the pipeline (Agent 23's session gate, Agent 4's execution gate) keys
+    games by the ESPN scoreboard's game_id. Without this mapping, prop edges
+    carry no game_id and the execution gate rejects every one of them.
+    """
+    mapping = {}
+    try:
+        for g in get_scoreboard():
+            for name in (g.get("home_name"), g.get("away_name")):
+                if name:
+                    mapping[name.strip().lower()] = g["game_id"]
+    except Exception as e:
+        logger.warning(f"Could not build team→game_id mapping: {e}")
+    return mapping
+
+
 def odds_api_loop(pubsub: RedisPubSub):
     """Real bookmaker odds + player props from The Odds API (when key set)."""
     last_props: dict = {}
@@ -27,7 +46,12 @@ def odds_api_loop(pubsub: RedisPubSub):
         try:
             games = odds_api_client.get_game_odds()
             logger.info(f"Odds API: {len(games)} WNBA games with bookmaker odds.")
+            name_to_game_id = map_events_to_game_ids() if games else {}
             for game in games[:MAX_PROP_EVENTS]:
+                game_id = (
+                    name_to_game_id.get(str(game.get("home", "")).strip().lower())
+                    or name_to_game_id.get(str(game.get("away", "")).strip().lower())
+                )
                 props = odds_api_client.get_player_props(game["event_id"])
                 logger.info(f"Odds API: {len(props)} player props for {game['away']} @ {game['home']}.")
                 for prop in props:
@@ -37,6 +61,7 @@ def odds_api_loop(pubsub: RedisPubSub):
                     payload = {
                         "source": "Agent 1",
                         "feed": "odds_api",
+                        "game_id": game_id,
                         "player": prop["player"],
                         "stat": prop["stat"],
                         "line": prop["line"],

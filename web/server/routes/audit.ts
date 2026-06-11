@@ -1,6 +1,5 @@
 import { Router } from 'express';
-import { db } from '../db';
-import { decision_audit } from '../schema';
+import { db, decision_audit } from '../db';
 import { desc, eq } from 'drizzle-orm';
 import { writeLimiter, validateRequest } from '../middleware';
 import { createAuditSchema } from '../schemas.validation';
