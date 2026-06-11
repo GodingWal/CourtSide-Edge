@@ -70,48 +70,21 @@ export default function Settings() {
         }
       }
 
-      // Fetch agent health
+      // Fetch agent health — show the truth; no fabricated fallback.
       const healthRes = await fetch(`${API_BASE}/agents/health`);
       if (healthRes.ok) {
         const healthData = await healthRes.json();
         setAgents(healthData);
       } else {
-        // Fallback mock agents if endpoint doesn't exist yet
-        setAgents(getMockAgents());
+        setAgents([]);
       }
     } catch (err) {
       console.error('Failed to load settings data:', err);
-      // Fallback mocks
-      setAgents(getMockAgents());
+      setAgents([]);
     } finally {
       setLoading(false);
     }
   };
-
-  const getMockAgents = (): AgentHealth[] => [
-    { id: '0', name: 'Historical ETL', status: 'online', port: null },
-    { id: '1', name: 'Market Scraper', status: 'online', port: null },
-    { id: '2', name: 'News Sentinel', status: 'online', port: null },
-    { id: '2.5', name: 'Game Flow Oracle', status: 'online', port: null },
-    { id: '3', name: 'Projection Engine', status: 'online', port: 8000 },
-    { id: '4', name: 'Execution Oracle', status: 'online', port: 8001 },
-    { id: '5', name: 'Referee Engine', status: 'online', port: null },
-    { id: '6', name: 'Steam Detector', status: 'online', port: null },
-    { id: '7', name: 'Correlation Guard', status: 'online', port: null },
-    { id: '8', name: 'Bankroll Sizer', status: 'online', port: null },
-    { id: '9', name: 'News Sentiment', status: 'online', port: null },
-    { id: '10', name: 'Game Total Projector', status: 'online', port: null },
-    { id: '11', name: 'Market Value Detector', status: 'online', port: null },
-    { id: '13', name: 'Matchup Oracle / Parlay Gen', status: 'online', port: 8009 },
-    { id: '14', name: 'CLV Tracker', status: 'online', port: 8010 },
-    { id: '15', name: 'Drift Monitor', status: 'online', port: 8011 },
-    { id: '16', name: 'Hedge Oracle', status: 'online', port: 8012 },
-    { id: '17', name: 'Velocity Agent', status: 'online', port: 8013 },
-    { id: '18', name: 'Liquidity Oracle', status: 'online', port: 8014 },
-    { id: '19', name: 'Sharp Profiler', status: 'online', port: 8015 },
-    { id: '20', name: 'Hedge Executor', status: 'online', port: 8016 },
-    { id: '21', name: 'Rotation Tracker', status: 'online', port: 8017 }
-  ];
 
   useEffect(() => {
     fetchData();

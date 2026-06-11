@@ -1,8 +1,9 @@
 import { Router } from 'express';
 import { db } from '../db';
-import { bankroll_history, bets, agent_context_store, hedging_opportunities } from '../schema';
+import { bankroll_history, bets, agent_context_store, hedging_opportunities, qualitative_events } from '../schema';
 import { desc, eq } from 'drizzle-orm';
 import { logger } from '../logger';
+import { redisClient } from '../redis';
 import { writeLimiter, validateRequest } from '../middleware';
 import { createHedgeSchema } from '../schemas.validation';
 
@@ -53,11 +54,11 @@ router.get('/drift/status', async (req, res) => {
       totalBias += error;
     });
 
-    const mae = count > 0 ? Math.round((totalError / count) * 100) / 100 : 1.45;
-    const bias = count > 0 ? Math.round((totalBias / count) * 100) / 100 : -0.12;
+    const mae = count > 0 ? Math.round((totalError / count) * 100) / 100 : null;
+    const bias = count > 0 ? Math.round((totalBias / count) * 100) / 100 : null;
 
     res.json({
-      calibration: calibration.length > 0 ? JSON.parse(calibration[0].context_value) : { PTS: -0.4, REB: 0.2, AST: 0.1 },
+      calibration: calibration.length > 0 ? JSON.parse(calibration[0].context_value) : null,
       last_checked: calibration.length > 0 ? calibration[0].created_at : Date.now(),
       mae,
       bias,
@@ -98,43 +99,86 @@ router.post('/hedges', writeLimiter, validateRequest(createHedgeSchema), async (
   }
 });
 
+// ── Live agent signals (read from Redis; agents publish them) ───────────────
+// Each agent maintains a capped Redis list of its most recent signals. These
+// endpoints surface whatever is genuinely there — empty array when no live
+// signal has been produced, never fabricated data.
+async function readRecentList(key: string, limit = 50): Promise<unknown[]> {
+  if (!redisClient?.isOpen) return [];
+  const raw = await redisClient.lRange(key, 0, limit - 1);
+  return raw.map((item) => {
+    try { return JSON.parse(item); } catch { return null; }
+  }).filter((x) => x !== null);
+}
+
+// Recent qualitative events (real agent publications persisted by the server).
+router.get('/events/recent', async (req, res) => {
+  try {
+    const rows = await db.query.qualitative_events.findMany({
+      orderBy: [desc(qualitative_events.timestamp)],
+      limit: 100,
+    });
+    const events = rows.map((r) => {
+      let payload: unknown = r.payload;
+      try { payload = JSON.parse(r.payload as string); } catch { /* keep raw */ }
+      return { channel: r.channel, payload, timestamp: r.timestamp };
+    });
+    res.json(events);
+  } catch (err) {
+    logger.error({ err }, 'Failed to fetch recent events');
+    res.status(500).json({ error: 'Failed to fetch recent events' });
+  }
+});
+
+// Most recent market-intelligence edges from the Redis stream (agent 11).
+router.get('/edges/recent', async (req, res) => {
+  try {
+    if (!redisClient?.isOpen) return res.json([]);
+    const entries = await redisClient.xRevRange('stream_market_intelligence', '+', '-', { COUNT: 25 });
+    const edges = entries.map((e: any) => {
+      try { return JSON.parse(e.message?.data ?? '{}'); } catch { return null; }
+    }).filter((x: any) => x && Object.keys(x).length > 0);
+    res.json(edges);
+  } catch (err) {
+    logger.error({ err }, 'Failed to fetch recent edges');
+    res.status(500).json({ error: 'Failed to fetch recent edges' });
+  }
+});
+
 router.get('/velocity/alerts', async (req, res) => {
   try {
-    const alerts = [
-      { player: "A'ja Wilson", stat: "PTS", direction: "UP", delta: "+1.5", odds_delta: "-20", duration_seconds: 45, reason: "Heavy sharp volume on OVER", timestamp: Date.now() - 120000 },
-      { player: "Caitlin Clark", stat: "AST", direction: "DOWN", delta: "-1.0", odds_delta: "+15", duration_seconds: 30, reason: "Coach pre-game interview (rest minutes restriction hint)", timestamp: Date.now() - 600000 },
-      { player: "Breanna Stewart", stat: "REB", direction: "UP", delta: "+0.5", odds_delta: "-10", duration_seconds: 15, reason: "Market steam detected across 3 books", timestamp: Date.now() - 1800000 }
-    ];
-    res.json(alerts);
+    res.json(await readRecentList('recent:velocity_alerts'));
   } catch (err) {
+    logger.error({ err }, 'Failed to fetch line velocity alerts');
     res.status(500).json({ error: 'Failed to fetch line velocity alerts' });
   }
 });
 
 router.get('/liquidity/limits', async (req, res) => {
-  res.json([
-    { book: 'Pinnacle', type: 'SHARP_MAKER', limit: 2000 },
-    { book: 'Circa', type: 'SHARP_MAKER', limit: 1500 },
-    { book: 'FanDuel', type: 'RETAIL_TAKER', limit: 250 },
-    { book: 'DraftKings', type: 'RETAIL_TAKER', limit: 200 },
-    { book: 'BetMGM', type: 'RETAIL_TAKER', limit: 150 }
-  ]);
+  try {
+    res.json(await readRecentList('recent:liquidity_limits'));
+  } catch (err) {
+    logger.error({ err }, 'Failed to fetch liquidity limits');
+    res.status(500).json({ error: 'Failed to fetch liquidity limits' });
+  }
 });
 
 router.get('/sharp/consensus', async (req, res) => {
-  res.json([
-    { player: "A'ja Wilson", stat: "PTS", book: "Pinnacle", move: "22.5 → 23.5", direction: "UP", timestamp: Date.now() - 30000 },
-    { player: "Caitlin Clark", stat: "AST", book: "Circa", move: "8.5 → 7.5", direction: "DOWN", timestamp: Date.now() - 150000 },
-    { player: "Breanna Stewart", stat: "REB", book: "Pinnacle", move: "9.5 → 10.5", direction: "UP", timestamp: Date.now() - 600000 }
-  ]);
+  try {
+    res.json(await readRecentList('recent:sharp_consensus'));
+  } catch (err) {
+    logger.error({ err }, 'Failed to fetch sharp consensus');
+    res.status(500).json({ error: 'Failed to fetch sharp consensus' });
+  }
 });
 
 router.get('/live/rotations', async (req, res) => {
-  res.json([
-    { player: "A'ja Wilson", fouls: 3, period: "2nd Quarter", adjustment: "-4.5 min", status: "FOUL_TROUBLE" },
-    { player: "Angel Reese", fouls: 4, period: "3rd Quarter", adjustment: "-6.0 min", status: "SEVERE_FOUL_TROUBLE" },
-    { player: "Caitlin Clark", fouls: 1, period: "1st Quarter", adjustment: "0.0 min", status: "NORMAL" }
-  ]);
+  try {
+    res.json(await readRecentList('recent:rotations'));
+  } catch (err) {
+    logger.error({ err }, 'Failed to fetch live rotations');
+    res.status(500).json({ error: 'Failed to fetch live rotations' });
+  }
 });
 
 // ── Agents Health Telemetry ─────────────────────────────────────────────────

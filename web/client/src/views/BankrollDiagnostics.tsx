@@ -3,52 +3,27 @@ import { PieChart as PieChartIcon, TrendingUp, TrendingDown, Shield, Sparkles, A
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
 import { API_BASE } from '../lib/config';
 
-// Generate 30 days of mock CLV data
-const clvData = Array.from({ length: 30 }, (_, i) => {
-  const date = new Date();
-  date.setDate(date.getDate() - (29 - i));
-  return {
-    date: `${date.getMonth() + 1}/${date.getDate()}`,
-    clv: +(1 + Math.random() * 7).toFixed(2),
-  };
-});
+// Daily average CLV computed from real settled bets (clv_pct + settled_at).
+function buildClvSeries(betRows: any[]): { date: string; clv: number }[] {
+  const byDay: Record<string, number[]> = {};
+  betRows.forEach((b) => {
+    if (b.clv_pct === null || b.clv_pct === undefined || !b.settled_at) return;
+    const d = new Date(b.settled_at);
+    const key = `${d.getMonth() + 1}/${d.getDate()}`;
+    (byDay[key] = byDay[key] || []).push(b.clv_pct);
+  });
+  return Object.entries(byDay)
+    .map(([date, vals]) => ({
+      date,
+      clv: +(vals.reduce((a, b) => a + b, 0) / vals.length).toFixed(2),
+    }))
+    .slice(-30);
+}
 
-const topStats = [
-  {
-    label: 'Total Bankroll',
-    value: '$10,000',
-    icon: PieChartIcon,
-    color: 'text-white',
-    accent: 'border-cs-border/50',
-  },
-  {
-    label: "Today's P&L",
-    value: '+$340',
-    icon: TrendingUp,
-    color: 'text-emerald-400',
-    accent: 'border-emerald-500/20',
-  },
-  {
-    label: 'CLV Score',
-    value: '4.2%',
-    icon: TrendingUp,
-    color: 'text-cs-red-bright',
-    accent: 'border-cs-red/20',
-  },
-  {
-    label: 'Max Drawdown',
-    value: '-$820',
-    icon: TrendingDown,
-    color: 'text-red-400',
-    accent: 'border-red-500/20',
-  },
-];
-
-const riskMetrics = [
-  { label: 'Kelly Criterion', value: '2.4%' },
-  { label: 'Sharpe Ratio', value: '1.31' },
-  { label: 'Units Won', value: '+23.4' },
-];
+function fmtMoney(v: number): string {
+  const sign = v < 0 ? '-' : v > 0 ? '+' : '';
+  return `${sign}$${Math.abs(v).toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
+}
 
 function DrawdownGauge({ percentage = 34 }: { percentage?: number }) {
   const rotation = (percentage / 100) * 180;
@@ -88,10 +63,88 @@ function DrawdownGauge({ percentage = 34 }: { percentage?: number }) {
 }
 
 export default function BankrollDiagnostics() {
-  const isHealthy = true;
   const [hedges, setHedges] = useState<any[]>([]);
   const [limits, setLimits] = useState<any[]>([]);
   const [recentHedges, setRecentHedges] = useState<any[]>([]);
+  const [bankrollHistory, setBankrollHistory] = useState<any[]>([]);
+  const [clvSummary, setClvSummary] = useState<any | null>(null);
+  const [betStats, setBetStats] = useState<any | null>(null);
+  const [clvData, setClvData] = useState<{ date: string; clv: number }[]>([]);
+
+  // Real portfolio data: bankroll history, CLV summary, bet stats.
+  useEffect(() => {
+    const fetchPortfolio = async () => {
+      try {
+        const [histRes, clvRes, statsRes, betsRes] = await Promise.all([
+          fetch(`${API_BASE}/bankroll/history`),
+          fetch(`${API_BASE}/clv/summary`),
+          fetch(`${API_BASE}/bets/stats`),
+          fetch(`${API_BASE}/bets`),
+        ]);
+        if (histRes.ok) setBankrollHistory(await histRes.json());
+        if (clvRes.ok) setClvSummary(await clvRes.json());
+        if (statsRes.ok) setBetStats(await statsRes.json());
+        if (betsRes.ok) setClvData(buildClvSeries(await betsRes.json()));
+      } catch (err) {
+        console.error('Failed to fetch portfolio data:', err);
+      }
+    };
+    fetchPortfolio();
+    const interval = setInterval(fetchPortfolio, 15000);
+    return () => clearInterval(interval);
+  }, []);
+
+  // Derived metrics — entirely from real data; show em-dash when unknown.
+  const sortedHist = [...bankrollHistory].sort((a, b) => a.timestamp - b.timestamp);
+  const currentBalance = sortedHist.length ? sortedHist[sortedHist.length - 1].balance : null;
+  let peak = 0;
+  let maxDrawdownDollars = 0;
+  sortedHist.forEach((h) => {
+    peak = Math.max(peak, h.balance);
+    maxDrawdownDollars = Math.max(maxDrawdownDollars, peak - h.balance);
+  });
+  const currentDrawdownPct =
+    sortedHist.length && peak > 0
+      ? Math.max(0, Math.round(((peak - currentBalance!) / peak) * 100))
+      : 0;
+  const isHealthy = currentDrawdownPct < 25;
+
+  const topStats = [
+    {
+      label: 'Total Bankroll',
+      value: currentBalance !== null ? `$${currentBalance.toLocaleString(undefined, { maximumFractionDigits: 0 })}` : '—',
+      icon: PieChartIcon,
+      color: 'text-white',
+      accent: 'border-cs-border/50',
+    },
+    {
+      label: 'Net P&L',
+      value: betStats ? fmtMoney(betStats.total_profit ?? 0) : '—',
+      icon: TrendingUp,
+      color: (betStats?.total_profit ?? 0) >= 0 ? 'text-emerald-400' : 'text-red-400',
+      accent: 'border-emerald-500/20',
+    },
+    {
+      label: 'Avg CLV',
+      value: clvSummary && clvSummary.total_tracked > 0 ? `${clvSummary.avg_clv}%` : '—',
+      icon: TrendingUp,
+      color: 'text-cs-red-bright',
+      accent: 'border-cs-red/20',
+    },
+    {
+      label: 'Max Drawdown',
+      value: sortedHist.length ? fmtMoney(-maxDrawdownDollars) : '—',
+      icon: TrendingDown,
+      color: 'text-red-400',
+      accent: 'border-red-500/20',
+    },
+  ];
+
+  const riskMetrics = [
+    { label: 'Win Rate', value: betStats ? `${(betStats.win_rate ?? 0).toFixed(1)}%` : '—' },
+    { label: 'Settled Bets', value: betStats ? `${(betStats.wins ?? 0) + (betStats.losses ?? 0)}` : '—' },
+    { label: '+CLV Bets', value: clvSummary && clvSummary.total_tracked > 0 ? `${clvSummary.positive_clv_pct}%` : '—' },
+  ];
 
   useEffect(() => {
     const fetchHedges = async () => {
@@ -186,6 +239,11 @@ export default function BankrollDiagnostics() {
           </div>
 
           <div className="h-72">
+            {clvData.length === 0 ? (
+              <div className="h-full flex items-center justify-center text-cs-muted font-mono text-xs">
+                No settled bets with closing-line data yet.
+              </div>
+            ) : (
             <ResponsiveContainer width="100%" height="100%">
               <AreaChart data={clvData}>
                 <defs>
@@ -229,6 +287,7 @@ export default function BankrollDiagnostics() {
                 />
               </AreaChart>
             </ResponsiveContainer>
+            )}
           </div>
         </div>
 
@@ -241,7 +300,7 @@ export default function BankrollDiagnostics() {
 
           <div className="flex flex-col items-center">
             {/* Drawdown Gauge */}
-            <DrawdownGauge percentage={34} />
+            <DrawdownGauge percentage={currentDrawdownPct} />
 
             {/* Metric Cards */}
             <div className="grid grid-cols-3 gap-3 w-full mt-8">
