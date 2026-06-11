@@ -109,6 +109,19 @@ def get_news(limit: int = 20) -> list[dict]:
     return articles
 
 
+def get_game_officials(espn_event_id: str) -> list[str]:
+    """Real referee crew for a game (ESPN posts officials near tipoff)."""
+    data = _get(f"{BASE}/summary", params={"event": espn_event_id})
+    if not data:
+        return []
+    names = []
+    for official in data.get("gameInfo", {}).get("officials", []) or []:
+        name = official.get("displayName") or official.get("fullName")
+        if name:
+            names.append(name)
+    return names
+
+
 def get_boxscore_fouls(espn_event_id: str) -> list[dict]:
     """Per-player fouls for a live/final game: {player, team, fouls, minutes}."""
     data = _get(f"{BASE}/summary", params={"event": espn_event_id})

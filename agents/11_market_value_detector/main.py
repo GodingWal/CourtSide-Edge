@@ -13,7 +13,31 @@ class MarketIntelligence:
         self.line_history = {}
 
     def track_movement(self, odds_data):
-        velocity = odds_data.get('velocity', 0)
+        """Classify real observed movement by its velocity (units/min).
+
+        Agent 1 only publishes when a line actually changed and includes the
+        previous value, so each message is one genuine movement event. The
+        velocity is that move divided by the time since the last update we saw
+        for the same market.
+        """
+        prev = odds_data.get('prev_over_under') if odds_data.get('prev_over_under') is not None else odds_data.get('prev_line')
+        curr = odds_data.get('over_under') if odds_data.get('over_under') is not None else odds_data.get('line')
+        market = odds_data.get('player') or odds_data.get('game_id')
+        stat = odds_data.get('stat') or ('TOTAL' if odds_data.get('over_under') is not None else 'LINE')
+        ts = odds_data.get('timestamp', time.time())
+
+        if market is None or curr is None:
+            return 'noise', 0.35
+
+        key = f'{market}:{stat}'
+        last_ts = self.line_history.get(key)
+        self.line_history[key] = ts
+
+        if prev is None or last_ts is None or ts <= last_ts:
+            return 'noise', 0.35  # opening line / first sighting: no velocity yet
+
+        minutes = (ts - last_ts) / 60.0
+        velocity = abs(curr - prev) / max(minutes, 1.0 / 60)
         if velocity > 0.8:
             return 'sharp_money', 0.92
         elif velocity > 0.5:
@@ -56,7 +80,7 @@ def on_live_odds(message, stream_producer, intelligence):
         'prev_line': prev,
         'divergence_score': divergence_score,
         'confidence': confidence,
-        'sample_size': message.get('sample_size', 25),
+        'sample_size': len(intelligence.line_history),
         'decay_seconds': 300,
         'trace_id': trace_id,
         'timestamp': time.time()
@@ -85,21 +109,35 @@ def on_sharp_move(message, stream_producer):
         return  # no real movement data — nothing to act on
     
     logger.info(f"Agent 11 received sharp move trigger from Agent 19: {player} on {book} {move}")
-    
+
+    # Quantify the move from the real prev → curr values; skip if unparseable.
+    try:
+        prev_str, curr_str = (part.strip() for part in move.split('→'))
+        prev_line, curr_line = float(prev_str), float(curr_str)
+    except (ValueError, AttributeError):
+        logger.info(f"Unparseable sharp move '{move}' — skipping.")
+        return
+    if prev_line == 0:
+        return
+    confidence = message.get('confidence', 0.9)
+    divergence_score = round(abs(curr_line - prev_line) / abs(prev_line) * 100 * confidence, 2)
+    if divergence_score <= 0:
+        return
+
     trace_id = generate_trace_id()
-    
+
     alert = {
         'source': 'Agent 11',
         'type': 'market_divergence',
         'market_classification': 'sharp_money',
         'player': player,
         'stat': sharp_data.get('stat'),
-        'line': sharp_data.get('move', '').split('→')[-1].strip() if '→' in move else None,
-        'prev_line': sharp_data.get('move', '').split('→')[0].strip() if '→' in move else None,
+        'line': curr_line,
+        'prev_line': prev_line,
         'book': book,
-        'divergence_score': 8.5, # high EV due to sharp book leader movement
-        'confidence': 0.95,
-        'sample_size': 30,
+        'divergence_score': divergence_score,
+        'confidence': confidence,
+        'sample_size': 1,
         'decay_seconds': 300,
         'trace_id': trace_id,
         'timestamp': time.time(),
@@ -109,10 +147,10 @@ def on_sharp_move(message, stream_producer):
         trace_id=trace_id,
         agent_id='Agent_11',
         action='APPROVE',
-        reason=f'Sharp book {book} moved line ({move}). Lagging retail books checked.',
+        reason=f'Sharp book {book} moved line ({move}), divergence {divergence_score}%',
         input_payload=message,
         output_payload=alert,
-        confidence=0.95
+        confidence=confidence
     )
     
     logger.info(f'Publishing market intelligence for sharp retail lag (trace: {trace_id[:8]}...)')

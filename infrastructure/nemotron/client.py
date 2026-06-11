@@ -15,8 +15,8 @@ import requests
 #   NEMOTRON_API_KEY   default "local" (Ollama ignores it; set a real key if
 #                      pointing BASE_URL at a hosted endpoint instead)
 #
-# If the server is unreachable or errors, each call falls back to the
-# simulated values so agents never crash on LLM problems.
+# If the server is unreachable or errors, extraction calls return None so
+# callers skip the item instead of acting on fabricated data.
 NEMOTRON_BASE_URL = os.getenv("NEMOTRON_BASE_URL", "http://localhost:11434/v1")
 NEMOTRON_MODEL = os.getenv("NEMOTRON_MODEL", "nemotron-mini")
 NEMOTRON_API_KEY = os.getenv("NEMOTRON_API_KEY", "local")
@@ -41,24 +41,6 @@ _SENTIMENT_SCHEMA_HINT = (
     '"quote_impact": float -1 to 1}'
 )
 
-_SIMULATED_INJURY = {
-    "player_name": "Breanna Stewart",
-    "team": "NYL",
-    "injury_status": "PROBABLE",
-    "confidence_score": 0.9,
-    "source_credibility": "BEAT_WRITER",
-    "game_impact": "NONE",
-    "motivation_flag": "NONE",
-    "sentiment_score": 0.2,
-}
-
-_SIMULATED_SENTIMENT = {
-    "motivation_score": 0.8,
-    "fatigue_penalty": -0.1,
-    "quote_impact": 0.5,
-}
-
-
 class NemotronClient:
     def __init__(self):
         # Probe the local server once at startup so logs make the mode obvious.
@@ -72,7 +54,7 @@ class NemotronClient:
             self.simulated = True
             logger.warning(
                 f"No LLM server at {NEMOTRON_BASE_URL} (run deploy/scripts/setup-local-llm.sh). "
-                "Using simulated Nemotron responses."
+                "LLM extraction is disabled — calls will return None."
             )
 
     # ── low-level call ────────────────────────────────────────────────────
@@ -109,16 +91,20 @@ class NemotronClient:
     # ── public API ────────────────────────────────────────────────────────
     def ask(self, question: str, system: str, temperature: float = 0.4) -> str:
         """Free-form chat completion (e.g. Agent 12 sandbox). Raises on failure
-        when the server is up; returns a notice string when simulated."""
+        when the server is up; returns an unavailability notice otherwise."""
         if self.simulated:
-            return ("[simulated] No local LLM server is reachable, so I can't run "
-                    "live analysis right now.")
+            return ("No local LLM server is reachable, so I can't run live "
+                    "analysis right now.")
         return self._chat(system=system, user=question, temperature=temperature)
 
-    def extract_injury_json(self, text: str) -> dict:
-        """Agent 2: strict JSON injury extraction (temp=0)."""
+    def extract_injury_json(self, text: str) -> dict | None:
+        """Agent 2: strict JSON injury extraction (temp=0).
+
+        Returns None when no LLM is reachable or the call fails — callers must
+        skip the item rather than publish fabricated intel.
+        """
         if self.simulated:
-            return dict(_SIMULATED_INJURY)
+            return None
         try:
             raw = self._chat(
                 system=(
@@ -130,13 +116,17 @@ class NemotronClient:
             )
             return self._parse_json(raw)
         except Exception as e:
-            logger.error(f"Nemotron injury extraction failed, using simulated fallback: {e}")
-            return dict(_SIMULATED_INJURY)
+            logger.error(f"Nemotron injury extraction failed, skipping item: {e}")
+            return None
 
-    def analyze_sentiment(self, text: str) -> dict:
-        """Agent 9: coach/player sentiment scoring (temp=0.3)."""
+    def analyze_sentiment(self, text: str) -> dict | None:
+        """Agent 9: coach/player sentiment scoring (temp=0.3).
+
+        Returns None when no LLM is reachable or the call fails — callers must
+        skip the item rather than publish fabricated scores.
+        """
         if self.simulated:
-            return dict(_SIMULATED_SENTIMENT)
+            return None
         try:
             raw = self._chat(
                 system=(
@@ -148,5 +138,5 @@ class NemotronClient:
             )
             return self._parse_json(raw)
         except Exception as e:
-            logger.error(f"Nemotron sentiment analysis failed, using simulated fallback: {e}")
-            return dict(_SIMULATED_SENTIMENT)
+            logger.error(f"Nemotron sentiment analysis failed, skipping item: {e}")
+            return None

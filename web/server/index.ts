@@ -63,10 +63,18 @@ async function start() {
 
       const subscriber = redisClient.duplicate();
       await subscriber.connect();
+      // Every Pub/Sub channel the agents actually publish. (Approved edges and
+      // market intelligence travel on Redis Streams — see routes/market.ts —
+      // not Pub/Sub.)
       const channels = [
-        'channel_ev_alerts',
+        'channel_live_odds',
         'channel_steam_alerts',
-        'channel_approved_edges',
+        'channel_sharp_moves',
+        'channel_game_active',
+        'channel_game_context',
+        'channel_true_projections',
+        'channel_total_projections',
+        'channel_system_health',
         'channel_roster_updates',
         'channel_referee_context',
         'channel_sentiment_context'

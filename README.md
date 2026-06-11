@@ -263,7 +263,7 @@ Kelly fractions reduced across all regimes to prevent over-aggressive sizing:
 ### Pub/Sub Channel Registry (Informational)
 - `channel_live_odds`: Raw sportsbook odds updates
 - `channel_true_projections`: Player projections from Agent 3's ensemble
-- `channel_ev_alerts` / `channel_steam_alerts`: Market edge notifications
+- `channel_steam_alerts` / `channel_sharp_moves`: Market edge notifications
 - `channel_roster_updates` / `channel_referee_context` / `channel_sentiment_context`: Qualitative event streams, permanently logged to SQLite
 
 ### Redis Streams Registry (Critical Pipeline)
@@ -367,7 +367,7 @@ CREATE TABLE hedging_opportunities (
 | `GET` | `/api/bets` | All wagers |
 | `POST` | `/api/bets` | Create bet (straight or parlay) |
 | `PATCH` | `/api/bets/:id/settle` | Settle a bet |
-| `POST` | `/api/bets/upload` | Mock OCR ticket upload |
+| `POST` | `/api/bets/upload` | Bet slip OCR (returns 501 — not implemented) |
 | `POST` | `/api/parlay/generate` | Agent 13 parlay generation |
 
 ---

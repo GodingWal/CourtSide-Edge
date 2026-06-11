@@ -43,17 +43,10 @@ def analyze_drift():
         conn.close()
         
         if not rows:
-            logger.info("No settled wagers found to analyze. Writing baseline calibration.")
-            calibration = {"PTS": -0.4, "REB": 0.2, "AST": 0.1}
-            # Write global calibration factors to shared blackboard
-            context_client.write_context(
-                game_id="GLOBAL",
-                agent_id="Agent_15",
-                context_key="projection_calibration",
-                context_value=calibration,
-                confidence=0.90,
-                ttl_seconds=86400
-            )
+            # No settled outcomes yet — there is nothing real to calibrate
+            # from, so write no calibration (Agent 3 treats absence as a
+            # zero offset) rather than inventing one.
+            logger.info("No settled wagers found to analyze. Skipping calibration this cycle.")
             return
 
         # Calculate errors by stat category

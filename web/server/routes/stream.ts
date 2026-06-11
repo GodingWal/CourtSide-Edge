@@ -23,10 +23,13 @@ router.get('/stream/alerts', async (req, res) => {
     const subscriber = redisClient.duplicate();
     await subscriber.connect();
 
+    // Channels the agents actually publish (critical-path edges travel on
+    // Redis Streams, not Pub/Sub).
     const channels = [
-      'channel_ev_alerts',
       'channel_steam_alerts',
-      'channel_approved_edges',
+      'channel_sharp_moves',
+      'channel_true_projections',
+      'channel_total_projections',
       'channel_roster_updates',
       'channel_referee_context',
       'channel_sentiment_context'

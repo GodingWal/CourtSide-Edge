@@ -116,14 +116,17 @@ export default function BetTracker() {
       setUploadFile(file);
       setUploadStep('processing');
       setUploadOpen(true);
-      startOcrMock();
+      processTicketUpload();
     }
   };
 
-  const startOcrMock = async () => {
+  const processTicketUpload = async () => {
     try {
       const res = await fetch(`${API_BASE}/bets/upload`, { method: 'POST' });
-      if (!res.ok) throw new Error('OCR failed');
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        throw new Error(body?.error || 'OCR failed');
+      }
       const data = await res.json();
 
       setConfirmIsParlay(data.is_parlay);
@@ -144,8 +147,8 @@ export default function BetTracker() {
       setUploadStep('confirm');
     } catch (err) {
       toast({
-        title: 'OCR Capture Failure',
-        description: 'Failed to extract text from the screenshot.',
+        title: 'Ticket Upload Unavailable',
+        description: err instanceof Error ? err.message : 'Failed to process the ticket.',
         variant: 'danger'
       });
       setUploadOpen(false);
@@ -216,13 +219,16 @@ export default function BetTracker() {
 
     try {
       const res = await fetch(`${API_BASE}/parlay/generate`, { method: 'POST' });
-      if (!res.ok) throw new Error('Generation failed');
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        throw new Error(body?.error || 'Generation failed');
+      }
       const data = await res.json();
       setGeneratedParlay(data);
     } catch (err) {
       toast({
-        title: 'Matchup Model Timeout',
-        description: 'Agent 13 failed to retrieve positive EV edges.',
+        title: 'Parlay Generation Unavailable',
+        description: err instanceof Error ? err.message : 'Agent 13 failed to build a parlay.',
         variant: 'danger'
       });
       setGeneratorOpen(false);

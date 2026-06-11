@@ -3,7 +3,6 @@ import { db } from '../db';
 import { bets } from '../schema';
 import { desc, eq } from 'drizzle-orm';
 import { logger } from '../logger';
-import { config } from '../config';
 import { writeLimiter, validateRequest } from '../middleware';
 import { createBetSchema, settleBetSchema, clvBetSchema } from '../schemas.validation';
 
@@ -164,17 +163,24 @@ router.get('/bets/stats', async (req, res) => {
     let total_profit = 0;
     let total_edge = 0;
     let edge_count = 0;
+    let total_clv = 0;
+    let clv_count = 0;
     allBets.forEach(b => {
       if (b.profit_loss !== null) total_profit += b.profit_loss;
       if (b.edge_pct !== null) {
         total_edge += b.edge_pct;
         edge_count++;
       }
+      if (b.clv_pct !== null) {
+        total_clv += b.clv_pct;
+        clv_count++;
+      }
     });
 
     const settled_bets = wins + losses;
     const win_rate = settled_bets > 0 ? (wins / settled_bets) * 100 : 0;
     const avg_edge = edge_count > 0 ? (total_edge / edge_count) / 100 : 0;
+    const avg_clv = clv_count > 0 ? (total_clv / clv_count) / 100 : 0;
 
     res.json({
       total_bets,
@@ -185,7 +191,7 @@ router.get('/bets/stats', async (req, res) => {
       total_profit,
       win_rate,
       avg_edge,
-      avg_clv: 0.042
+      avg_clv
     });
   } catch (err) {
     res.status(500).json({ error: 'Failed to calculate stats' });
@@ -193,62 +199,9 @@ router.get('/bets/stats', async (req, res) => {
 });
 
 // ── Bet Upload Endpoint ─────────────────────────────────────────────────────
+// Bet slip OCR is not implemented; refuse rather than fabricating a bet.
 router.post('/bets/upload', writeLimiter, async (req, res) => {
-  try {
-    // Real OCR is not implemented. In production this endpoint refuses rather
-    // than fabricating a random bet (the dev-only simulation below remains for
-    // exercising the upload UI locally).
-    if (config.NODE_ENV === 'production') {
-      return res.status(501).json({ error: 'Bet slip OCR is not available yet. Enter the bet manually.' });
-    }
-
-    // Simulate OCR processing latency
-    await new Promise(resolve => setTimeout(resolve, 1500));
-
-    // Randomly return either a single bet or a parlay to showcase both capabilities
-    const isParlay = Math.random() > 0.4;
-
-    if (isParlay) {
-      res.json({
-        is_parlay: 1,
-        book_odds: 264,
-        stake: 100,
-        legs: [
-          {
-            player: "A'ja Wilson",
-            stat: "PTS",
-            line: 23.5,
-            over_under: "OVER",
-            book_odds: -110,
-            opposing_team: "NYL"
-          },
-          {
-            player: "Breanna Stewart",
-            stat: "REB",
-            line: 9.5,
-            over_under: "OVER",
-            book_odds: -115,
-            opposing_team: "LVA"
-          }
-        ],
-        notes: "Uploaded Parlay Ticket"
-      });
-    } else {
-      res.json({
-        is_parlay: 0,
-        player: "Caitlin Clark",
-        stat: "AST",
-        line: 8.5,
-        over_under: "OVER",
-        book_odds: 110,
-        stake: 50,
-        opposing_team: "CON",
-        notes: "Uploaded Single Ticket"
-      });
-    }
-  } catch (err) {
-    res.status(500).json({ error: 'Failed to process ticket upload' });
-  }
+  res.status(501).json({ error: 'Bet slip OCR is not available yet. Enter the bet manually.' });
 });
 
 // ── CLV Tracking Endpoints ──────────────────────────────────────────────────

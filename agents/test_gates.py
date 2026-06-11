@@ -45,8 +45,7 @@ class TestAgent4ExecutionGate(unittest.TestCase):
     def setUp(self):
         agent4.upstream_health = {
             "channel_live_odds": "OK",
-            "channel_true_projections": "OK",
-            "channel_ev_alerts": "OK"
+            "channel_true_projections": "OK"
         }
         agent4.active_games = {
             "LVA_NYL": "LIVE"

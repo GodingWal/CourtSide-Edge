@@ -1,69 +1,126 @@
-import numpy as np
-from scipy.stats import poisson, nbinom, norm
-import xgboost as xgb
+"""Data-driven projection core for Agent 3.
+
+Every layer reads real history from the SQLite database that Agent 0
+(Historical ETL) fills with ESPN box scores. If a player has too little
+history to support a projection, run_projection returns None — it never
+fabricates numbers.
+"""
 import logging
+import os
+
+import numpy as np
+
+from shared.base_agent import db_connect
 
 logger = logging.getLogger("EnsembleMathCore")
 
+DB_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../data/hoopstats_wnba.db"))
+
+# Odds API / dashboard stat codes -> player_box_scores columns
+STAT_COLUMNS = {
+    "PTS": "points",
+    "REB": "rebounds",
+    "AST": "assists",
+    "3PM": "threes_made",
+    "STL": "steals",
+    "BLK": "blocks",
+}
+
+MIN_GAMES = 3
+HISTORY_GAMES = 15
+N_SIMS = 5000
+
+
 class EnsembleMathCore:
-    def __init__(self):
-        logger.info("Initializing 5-Layer Ensemble Stack (layers 1-4 + XGBoost meta-model)...")
-        # Mocking the loaded XGBoost meta-model
-        self.meta_model = xgb.XGBRegressor()
-        self.is_cold_start = True
+    def __init__(self, db_path: str = DB_PATH):
+        self.db_path = db_path
 
-    def _layer1_bayesian_minutes(self, player_id):
-        # Hierarchical regression: Normal likelihood, priors over season/recent/blowout factors.
-        # Outputs full minutes distribution
-        return np.random.normal(loc=32.0, scale=3.5, size=1000)
+    def _query(self, sql, params=()):
+        if not os.path.exists(self.db_path):
+            return []
+        conn = db_connect(self.db_path)
+        try:
+            return conn.execute(sql, params).fetchall()
+        finally:
+            conn.close()
 
-    def _layer2_usage_redistribution(self, team_id, missing_players):
-        # Apply historical redistribution matrix with Bayesian shrinkage
-        return {"usage_multiplier": 1.15} # Mock: usage increases if star is out
+    def _player_history(self, player_name: str, stat_col: str):
+        """Recent (minutes, stat) rows for a player, newest first."""
+        rows = self._query(
+            f"""SELECT minutes, {stat_col} FROM player_box_scores
+                WHERE player_name = ? COLLATE NOCASE
+                  AND minutes IS NOT NULL AND {stat_col} IS NOT NULL
+                ORDER BY date DESC LIMIT ?""",
+            (player_name, HISTORY_GAMES),
+        )
+        return [(float(m), float(v)) for m, v in rows if m and m > 0]
 
-    def _layer3_regression_game_total(self, game_context):
-        # Linear regression model for projected score total
-        # projected_total = f(team_off, team_def, pace, injury_adj, ref_bias)
-        return 165.5
+    def _league_avg_total(self):
+        """League-average combined game score from stored box scores."""
+        rows = self._query(
+            "SELECT AVG(total) FROM (SELECT game_id, SUM(points) AS total "
+            "FROM player_box_scores GROUP BY game_id)"
+        )
+        if rows and rows[0][0]:
+            return float(rows[0][0])
+        return None
 
-    def _layer4_poisson_distributions(self, stat, rate, minutes_dist):
-        # Per-stat Poisson (assists, steals, blocks, 3PM) and NegativeBinomial (rebounds)
-        if stat in ['assists', 'steals', 'blocks', '3PM']:
-            return poisson.rvs(mu=rate * (minutes_dist.mean() / 40.0), size=1000)
-        elif stat == 'rebounds':
-            return nbinom.rvs(n=5, p=0.5, size=1000)
-        else: # points
-            return norm.rvs(loc=rate * (minutes_dist.mean() / 40.0), scale=4.0, size=1000)
+    def run_projection(self, player_name: str, stat: str, game_context: dict):
+        """Project one stat for one player from their real game logs.
 
-    def _layer6_xgboost_stacking(self, layer_outputs):
-        # Trained on historical outputs of the preceding layers vs actual outcomes.
-        if self.is_cold_start:
-            # Fallback to weighted average if XGBoost isn't trained
-            return sum(layer_outputs) / len(layer_outputs)
-        # return self.meta_model.predict(layer_outputs)
-        return layer_outputs[0] * 1.05 # Mocked prediction
+        Layers:
+          1. Minutes distribution — empirical mean/std of recent minutes.
+          2. Production rate — empirical per-minute rates of the target stat.
+          3. Pace adjustment — market total vs. league-average total (both real).
+          4. Monte Carlo — sampled minutes × sampled per-minute rates.
 
-    def run_projection(self, player_id, team_id, game_context):
-        logger.info(f"Running ensemble for player {player_id}...")
-        
-        # 1. Minutes
-        minutes_dist = self._layer1_bayesian_minutes(player_id)
-        
-        # 2. Usage
-        usage_adj = self._layer2_usage_redistribution(team_id, game_context.get('missing_players', []))
-        
-        # 3. Game Total Baseline
-        self._layer3_regression_game_total(game_context)
-        
-        # 4. Stat Distributions
-        points_dist = self._layer4_poisson_distributions('points', 25.0 * usage_adj['usage_multiplier'], minutes_dist)
-        
-        # 5. Meta-model final weighting
-        final_points_projection = self._layer6_xgboost_stacking([points_dist.mean()])
-        
+        Returns None when the player lacks history (no fabricated output).
+        """
+        stat_col = STAT_COLUMNS.get(stat)
+        if stat_col is None:
+            logger.info(f"Unsupported stat '{stat}' — skipping projection.")
+            return None
+
+        history = self._player_history(player_name, stat_col)
+        if len(history) < MIN_GAMES:
+            logger.info(
+                f"Insufficient history for {player_name} ({len(history)} games < {MIN_GAMES}) — skipping."
+            )
+            return None
+
+        minutes = np.array([m for m, _ in history])
+        per_min_rates = np.array([v / m for m, v in history])
+
+        rng = np.random.default_rng()
+
+        # Layer 1: minutes distribution from the player's own recent games.
+        minutes_sd = max(float(minutes.std(ddof=1)) if len(minutes) > 1 else 0.0, 1.0)
+        minutes_dist = np.clip(
+            rng.normal(loc=float(minutes.mean()), scale=minutes_sd, size=N_SIMS), 0, 40
+        )
+
+        # Layer 2: per-minute production sampled from observed rates (bootstrap).
+        rate_dist = rng.choice(per_min_rates, size=N_SIMS, replace=True)
+
+        # Layer 3: pace adjustment from the real market total vs. real league average.
+        pace_factor = 1.0
+        market_total = game_context.get("market_total") or game_context.get("over_under")
+        league_avg = self._league_avg_total()
+        if market_total and league_avg:
+            pace_factor = float(np.clip(market_total / league_avg, 0.85, 1.15))
+
+        # Layer 4: Monte Carlo stat distribution.
+        stat_dist = minutes_dist * rate_dist * pace_factor
+
         return {
-            "player_id": player_id,
-            "projected_minutes": float(minutes_dist.mean()),
-            "projected_points": float(final_points_projection),
-            "confidence_interval_95": [float(np.percentile(points_dist, 2.5)), float(np.percentile(points_dist, 97.5))]
+            "player": player_name,
+            "stat": stat,
+            "projected_minutes": round(float(minutes_dist.mean()), 2),
+            "projected_value": round(float(stat_dist.mean()), 2),
+            "confidence_interval_95": [
+                round(float(np.percentile(stat_dist, 2.5)), 2),
+                round(float(np.percentile(stat_dist, 97.5)), 2),
+            ],
+            "pace_factor": round(pace_factor, 3),
+            "games_sampled": len(history),
         }

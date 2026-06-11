@@ -21,8 +21,7 @@ MIN_CONFIDENCE = 0.5  # Minimum confidence gate
 # Track upstream data health status (default to "OK" to allow startup grace period)
 upstream_health = {
     "channel_live_odds": "OK",
-    "channel_true_projections": "OK",
-    "channel_ev_alerts": "OK"
+    "channel_true_projections": "OK"
 }
 
 # Track active games by their game ID
