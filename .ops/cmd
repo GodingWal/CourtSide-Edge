@@ -1,2 +1,2 @@
 vast
-cd ~/CourtSide-Edge && git fetch --all --prune -q && git reset --hard origin/main -q && bash deploy/scripts/deploy-agents.sh && sleep 5 && bash deploy/scripts/run-agents-native.sh status
+cd ~/CourtSide-Edge && git fetch --all --prune -q && git reset --hard origin/main -q && grep -q '^ODDS_API_KEY=' deploy/env/agents.env && sed -i 's/^ODDS_API_KEY=.*/ODDS_API_KEY=3133d70dcd1345d35ca462c4370dde5d/' deploy/env/agents.env || printf 'ODDS_API_KEY=3133d70dcd1345d35ca462c4370dde5d\nODDS_POLL_SECONDS=7200\nODDS_MAX_PROP_EVENTS=2\n' >> deploy/env/agents.env; bash deploy/scripts/run-agents-native.sh restart >/dev/null && sleep 30 && bash deploy/scripts/run-agents-native.sh status | tail -2 && echo "=== agent1 log (odds api) ===" && tail -15 logs/1_market_scraper.log
