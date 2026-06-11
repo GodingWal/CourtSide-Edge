@@ -125,10 +125,14 @@ class TestAgent4ExecutionGate(unittest.TestCase):
 class TestAgent13ParlayWindow(unittest.TestCase):
     def setUp(self):
         agent13.active_games = {}
-        agent13.get_active_players = MagicMock(return_value=[
-            {"name": "A'ja Wilson", "team": "LVA"},
-            {"name": "Breanna Stewart", "team": "NYL"}
-        ])
+        # Live player props cached by Agent 1 (The Odds API feed) in Redis.
+        props = {
+            "A'ja Wilson|PTS": '{"player": "A\'ja Wilson", "stat": "PTS", "line": 22.5, "odds": -110, "book": "FanDuel", "game": "LVA @ NYL"}',
+            "Breanna Stewart|REB": '{"player": "Breanna Stewart", "stat": "REB", "line": 9.5, "odds": -115, "book": "DraftKings", "game": "LVA @ NYL"}',
+        }
+        pubsub_instance = MagicMock()
+        pubsub_instance.client.hgetall.return_value = props
+        agent13.RedisPubSub = MagicMock(return_value=pubsub_instance)
 
     def test_parlay_synthesis_succeeds_in_window(self):
         now = time.time()
