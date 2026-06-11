@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { randomUUID } from 'crypto';
-import { db } from '../db';
+import { db, sqlite } from '../db';
 import { bankroll_history, bets, agent_context_store, hedging_opportunities, qualitative_events } from '../schema';
 import { desc, eq } from 'drizzle-orm';
 import { logger } from '../logger';
@@ -198,6 +198,20 @@ router.get('/live/rotations', async (req, res) => {
   } catch (err) {
     logger.error({ err }, 'Failed to fetch live rotations');
     res.status(500).json({ error: 'Failed to fetch live rotations' });
+  }
+});
+
+// Historical rolling baselines (real ETL data from Agent 0).
+router.get('/baselines', async (req, res) => {
+  try {
+    const rows = sqlite.prepare(
+      `SELECT player_id, player_name, last_updated, l5_minutes, l5_usage_rate, l10_usage_rate
+       FROM rolling_baselines ORDER BY l5_usage_rate DESC LIMIT 100`
+    ).all();
+    res.json(rows);
+  } catch (err) {
+    // Table may not exist until Agent 0 completes its first backfill.
+    res.json([]);
   }
 });
 
