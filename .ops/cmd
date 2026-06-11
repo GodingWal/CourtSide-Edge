@@ -1,2 +1,2 @@
 vast
-cd ~/CourtSide-Edge && git fetch --all --prune -q && git reset --hard origin/main -q && bash deploy/scripts/deploy-agents.sh && sleep 5 && bash deploy/scripts/run-agents-native.sh status
+cd ~/CourtSide-Edge && git fetch --all --prune -q && git reset --hard origin/main -q && bash deploy/scripts/run-agents-native.sh restart && sleep 25 && bash deploy/scripts/run-agents-native.sh status | tail -3 && echo "=== agent1 (real lines) ===" && tail -6 logs/1_market_scraper.log && echo "=== agent23 (real schedule) ===" && tail -4 logs/23_game_session_manager.log && echo "=== agent2 (real news) ===" && tail -6 logs/2_news_sentinel.log && echo "=== agent21 (rotations) ===" && tail -3 logs/21_rotation_tracker.log
