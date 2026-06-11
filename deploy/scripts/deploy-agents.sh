@@ -19,6 +19,13 @@ if grep -qE '^(API_KEY|REDIS_PASSWORD)=CHANGE_ME' "$ENV_FILE"; then
   exit 1
 fi
 
+# If the Docker daemon isn't usable (e.g. vast.ai instances are unprivileged
+# containers where dockerd cannot start), run the agents natively instead.
+if ! docker info >/dev/null 2>&1; then
+  echo "→ Docker daemon unavailable; falling back to native runner."
+  exec bash deploy/scripts/run-agents-native.sh restart
+fi
+
 # Sanity-check Redis reachability before bringing up 18 agents.
 REDIS_HOST="$(grep -E '^REDIS_HOST=' "$ENV_FILE" | cut -d= -f2-)"
 REDIS_PORT="$(grep -E '^REDIS_PORT=' "$ENV_FILE" | cut -d= -f2-)"

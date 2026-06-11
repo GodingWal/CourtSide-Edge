@@ -33,9 +33,11 @@ server {
 }
 
 server {
-    listen 443 ssl;
-    listen [::]:443 ssl;
-    http2 on;
+    # Old-style http2 flag for compatibility with nginx < 1.25.1 (the
+    # standalone "http2 on;" directive fails nginx -t on older versions,
+    # which silently blocks every config reload).
+    listen 443 ssl http2;
+    listen [::]:443 ssl http2;
     server_name courtside-edge.com www.courtside-edge.com;
 
     ssl_certificate     /etc/letsencrypt/live/courtside-edge.com/fullchain.pem;
