@@ -1,2 +1,7 @@
 vast
-cd ~/CourtSide-Edge && git fetch --all --prune -q && git reset --hard origin/main -q && bash deploy/scripts/deploy-agents.sh && sleep 5 && bash deploy/scripts/run-agents-native.sh status
+cd ~/CourtSide-Edge && git fetch --all --prune -q && git reset --hard origin/main -q && sed -i 's/^ODDS_POLL_SECONDS=.*/ODDS_POLL_SECONDS=1200/' deploy/env/agents.env && grep -q ODDS_POLL_SECONDS deploy/env/agents.env || echo 'ODDS_POLL_SECONDS=1200' >> deploy/env/agents.env; bash deploy/scripts/run-agents-native.sh restart >/dev/null && sleep 40 && bash deploy/scripts/run-agents-native.sh status | tail -3 && echo "=== agent12 ===" && tail -4 logs/12_alpha_sandbox.log && echo "=== agent1 odds api ===" && grep -E "Odds API|quota" logs/1_market_scraper.log | tail -5 && echo "=== heartbeats in redis ===" && .venv-agents/bin/python -c "
+import os, redis
+r = redis.Redis(host=os.getenv('REDIS_HOST','localhost'), port=6379, password=open('deploy/env/agents.env').read().split('REDIS_PASSWORD=')[1].splitlines()[0])
+ks = sorted(k.decode() for k in r.keys('heartbeat:agent:*'))
+print(len(ks), 'heartbeats:', ', '.join(k.split(':')[-1] for k in ks))
+"
