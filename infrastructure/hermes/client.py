@@ -20,7 +20,9 @@ import requests
 HERMES_BASE_URL = os.getenv("HERMES_BASE_URL", "http://localhost:11434/v1")
 HERMES_MODEL = os.getenv("HERMES_MODEL", "hermes3")
 HERMES_API_KEY = os.getenv("HERMES_API_KEY", "local")
-REQUEST_TIMEOUT = 60
+# Reply budget for free-form analysis. JSON extraction calls stay small.
+HERMES_MAX_TOKENS = int(os.getenv("HERMES_MAX_TOKENS", "1024"))
+REQUEST_TIMEOUT = int(os.getenv("HERMES_TIMEOUT_SECONDS", "120"))
 
 logger = logging.getLogger("HermesClient")
 
@@ -59,7 +61,8 @@ class HermesClient:
             )
 
     # ── low-level call ────────────────────────────────────────────────────
-    def _chat(self, system: str, user: str, temperature: float) -> str:
+    def _chat(self, system: str, user: str, temperature: float,
+              max_tokens: int | None = None) -> str:
         """One OpenAI-compatible chat completion against the local server."""
         resp = requests.post(
             f"{HERMES_BASE_URL}/chat/completions",
@@ -74,7 +77,7 @@ class HermesClient:
                     {"role": "user", "content": user},
                 ],
                 "temperature": temperature,
-                "max_tokens": 512,
+                "max_tokens": max_tokens or HERMES_MAX_TOKENS,
             },
             timeout=REQUEST_TIMEOUT,
         )
@@ -90,13 +93,15 @@ class HermesClient:
         return json.loads(match.group(0))
 
     # ── public API ────────────────────────────────────────────────────────
-    def ask(self, question: str, system: str, temperature: float = 0.4) -> str:
+    def ask(self, question: str, system: str, temperature: float = 0.4,
+            max_tokens: int | None = None) -> str:
         """Free-form chat completion (e.g. Agent 12 sandbox). Raises on failure
         when the server is up; returns an unavailability notice otherwise."""
         if self.simulated:
             return ("No local LLM server is reachable, so I can't run live "
                     "analysis right now.")
-        return self._chat(system=system, user=question, temperature=temperature)
+        return self._chat(system=system, user=question, temperature=temperature,
+                          max_tokens=max_tokens)
 
     def extract_injury_json(self, text: str) -> dict | None:
         """Agent 2: strict JSON injury extraction (temp=0).

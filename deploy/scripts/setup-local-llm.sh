@@ -20,6 +20,9 @@ MODEL="${HERMES_MODEL:-hermes3}"
 LOG_DIR="logs"
 PID_FILE="run/ollama.pid"
 OLLAMA_HOST="${OLLAMA_HOST:-127.0.0.1:11434}"
+# Ollama's default context window (2-4k tokens) silently truncates the live
+# market context the agents prepend to prompts; give the model room to read it.
+OLLAMA_CONTEXT_LENGTH="${OLLAMA_CONTEXT_LENGTH:-8192}"
 
 is_up() { curl -fsS "http://${OLLAMA_HOST}/api/tags" >/dev/null 2>&1; }
 
@@ -39,8 +42,9 @@ start() {
   if is_up; then
     echo "✓ ollama server already running."
   else
-    echo "→ Starting ollama server…"
-    OLLAMA_HOST="$OLLAMA_HOST" nohup ollama serve >> "$LOG_DIR/ollama.log" 2>&1 &
+    echo "→ Starting ollama server (context window: ${OLLAMA_CONTEXT_LENGTH})…"
+    OLLAMA_HOST="$OLLAMA_HOST" OLLAMA_CONTEXT_LENGTH="$OLLAMA_CONTEXT_LENGTH" \
+      nohup ollama serve >> "$LOG_DIR/ollama.log" 2>&1 &
     echo $! > "$PID_FILE"
     for i in $(seq 1 30); do is_up && break; sleep 1; done
     is_up || { echo "✗ ollama did not come up; see $LOG_DIR/ollama.log" >&2; exit 1; }

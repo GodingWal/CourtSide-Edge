@@ -81,15 +81,25 @@ def generate_hermes_summary(legs, platform, multiplier):
     factual = f"{len(legs)}-pick power play on {platform}: {picks}; pays {multiplier}x."
     if hermes.simulated:
         return factual
+    # Ground the model in the real numbers behind each pick.
+    detail_lines = []
+    for leg in legs:
+        detail = f"- {leg['player']} {leg['over_under']} {leg['line']} {leg['stat']}"
+        if leg.get("projected_value") is not None:
+            detail += f" (model projects {leg['projected_value']}, edge {leg.get('edge_pct', 0)}%)"
+        detail_lines.append(detail)
     try:
         return hermes.ask(
             question=(
                 f"Entry: {factual}\n"
-                "Write a 2-3 sentence rationale for this WNBA pick'em entry. Base it ONLY on the "
-                "lines given — do not invent injuries, matchup stats, or scheme details."
+                "Per-pick model data:\n" + "\n".join(detail_lines) + "\n"
+                "Write a 2-4 sentence rationale for this WNBA pick'em entry. Cite the projection "
+                "edges given above where they exist. Base it ONLY on the data given — do not "
+                "invent injuries, matchup stats, or scheme details."
             ),
             system="You are the parlay analyst of a WNBA betting terminal. Be concise and concrete.",
             temperature=0.4,
+            max_tokens=512,
         )
     except Exception as e:
         logger.error(f"Hermes summary failed, returning factual description: {e}")

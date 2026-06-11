@@ -14,6 +14,7 @@ import schedule
 from database import get_connection, init_db
 from shared.base_agent import setup_logging
 from shared.espn_client import get_boxscore_player_stats, get_scoreboard
+from stats_publisher import publish_stats_snapshot
 
 logger = setup_logging("Agent0_ETL")
 
@@ -173,6 +174,10 @@ def nightly_etl_job():
     except Exception as e:
         logger.error(f"Nightly ingest failed: {e}")
     recompute_baselines()
+    try:
+        publish_stats_snapshot()
+    except Exception as e:
+        logger.error(f"Stats snapshot publish failed: {e}")
     logger.info("Nightly ETL job completed.")
 
 
@@ -183,6 +188,13 @@ def main():
 
     logger.info("Running historical backfill (resumable — skips ingested dates)…")
     backfill()
+
+    # Publish the Stats Center snapshot from whatever history exists (also
+    # refreshed by the nightly job after new games are ingested).
+    try:
+        publish_stats_snapshot()
+    except Exception as e:
+        logger.error(f"Stats snapshot publish failed: {e}")
 
     # Nightly refresh at 09:00 UTC (4:00 AM CST)
     schedule.every().day.at("09:00").do(nightly_etl_job)

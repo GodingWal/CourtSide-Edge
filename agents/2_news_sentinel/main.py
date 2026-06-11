@@ -1,3 +1,4 @@
+import json
 import time
 
 from shared.base_agent import setup_logging
@@ -27,7 +28,16 @@ def publish_injury_report(pubsub, last_statuses: dict):
     event log isn't flooded with repeats every poll cycle.
     """
     published = 0
-    for row in get_injuries():
+    report = get_injuries()
+
+    # Cache the full current report for other agents (Agent 12's chat context).
+    if report:
+        try:
+            pubsub.client.set("injuries:report", json.dumps(report), ex=3600)
+        except Exception as e:
+            logger.warning(f"Failed to cache injury report: {e}")
+
+    for row in report:
         status = STATUS_MAP.get(row["status"].upper(), "QUESTIONABLE")
         key = row["player"]
         if last_statuses.get(key) == status:
