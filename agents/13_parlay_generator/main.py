@@ -3,7 +3,7 @@ import os
 import random
 import time
 import threading
-from fastapi import FastAPI, HTTPException
+from fastapi import Body, FastAPI, HTTPException
 import uvicorn
 from shared.redis_client import RedisPubSub
 from infrastructure.hermes.client import HermesClient
@@ -70,15 +70,15 @@ def to_american(decimal):
         return int(round(-100.0 / (decimal - 1.0)))
 
 
-def generate_hermes_summary(leg1, leg2, platform, multiplier):
+def generate_hermes_summary(legs, platform, multiplier):
     """Rationale for the entry. Uses the real local Hermes model when
     available; otherwise a purely factual description of the picks — never
     fabricated matchup analysis."""
-    factual = (
-        f"2-pick power play on {platform}: {leg1['player']} OVER {leg1['line']} {leg1['stat']} "
-        f"({leg1['opposing_team']}) + {leg2['player']} OVER {leg2['line']} {leg2['stat']} "
-        f"({leg2['opposing_team']}); pays {multiplier}x."
+    picks = " + ".join(
+        f"{leg['player']} {leg['over_under']} {leg['line']} {leg['stat']} ({leg['opposing_team']})"
+        for leg in legs
     )
+    factual = f"{len(legs)}-pick power play on {platform}: {picks}; pays {multiplier}x."
     if hermes.simulated:
         return factual
     try:
@@ -105,8 +105,41 @@ def health():
     }
 
 
+# Published pick'em payout multipliers per platform, by number of picks
+# (power-play style: every pick must hit). Update when the platforms change
+# their payout tables.
+PICKEM_MULTIPLIERS = {
+    "PRIZEPICKS": {2: 3.0, 3: 5.0, 4: 10.0, 5: 20.0, 6: 37.5},
+    "UNDERDOG": {2: 3.0, 3: 6.0, 4: 10.0, 5: 20.0, 6: 35.0},
+}
+DEFAULT_MULTIPLIERS = {2: 3.0, 3: 6.0, 4: 10.0, 5: 20.0, 6: 35.0}
+MIN_LEGS, MAX_LEGS = 2, 6
+
+
+def payout_multiplier(platform: str, num_legs: int) -> float:
+    normalized = (platform or "").upper().replace(" ", "")
+    table = next(
+        (t for key, t in PICKEM_MULTIPLIERS.items() if normalized.startswith(key)),
+        DEFAULT_MULTIPLIERS,
+    )
+    return table.get(num_legs, DEFAULT_MULTIPLIERS[num_legs])
+
+
 @app.post("/api/parlay/generate")
-def generate_parlay():
+def generate_parlay(payload: dict | None = Body(default=None)):
+    # ── Requested entry size (2-6 picks) ──────────────────────────────────────
+    if not isinstance(payload, dict):
+        payload = {}
+    try:
+        num_legs = int(payload.get("legs", 2))
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="legs must be an integer between 2 and 6.")
+    if not MIN_LEGS <= num_legs <= MAX_LEGS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"legs must be between {MIN_LEGS} and {MAX_LEGS} (got {num_legs})."
+        )
+
     # ── Pregame Window Gate Check ─────────────────────────────────────────────
     now = time.time()
     window_sec = PREGAME_WINDOW_MIN * 60
@@ -134,10 +167,12 @@ def generate_parlay():
     try:
         pubsub = RedisPubSub()
         raw_props = pubsub.client.hgetall("props:lines")
+        raw_projections = pubsub.client.hgetall("props:projections")
         pubsub.close()
     except Exception as e:
         logger.error(f"Failed to read live props from Redis: {e}")
         raw_props = {}
+        raw_projections = {}
 
     props = []
     for raw in raw_props.values():
@@ -152,51 +187,80 @@ def generate_parlay():
             by_player.setdefault(prop["player"], prop)
     candidates = list(by_player.values())
 
-    if len(candidates) < 2:
+    if len(candidates) < num_legs:
         raise HTTPException(
             status_code=503,
-            detail="No live player props available to build a parlay from (Odds API feed empty). Try closer to game time."
+            detail=(
+                f"Only {len(candidates)} live player props cached (need {num_legs}). "
+                "The Odds API feed may be empty — try closer to game time or a smaller entry."
+            )
         )
 
-    # Prefer building the entry on a single pick'em platform (PrizePicks or
-    # Underdog) since entries can't mix platforms.
+    # Entries can't mix platforms — build on the single pick'em platform
+    # (PrizePicks or Underdog) with the deepest prop pool for this size.
     by_book = {}
     for c in candidates:
         by_book.setdefault(c.get("book") or "DFS", []).append(c)
-    platform, platform_props = max(by_book.items(), key=lambda kv: len(kv[1]))
-    pool = platform_props if len(platform_props) >= 2 else candidates
-    chosen = random.sample(pool, 2)
+    platform, pool = max(by_book.items(), key=lambda kv: len(kv[1]))
+    if len(pool) < num_legs:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                f"Largest single-platform pool ({platform}) has only {len(pool)} props; "
+                f"a {num_legs}-pick entry can't mix platforms. Try a smaller entry."
+            )
+        )
 
-    # Pick'em payout multipliers (2-pick power play ≈ 3x on both platforms).
-    PICKEM_MULTIPLIERS = {2: 3.0, 3: 6.0, 4: 10.0}
-    multiplier = PICKEM_MULTIPLIERS[2]
+    # Rank the pool by real edge where Agent 3 has cached a projection for the
+    # market; props without a projection rank last (zero assumed edge).
+    projections = {}
+    for k, raw in raw_projections.items():
+        try:
+            projections[k] = json.loads(raw)
+        except (TypeError, ValueError):
+            continue
+
+    def edge_for(prop):
+        proj = projections.get(f"{prop['player']}|{prop['stat']}")
+        if not proj or not prop.get("line"):
+            return None
+        return round((proj["projected_value"] - prop["line"]) / prop["line"] * 100, 2)
+
+    ranked = sorted(pool, key=lambda p: abs(edge_for(p) or 0.0), reverse=True)
+    have_projections = any(edge_for(p) is not None for p in pool)
+    chosen = ranked[:num_legs] if have_projections else random.sample(pool, num_legs)
+
+    multiplier = payout_multiplier(platform, num_legs)
 
     def to_leg(prop):
+        edge = edge_for(prop)
+        proj = projections.get(f"{prop['player']}|{prop['stat']}")
         return {
             "player": prop["player"],
             "team": prop.get("team", ""),
             "stat": prop["stat"],
             "line": prop["line"],
-            "over_under": "OVER",
+            # Side follows the projection when one exists; OVER otherwise.
+            "over_under": "UNDER" if edge is not None and edge < 0 else "OVER",
             # Pick'em has no per-leg juice; represent as even-odds picks.
             "book_odds": 100,
             "true_odds": 0.5,
-            "edge_pct": 0.0,
+            "edge_pct": abs(edge) if edge is not None else 0.0,
+            "projected_value": proj["projected_value"] if proj else None,
             "opposing_team": prop.get("game", ""),
             "book": prop.get("book"),
         }
 
-    leg1, leg2 = to_leg(chosen[0]), to_leg(chosen[1])
-    
+    legs = [to_leg(prop) for prop in chosen]
+
     # Pick'em entry payout: fixed multiplier (e.g. 3x for a 2-pick power play),
     # expressed also as equivalent American odds for the UI.
-    combined_dec = multiplier
-    parlay_odds = to_american(combined_dec)
-    
-    summary = generate_hermes_summary(leg1, leg2, platform, multiplier)
-    
+    parlay_odds = to_american(multiplier)
+
+    summary = generate_hermes_summary(legs, platform, multiplier)
+
     return {
-        "legs": [leg1, leg2],
+        "legs": legs,
         "platform": platform,
         "payout_multiplier": multiplier,
         "parlay_odds": parlay_odds,

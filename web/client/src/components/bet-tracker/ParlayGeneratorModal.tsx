@@ -5,19 +5,27 @@ import { formatOdds } from './types';
 interface ParlayGeneratorModalProps {
   generating: boolean;
   generatedParlay: GeneratedParlay | null;
+  generatorLegs: number;
+  setGeneratorLegs: (v: number) => void;
   generatorStake: string;
   setGeneratorStake: (v: string) => void;
   submittingWager: boolean;
+  onGenerate: () => void;
   onLogParlay: () => void;
   onClose: () => void;
 }
 
+const LEG_OPTIONS = [2, 3, 4, 5, 6];
+
 export default function ParlayGeneratorModal({
   generating,
   generatedParlay,
+  generatorLegs,
+  setGeneratorLegs,
   generatorStake,
   setGeneratorStake,
   submittingWager,
+  onGenerate,
   onLogParlay,
   onClose
 }: ParlayGeneratorModalProps) {
@@ -30,6 +38,43 @@ export default function ParlayGeneratorModal({
         >
           <X className="w-5 h-5" />
         </button>
+
+        {!generating && !generatedParlay && (
+          <div>
+            <h3 className="text-base font-bold text-white mb-1 flex items-center gap-2">
+              <Sparkles className="w-5 h-5 text-cs-red" /> Build Pick'em Entry
+            </h3>
+            <p className="text-xs text-cs-muted mb-5">
+              Agent 13 fills the slip with the highest-edge live player props from PrizePicks or Underdog.
+            </p>
+
+            <label className="cs-label">Entry Size (Picks)</label>
+            <div className="grid grid-cols-5 gap-2 mb-6">
+              {LEG_OPTIONS.map((n) => (
+                <button
+                  key={n}
+                  type="button"
+                  onClick={() => setGeneratorLegs(n)}
+                  className={`py-3 rounded-xl border text-sm font-black font-mono transition-all cursor-pointer ${
+                    generatorLegs === n
+                      ? 'border-cs-red bg-cs-red/15 text-white shadow-glow-red-sm'
+                      : 'border-cs-border text-cs-muted hover:border-cs-red/40 hover:text-white'
+                  }`}
+                >
+                  {n}
+                </button>
+              ))}
+            </div>
+
+            <button
+              onClick={onGenerate}
+              className="w-full py-2.5 cs-btn-primary text-xs font-bold text-center cursor-pointer flex items-center justify-center gap-1.5"
+            >
+              <Sparkles className="w-3.5 h-3.5" />
+              Generate {generatorLegs}-Pick Parlay
+            </button>
+          </div>
+        )}
 
         {generating && (
           <div className="py-8 flex flex-col items-center justify-center text-center space-y-4">
@@ -45,11 +90,18 @@ export default function ParlayGeneratorModal({
 
         {!generating && generatedParlay && (
           <div>
-            <h3 className="text-base font-bold text-white mb-4 flex items-center gap-2">
+            <h3 className="text-base font-bold text-white mb-1 flex items-center gap-2">
               <Sparkles className="w-5 h-5 text-cs-red" /> Agent 13 Matchup Oracle Synthesis
             </h3>
+            {(generatedParlay.platform || generatedParlay.payout_multiplier) && (
+              <p className="text-xs text-cs-muted mb-4 font-mono">
+                {generatedParlay.legs.length}-pick entry
+                {generatedParlay.platform ? ` on ${generatedParlay.platform}` : ''}
+                {generatedParlay.payout_multiplier ? ` · pays ${generatedParlay.payout_multiplier}x` : ''}
+              </p>
+            )}
 
-            <div className="space-y-4">
+            <div className="space-y-4 max-h-[70vh] overflow-y-auto pr-1">
               {/* Legs display */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 {generatedParlay.legs.map((leg, idx) => (

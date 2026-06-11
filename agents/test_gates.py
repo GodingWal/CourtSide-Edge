@@ -125,27 +125,70 @@ class TestAgent13ParlayWindow(unittest.TestCase):
     def setUp(self):
         agent13.active_games = {}
         # Live player props cached by Agent 1 (The Odds API feed) in Redis.
+        # Entries can't mix platforms, so the pool is one pick'em book.
         props = {
-            "A'ja Wilson|PTS": '{"player": "A\'ja Wilson", "stat": "PTS", "line": 22.5, "odds": -110, "book": "FanDuel", "game": "LVA @ NYL"}',
-            "Breanna Stewart|REB": '{"player": "Breanna Stewart", "stat": "REB", "line": 9.5, "odds": -115, "book": "DraftKings", "game": "LVA @ NYL"}',
+            "A'ja Wilson|PTS|PrizePicks": '{"player": "A\'ja Wilson", "stat": "PTS", "line": 22.5, "odds": -110, "book": "PrizePicks", "game": "LVA @ NYL"}',
+            "Breanna Stewart|REB|PrizePicks": '{"player": "Breanna Stewart", "stat": "REB", "line": 9.5, "odds": -115, "book": "PrizePicks", "game": "LVA @ NYL"}',
+            "Caitlin Clark|AST|PrizePicks": '{"player": "Caitlin Clark", "stat": "AST", "line": 8.5, "odds": -110, "book": "PrizePicks", "game": "IND @ CHI"}',
+        }
+        # Agent 3's cached projections (real-edge ranking input).
+        projections = {
+            "A'ja Wilson|PTS": '{"player": "A\'ja Wilson", "stat": "PTS", "projected_value": 26.0, "market_line": 22.5, "edge_vs_line": 3.5}',
+            "Breanna Stewart|REB": '{"player": "Breanna Stewart", "stat": "REB", "projected_value": 8.0, "market_line": 9.5, "edge_vs_line": -1.5}',
         }
         pubsub_instance = MagicMock()
-        pubsub_instance.client.hgetall.return_value = props
+        pubsub_instance.client.hgetall.side_effect = lambda key: (
+            props if key == "props:lines" else projections if key == "props:projections" else {}
+        )
         agent13.RedisPubSub = MagicMock(return_value=pubsub_instance)
 
-    def test_parlay_synthesis_succeeds_in_window(self):
+    def _set_game_in_window(self):
         now = time.time()
-        # Game tipping off in 15 minutes (inside 30-min window)
         agent13.active_games["LVA_NYL"] = {
             "gameId": "LVA_NYL",
             "tipoff": now + 900,
             "status": "PRE"
         }
-        
-        # Should succeed
+
+    def test_parlay_synthesis_succeeds_in_window(self):
+        # Game tipping off in 15 minutes (inside 30-min window)
+        self._set_game_in_window()
+
+        # Should succeed with the default 2 legs
         result = agent13.generate_parlay()
         self.assertIn("legs", result)
         self.assertEqual(len(result["legs"]), 2)
+        self.assertEqual(result["platform"], "PrizePicks")
+        self.assertEqual(result["payout_multiplier"], 3.0)
+        # Legs are ranked by real projected edge: Wilson (+15.6%) first, and
+        # Stewart's negative edge flips her side to UNDER.
+        wilson = next(l for l in result["legs"] if l["player"] == "A'ja Wilson")
+        stewart = next(l for l in result["legs"] if l["player"] == "Breanna Stewart")
+        self.assertEqual(wilson["over_under"], "OVER")
+        self.assertEqual(stewart["over_under"], "UNDER")
+        self.assertGreater(wilson["edge_pct"], 0)
+
+    def test_parlay_respects_requested_leg_count(self):
+        self._set_game_in_window()
+
+        result = agent13.generate_parlay({"legs": 3})
+        self.assertEqual(len(result["legs"]), 3)
+        self.assertEqual(result["payout_multiplier"], 5.0)  # PrizePicks 3-pick
+
+    def test_parlay_rejects_invalid_leg_count(self):
+        self._set_game_in_window()
+
+        for bad in (1, 7, "ten"):
+            with self.assertRaises(HTTPException) as ctx:
+                agent13.generate_parlay({"legs": bad})
+            self.assertEqual(ctx.exception.status_code, 400)
+
+    def test_parlay_refuses_when_pool_too_small(self):
+        self._set_game_in_window()
+
+        with self.assertRaises(HTTPException) as ctx:
+            agent13.generate_parlay({"legs": 5})
+        self.assertEqual(ctx.exception.status_code, 503)
 
     def test_parlay_synthesis_blocked_outside_window(self):
         now = time.time()

@@ -202,7 +202,10 @@ export default function MarketDivergence() {
                       }`}
                     >
                       <td className="px-6 py-4 font-medium text-white whitespace-nowrap">{row.player ?? '—'}</td>
-                      <td className="px-6 py-4 text-cs-muted">{row.stat ?? row.market_classification ?? '—'}</td>
+                      <td className="px-6 py-4 text-cs-muted">
+                        {row.stat ?? row.market_classification ?? '—'}
+                        {row.book && <span className="block text-[10px] font-mono text-cs-muted/70">{row.book}</span>}
+                      </td>
                       <td className="px-6 py-4 text-cs-muted font-mono text-xs">{row.line !== undefined ? `${row.line} ${row.odds ?? ''}` : '—'}</td>
                       <td className="px-6 py-4 text-white font-mono text-xs">{row.true_line ?? '—'}</td>
                       <td className="px-6 py-4 text-right">

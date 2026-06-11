@@ -69,15 +69,17 @@ function parseEvents(events: any[]) {
         motivation: Math.round(Math.min(1, Math.max(0, p.motivation_score ?? 0)) * 100),
       });
     } else if (ev.channel === 'channel_referee_context' && p.crew) {
-      if (seenCrews.has(p.crew)) continue;
-      seenCrews.add(p.crew);
+      // Agent 5 publishes the crew as a list of official names.
+      const crew = Array.isArray(p.crew) ? p.crew.join(', ') : String(p.crew);
+      if (seenCrews.has(crew)) continue;
+      seenCrews.add(crew);
       const t = p.tendencies ?? {};
       referees.push({
-        crew: p.crew,
+        crew,
         game: p.game_id ?? '—',
         foulsPer40: t.fouls_per_40 ?? null,
         paceEffect: t.pace_effect ?? null,
-        ouTendency: t.ou_hit_rate ?? '—',
+        ouTendency: String(t.ou_tendency ?? t.ou_hit_rate ?? '—').replace(/_/g, ' '),
       });
     }
   }

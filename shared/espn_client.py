@@ -109,6 +109,51 @@ def get_news(limit: int = 20) -> list[dict]:
     return articles
 
 
+# ESPN's injuries feed names teams in full; the pipeline uses 3-letter codes.
+TEAM_ABBR = {
+    "Atlanta Dream": "ATL", "Chicago Sky": "CHI", "Connecticut Sun": "CON",
+    "Dallas Wings": "DAL", "Golden State Valkyries": "GSV", "Indiana Fever": "IND",
+    "Las Vegas Aces": "LVA", "Los Angeles Sparks": "LAX", "Minnesota Lynx": "MIN",
+    "New York Liberty": "NYL", "Phoenix Mercury": "PHX", "Portland Fire": "POR",
+    "Seattle Storm": "SEA", "Toronto Tempo": "TOR", "Washington Mystics": "WSH",
+}
+
+
+def get_injuries() -> list[dict]:
+    """League-wide injury report: {player, team, status, detail, date}.
+
+    Deterministic official data (no LLM extraction needed) — the source for
+    the dashboard's live injury intel when no fresh news items exist.
+    """
+    data = _get(f"{BASE}/injuries")
+    if not data:
+        return []
+    rows = []
+    for team_entry in data.get("injuries", []) or []:
+        team = (
+            team_entry.get("team", {}).get("abbreviation")
+            or team_entry.get("abbreviation")
+            or team_entry.get("displayName", "UNK")
+        )
+        team = TEAM_ABBR.get(team, team)
+        for injury in team_entry.get("injuries", []) or []:
+            athlete = injury.get("athlete", {}) or {}
+            player = athlete.get("displayName")
+            if not player:
+                continue
+            status = injury.get("status") or injury.get("type", {}).get("description") or "Unknown"
+            details = injury.get("details", {}) or {}
+            detail_parts = [p for p in (details.get("type"), details.get("detail")) if p]
+            rows.append({
+                "player": player,
+                "team": team,
+                "status": str(status),
+                "detail": " — ".join(detail_parts) or injury.get("shortComment") or "",
+                "date": injury.get("date"),
+            })
+    return rows
+
+
 def get_game_officials(espn_event_id: str) -> list[str]:
     """Real referee crew for a game (ESPN posts officials near tipoff)."""
     data = _get(f"{BASE}/summary", params={"event": espn_event_id})

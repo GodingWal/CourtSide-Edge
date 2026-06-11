@@ -25,7 +25,7 @@ function fmtMoney(v: number): string {
   return `${sign}$${Math.abs(v).toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
 }
 
-function DrawdownGauge({ percentage = 34 }: { percentage?: number }) {
+function DrawdownGauge({ percentage = 0 }: { percentage?: number }) {
   const rotation = (percentage / 100) * 180;
 
   return (
@@ -69,22 +69,29 @@ export default function BankrollDiagnostics() {
   const [bankrollHistory, setBankrollHistory] = useState<any[]>([]);
   const [clvSummary, setClvSummary] = useState<any | null>(null);
   const [betStats, setBetStats] = useState<any | null>(null);
+  const [startingBankroll, setStartingBankroll] = useState<number | null>(null);
   const [clvData, setClvData] = useState<{ date: string; clv: number }[]>([]);
 
   // Real portfolio data: bankroll history, CLV summary, bet stats.
   useEffect(() => {
     const fetchPortfolio = async () => {
       try {
-        const [histRes, clvRes, statsRes, betsRes] = await Promise.all([
+        const [histRes, clvRes, statsRes, betsRes, settingsRes] = await Promise.all([
           fetch(`${API_BASE}/bankroll/history`),
           fetch(`${API_BASE}/clv/summary`),
           fetch(`${API_BASE}/bets/stats`),
           fetch(`${API_BASE}/bets`),
+          fetch(`${API_BASE}/settings`),
         ]);
         if (histRes.ok) setBankrollHistory(await histRes.json());
         if (clvRes.ok) setClvSummary(await clvRes.json());
         if (statsRes.ok) setBetStats(await statsRes.json());
         if (betsRes.ok) setClvData(buildClvSeries(await betsRes.json()));
+        if (settingsRes.ok) {
+          const s = await settingsRes.json();
+          const starting = parseFloat(s.bankroll_starting);
+          setStartingBankroll(Number.isFinite(starting) ? starting : null);
+        }
       } catch (err) {
         console.error('Failed to fetch portfolio data:', err);
       }
@@ -95,8 +102,14 @@ export default function BankrollDiagnostics() {
   }, []);
 
   // Derived metrics — entirely from real data; show em-dash when unknown.
+  // With no explicit bankroll points yet, the balance is derived from the
+  // configured starting bankroll plus settled P&L.
   const sortedHist = [...bankrollHistory].sort((a, b) => a.timestamp - b.timestamp);
-  const currentBalance = sortedHist.length ? sortedHist[sortedHist.length - 1].balance : null;
+  const currentBalance = sortedHist.length
+    ? sortedHist[sortedHist.length - 1].balance
+    : startingBankroll !== null
+      ? startingBankroll + (betStats?.total_profit ?? 0)
+      : null;
   let peak = 0;
   let maxDrawdownDollars = 0;
   sortedHist.forEach((h) => {

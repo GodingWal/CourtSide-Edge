@@ -10,11 +10,14 @@ const router = Router();
 // When Agent 13 is unreachable we surface the failure — no fabricated parlay.
 router.post('/parlay/generate', writeLimiter, async (req, res) => {
   try {
+    // Entry size (2-6 picks) chosen in the dashboard; Agent 13 validates too.
+    const legs = Math.min(6, Math.max(2, parseInt(req.body?.legs, 10) || 2));
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 5000);
+    const timeoutId = setTimeout(() => controller.abort(), 30000);
     const response = await fetch(`${config.AGENT13_URL}/api/parlay/generate`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ legs }),
       signal: controller.signal
     });
     clearTimeout(timeoutId);
