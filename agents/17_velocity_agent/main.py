@@ -1,13 +1,12 @@
 import time
-import logging
-import json
 import threading
 from fastapi import FastAPI
 import uvicorn
 from shared.redis_client import RedisPubSub
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("Agent17_VelocityAgent")
+from shared.base_agent import setup_logging
+
+logger = setup_logging("Agent17_VelocityAgent")
 
 app = FastAPI(title="Agent 17: Line Movement Velocity Agent")
 pubsub = None
@@ -99,13 +98,13 @@ def start_redis_listener():
             mock_stats = ["PTS", "AST", "REB"]
             p = mock_players[int(time.time()) % 3]
             s = mock_stats[int(time.time()) % 3]
-            l = 20.5 + (int(time.time()) % 5) * 0.5
+            line = 20.5 + (int(time.time()) % 5) * 0.5
             o = -110 - (int(time.time()) % 4) * 5
             
             process_odds_message({
                 "player": p,
                 "stat": s,
-                "line": l,
+                "line": line,
                 "odds": o,
                 "timestamp": time.time()
             })

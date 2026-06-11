@@ -1,11 +1,12 @@
-import sqlite3
 import os
+
+from shared.base_agent import db_connect
 
 DB_PATH = os.path.join(os.path.dirname(__file__), '../../data/hoopstats_wnba.db')
 
 def get_connection():
     os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
-    return sqlite3.connect(DB_PATH)
+    return db_connect(DB_PATH)
 
 def init_db():
     conn = get_connection()

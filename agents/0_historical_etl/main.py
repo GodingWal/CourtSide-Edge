@@ -1,11 +1,11 @@
 import time
 import schedule
-import logging
 import concurrent.futures
 from database import init_db
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("Agent0_ETL")
+from shared.base_agent import setup_logging
+
+logger = setup_logging("Agent0_ETL")
 
 def fetch_pbpstats():
     logger.info("Fetching data from pbpstats.com...")

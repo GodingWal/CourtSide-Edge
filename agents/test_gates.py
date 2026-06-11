@@ -2,7 +2,7 @@ import os
 import sys
 import unittest
 import time
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 from fastapi import HTTPException
 import importlib
 
@@ -10,21 +10,35 @@ import importlib
 ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, ROOT_DIR)
 
-# Mock shared.redis_client and shared.audit_logger to avoid dependencies during import
-from types import ModuleType
+# Mock shared.redis_client and shared.audit_logger to avoid dependencies during
+# import. The mocks are removed from sys.modules afterwards so other test files
+# (e.g. shared/test_redis_client.py) import the real modules; the agent modules
+# imported below keep references to the mocks they bound at import time.
+from types import ModuleType  # noqa: E402
 mock_redis = ModuleType('shared.redis_client')
 mock_redis.RedisPubSub = MagicMock()
 mock_redis.StreamConsumer = MagicMock()
-sys.modules['shared.redis_client'] = mock_redis
 
 mock_audit = ModuleType('shared.audit_logger')
 mock_audit.AuditLogger = MagicMock()
 mock_audit.generate_trace_id = lambda: "test-trace-id"
-sys.modules['shared.audit_logger'] = mock_audit
 
-# Import components dynamically since directory names start with digits
-agent4 = importlib.import_module("agents.4_execution_oracle.main")
-agent13 = importlib.import_module("agents.13_parlay_generator.main")
+_saved_modules = {
+    name: sys.modules.get(name)
+    for name in ('shared.redis_client', 'shared.audit_logger')
+}
+sys.modules['shared.redis_client'] = mock_redis
+sys.modules['shared.audit_logger'] = mock_audit
+try:
+    # Import components dynamically since directory names start with digits
+    agent4 = importlib.import_module("agents.4_execution_oracle.main")
+    agent13 = importlib.import_module("agents.13_parlay_generator.main")
+finally:
+    for name, mod in _saved_modules.items():
+        if mod is None:
+            sys.modules.pop(name, None)
+        else:
+            sys.modules[name] = mod
 
 
 class TestAgent4ExecutionGate(unittest.TestCase):

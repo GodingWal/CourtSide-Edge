@@ -1,13 +1,13 @@
 import os
 import time
-import logging
 import threading
 from fastapi import FastAPI
 import uvicorn
 from shared.redis_client import RedisPubSub
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger('Agent22_DataWatchdog')
+from shared.base_agent import setup_logging, run_polling_loop
+
+logger = setup_logging('Agent22_DataWatchdog')
 
 app = FastAPI(title="Agent 22: CourtSideEdge Data Watchdog")
 
@@ -84,8 +84,9 @@ def start_subscriptions():
     pubsub.subscribe("channel_ev_alerts", lambda m: process_channel_message("channel_ev_alerts", m))
     
     try:
-        while True:
-            time.sleep(1)
+        # Idle keepalive: actual work happens in Redis callback threads.
+        # Block in long interruptible waits instead of waking every second.
+        run_polling_loop(interval=30.0)
     except Exception as e:
         logger.error(f"Subscription loop encountered error: {e}")
         pubsub.close()

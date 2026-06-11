@@ -1,10 +1,10 @@
 import time
-import logging
 from shared.redis_client import RedisPubSub, StreamConsumer
 from shared.audit_logger import AuditLogger, generate_trace_id
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger('Agent11_MarketValue')
+from shared.base_agent import setup_logging, run_polling_loop
+
+logger = setup_logging('Agent11_MarketValue')
 
 audit = AuditLogger()
 
@@ -64,7 +64,6 @@ def on_live_odds(message, stream_producer, intelligence):
 def on_sharp_move(message, stream_producer):
     sharp_data = message.get("data", {})
     player = sharp_data.get("player", "A'ja Wilson")
-    stat = sharp_data.get("stat", "PTS")
     book = sharp_data.get("book", "Pinnacle")
     move = sharp_data.get("move", "22.5 → 23.5")
     
@@ -108,8 +107,9 @@ def main():
     pubsub.subscribe('channel_sharp_moves', lambda m: on_sharp_move(m, stream))
     
     try:
-        while True:
-            time.sleep(1)
+        # Idle keepalive: actual work happens in Redis callback threads.
+        # Block in long interruptible waits instead of waking every second.
+        run_polling_loop(interval=30.0)
     except KeyboardInterrupt:
         pubsub.close()
         stream.close()

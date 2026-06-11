@@ -4,7 +4,7 @@ import os
 import time
 import logging
 import threading
-from typing import Callable, Any, Optional
+from typing import Callable, Any
 
 REDIS_HOST = os.getenv('REDIS_HOST', 'localhost')
 REDIS_PORT = int(os.getenv('REDIS_PORT', 6379))

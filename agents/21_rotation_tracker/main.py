@@ -1,12 +1,12 @@
 import time
-import logging
 from fastapi import FastAPI
 import uvicorn
 import threading
 from shared.context_client import ContextClient
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("Agent21_RotationTracker")
+from shared.base_agent import setup_logging
+
+logger = setup_logging("Agent21_RotationTracker")
 
 app = FastAPI(title="Agent 21: Live Rotation & Foul Trouble Tracker")
 context_client = ContextClient()

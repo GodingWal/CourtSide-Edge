@@ -1,12 +1,11 @@
 import os
 import time
-import sqlite3
-import logging
 from shared.redis_client import StreamConsumer
 from shared.audit_logger import AuditLogger
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger('Agent8_BankrollSizer')
+from shared.base_agent import run_polling_loop, setup_logging, db_connect
+
+logger = setup_logging('Agent8_BankrollSizer')
 
 audit = AuditLogger()
 DB_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../data/hoopstats_wnba.db'))
@@ -28,7 +27,7 @@ class BankrollSizer:
         try:
             if not os.path.exists(DB_PATH):
                 return 0.55  # Default fallback
-            conn = sqlite3.connect(DB_PATH)
+            conn = db_connect(DB_PATH)
             cursor = conn.execute(
                 'SELECT result FROM bets WHERE result IS NOT NULL AND is_parlay != 1 AND parent_id IS NULL ORDER BY settled_at DESC LIMIT ?',
                 (n,)
@@ -167,7 +166,7 @@ def on_approved_edge(msg_id, message, stream_producer, sizer):
             input_payload=message,
             confidence=message.get('confidence', 0.5)
         )
-        logger.warning(f'Edge rejected due to negative Kelly sizing')
+        logger.warning('Edge rejected due to negative Kelly sizing')
 
 
 def main():
@@ -181,8 +180,9 @@ def main():
     )
     
     try:
-        while True:
-            time.sleep(1)
+        # Idle keepalive: actual work happens in Redis callback threads.
+        # Block in long interruptible waits instead of waking every second.
+        run_polling_loop(interval=30.0)
     except KeyboardInterrupt:
         stream.close()
 

@@ -1,10 +1,10 @@
 import time
-import logging
 from shared.redis_client import RedisPubSub
 from infrastructure.nemotron.client import NemotronClient
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("Agent2_NewsSentinel")
+from shared.base_agent import setup_logging
+
+logger = setup_logging("Agent2_NewsSentinel")
 
 def poll_twitter():
     # Simulate fetching a tweet

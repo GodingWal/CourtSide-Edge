@@ -45,7 +45,7 @@ class ContextClient:
         # Write to SQLite for persistence
         try:
             if os.path.exists(DB_PATH):
-                conn = sqlite3.connect(DB_PATH)
+                conn = sqlite3.connect(DB_PATH, timeout=5.0)
                 conn.execute(
                     '''INSERT OR REPLACE INTO agent_context_store 
                        (game_id, agent_id, context_key, context_value, confidence, ttl_seconds, created_at)
@@ -84,7 +84,7 @@ class ContextClient:
         # Fallback to SQLite
         try:
             if os.path.exists(DB_PATH):
-                conn = sqlite3.connect(DB_PATH)
+                conn = sqlite3.connect(DB_PATH, timeout=5.0)
                 cursor = conn.execute(
                     'SELECT agent_id, context_key, context_value, confidence, created_at FROM agent_context_store WHERE game_id = ? ORDER BY created_at DESC',
                     (game_id,)
@@ -122,7 +122,7 @@ class ContextClient:
         # SQLite fallback
         try:
             if os.path.exists(DB_PATH):
-                conn = sqlite3.connect(DB_PATH)
+                conn = sqlite3.connect(DB_PATH, timeout=5.0)
                 cursor = conn.execute(
                     'SELECT context_value, confidence, created_at FROM agent_context_store WHERE game_id = ? AND agent_id = ? AND context_key = ?',
                     (game_id, agent_id, context_key)

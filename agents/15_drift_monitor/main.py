@@ -1,14 +1,13 @@
 import time
-import logging
-import sqlite3
 import os
 from fastapi import FastAPI
 import uvicorn
 import threading
 from shared.context_client import ContextClient
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("Agent15_DriftMonitor")
+from shared.base_agent import setup_logging, db_connect
+
+logger = setup_logging("Agent15_DriftMonitor")
 
 app = FastAPI(title="Agent 15: Drift Monitor & Calibration Oracle")
 context_client = ContextClient()
@@ -28,7 +27,7 @@ def analyze_drift():
         return
         
     try:
-        conn = sqlite3.connect(DB_PATH)
+        conn = db_connect(DB_PATH)
         cursor = conn.cursor()
         
         # Select settled straight wagers that have lines and actual outcomes

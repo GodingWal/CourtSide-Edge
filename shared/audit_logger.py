@@ -33,7 +33,7 @@ class AuditLogger:
                 logger.warning(f'Database not found at {DB_PATH}')
                 return
                 
-            conn = sqlite3.connect(DB_PATH)
+            conn = sqlite3.connect(DB_PATH, timeout=5.0)
             conn.execute(
                 '''INSERT INTO decision_audit 
                    (trace_id, agent_id, action, reason, input_payload, output_payload, confidence, timestamp)
@@ -60,7 +60,7 @@ class AuditLogger:
         try:
             if not os.path.exists(DB_PATH):
                 return []
-            conn = sqlite3.connect(DB_PATH)
+            conn = sqlite3.connect(DB_PATH, timeout=5.0)
             cursor = conn.execute(
                 'SELECT agent_id, action, reason, input_payload, output_payload, confidence, timestamp FROM decision_audit WHERE trace_id = ? ORDER BY timestamp ASC',
                 (trace_id,)

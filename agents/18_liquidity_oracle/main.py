@@ -1,10 +1,9 @@
-import time
-import logging
 from fastapi import FastAPI
 import uvicorn
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("Agent18_LiquidityOracle")
+from shared.base_agent import setup_logging
+
+logger = setup_logging("Agent18_LiquidityOracle")
 
 app = FastAPI(title="Agent 18: Bookmaker Liquidity & Limits Oracle")
 

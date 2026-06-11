@@ -1,13 +1,12 @@
-import os
 import time
-import logging
 import threading
 from fastapi import FastAPI, Query, HTTPException
 import uvicorn
 from shared.redis_client import RedisPubSub
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger('Agent23_GameSessionManager')
+from shared.base_agent import setup_logging
+
+logger = setup_logging('Agent23_GameSessionManager')
 
 app = FastAPI(title="Agent 23: WNBA Game Session Manager")
 

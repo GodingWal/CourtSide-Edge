@@ -1,10 +1,9 @@
 import time
-import logging
-import threading
 from shared.redis_client import RedisPubSub
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("Agent2.5_GameFlowOracle")
+from shared.base_agent import setup_logging
+
+logger = setup_logging("Agent2.5_GameFlowOracle")
 
 class GameFlowOracle:
     def __init__(self):

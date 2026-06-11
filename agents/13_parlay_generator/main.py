@@ -1,15 +1,14 @@
 import os
-import sqlite3
 import random
-import logging
 import time
 import threading
 from fastapi import FastAPI, HTTPException
 import uvicorn
 from shared.redis_client import RedisPubSub
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("Agent13_ParlayGenerator")
+from shared.base_agent import run_polling_loop, setup_logging, db_connect
+
+logger = setup_logging("Agent13_ParlayGenerator")
 
 app = FastAPI(title="Agent 13: Matchup Oracle & Parlay Generator")
 
@@ -60,8 +59,9 @@ def start_subscriptions():
     logger.info("Agent 13 subscribing to channel_game_active...")
     pubsub.subscribe("channel_game_active", process_game_active)
     try:
-        while True:
-            time.sleep(1)
+        # Idle keepalive: actual work happens in Redis callback threads.
+        # Block in long interruptible waits instead of waking every second.
+        run_polling_loop(interval=30.0)
     except Exception as e:
         logger.error(f"Subscription loop failed: {e}")
         pubsub.close()
@@ -79,7 +79,7 @@ def get_active_players():
         return DEFAULT_PLAYERS
     
     try:
-        conn = sqlite3.connect(DB_PATH)
+        conn = db_connect(DB_PATH)
         cursor = conn.cursor()
         cursor.execute("SELECT name, team FROM players WHERE status = 'ACTIVE'")
         rows = cursor.fetchall()

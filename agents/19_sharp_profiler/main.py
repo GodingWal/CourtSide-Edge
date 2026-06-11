@@ -1,13 +1,12 @@
 import time
-import logging
-import json
 import threading
 from fastapi import FastAPI
 import uvicorn
 from shared.redis_client import RedisPubSub
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("Agent19_SharpProfiler")
+from shared.base_agent import setup_logging, run_polling_loop
+
+logger = setup_logging("Agent19_SharpProfiler")
 
 app = FastAPI(title="Agent 19: Sharp vs. Retail Market Profiler")
 pubsub = None
@@ -30,7 +29,7 @@ def on_raw_odds(message):
                 "stat": message.get("stat", "PTS"),
                 "book": book,
                 "move": f"{message.get('prev_line', 22.5)} → {message.get('line', 23.5)}",
-                "direction": "UP" if message.get("line', 23.5) > message.get("prev_line", 22.5) else "DOWN",
+                "direction": "UP" if message.get("line", 23.5) > message.get("prev_line", 22.5) else "DOWN",
                 "timestamp": time.time()
             },
             "confidence": 0.95,
@@ -86,8 +85,9 @@ def start_redis_listener():
     sim_thread.start()
     
     try:
-        while True:
-            time.sleep(1)
+        # Idle keepalive: actual work happens in Redis callback threads.
+        # Block in long interruptible waits instead of waking every second.
+        run_polling_loop(interval=30.0)
     except Exception as e:
         logger.error(f"Redis listener failed: {e}")
 

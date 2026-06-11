@@ -1,9 +1,9 @@
 import time
-import logging
 from shared.redis_client import RedisPubSub
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("Agent6_SteamDetector")
+from shared.base_agent import setup_logging, run_polling_loop
+
+logger = setup_logging("Agent6_SteamDetector")
 
 class SteamDetector:
     def __init__(self):
@@ -33,8 +33,9 @@ def main():
     pubsub.subscribe("channel_live_odds", lambda m: on_live_odds(m, pubsub, detector))
     
     try:
-        while True:
-            time.sleep(1)
+        # Idle keepalive: actual work happens in Redis callback threads.
+        # Block in long interruptible waits instead of waking every second.
+        run_polling_loop(interval=30.0)
     except KeyboardInterrupt:
         pubsub.close()
 

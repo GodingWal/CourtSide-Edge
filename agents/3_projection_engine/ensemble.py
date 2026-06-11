@@ -7,7 +7,7 @@ logger = logging.getLogger("EnsembleMathCore")
 
 class EnsembleMathCore:
     def __init__(self):
-        logger.info("Initializing 6-Layer Ensemble Stack...")
+        logger.info("Initializing 5-Layer Ensemble Stack (layers 1-4 + XGBoost meta-model)...")
         # Mocking the loaded XGBoost meta-model
         self.meta_model = xgb.XGBRegressor()
         self.is_cold_start = True
@@ -36,7 +36,7 @@ class EnsembleMathCore:
             return norm.rvs(loc=rate * (minutes_dist.mean() / 40.0), scale=4.0, size=1000)
 
     def _layer6_xgboost_stacking(self, layer_outputs):
-        # Trained on historical outputs of Layers 1-5 vs actual outcomes.
+        # Trained on historical outputs of the preceding layers vs actual outcomes.
         if self.is_cold_start:
             # Fallback to weighted average if XGBoost isn't trained
             return sum(layer_outputs) / len(layer_outputs)
@@ -53,15 +53,12 @@ class EnsembleMathCore:
         usage_adj = self._layer2_usage_redistribution(team_id, game_context.get('missing_players', []))
         
         # 3. Game Total Baseline
-        game_total = self._layer3_regression_game_total(game_context)
+        self._layer3_regression_game_total(game_context)
         
         # 4. Stat Distributions
         points_dist = self._layer4_poisson_distributions('points', 25.0 * usage_adj['usage_multiplier'], minutes_dist)
         
-        # 5. Copula Simulation
-        # sims = self._layer5_gaussian_copula() # Removed: dead code that heavily impacted performance
-        
-        # 6. Meta-model final weighting
+        # 5. Meta-model final weighting
         final_points_projection = self._layer6_xgboost_stacking([points_dist.mean()])
         
         return {

@@ -1,10 +1,9 @@
-import time
-import logging
 from shared.redis_client import StreamConsumer
 from shared.audit_logger import AuditLogger
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger('Agent7_CorrelationGuard')
+from shared.base_agent import setup_logging, run_polling_loop
+
+logger = setup_logging('Agent7_CorrelationGuard')
 
 audit = AuditLogger()
 
@@ -46,7 +45,7 @@ def on_market_intelligence(msg_id, message, stream_producer, guard):
             confidence=message.get('confidence', 0.5)
         )
         
-        logger.info(f'Edge approved, publishing to stream_approved_edges')
+        logger.info('Edge approved, publishing to stream_approved_edges')
         stream_producer.produce('stream_approved_edges', message)
     else:
         audit.log_decision(
@@ -70,8 +69,9 @@ def main():
     )
     
     try:
-        while True:
-            time.sleep(1)
+        # Idle keepalive: actual work happens in Redis callback threads.
+        # Block in long interruptible waits instead of waking every second.
+        run_polling_loop(interval=30.0)
     except KeyboardInterrupt:
         stream.close()
 
