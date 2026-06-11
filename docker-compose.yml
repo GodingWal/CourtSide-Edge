@@ -17,6 +17,8 @@ services:
     build:
       context: .
       dockerfile: agents/0_historical_etl/Dockerfile
+    env_file:
+      - .env
     volumes:
       - ./data:/app/data
     restart: unless-stopped
@@ -66,11 +68,19 @@ services:
     restart: unless-stopped
     ports:
       - "8000:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
 
   agent_10_game_total_projector:
     build:
       context: .
       dockerfile: agents/10_game_total_projector/Dockerfile
+    env_file:
+      - .env
     depends_on:
       redis:
         condition: service_healthy
@@ -80,6 +90,8 @@ services:
     build:
       context: .
       dockerfile: agents/11_market_value_detector/Dockerfile
+    env_file:
+      - .env
     depends_on:
       redis:
         condition: service_healthy
@@ -89,6 +101,8 @@ services:
     build:
       context: .
       dockerfile: agents/5_referee_engine/Dockerfile
+    env_file:
+      - .env
     depends_on:
       redis:
         condition: service_healthy
@@ -98,6 +112,8 @@ services:
     build:
       context: .
       dockerfile: agents/6_steam_detector/Dockerfile
+    env_file:
+      - .env
     depends_on:
       redis:
         condition: service_healthy
@@ -107,6 +123,8 @@ services:
     build:
       context: .
       dockerfile: agents/2.5_game_flow_oracle/Dockerfile
+    env_file:
+      - .env
     depends_on:
       redis:
         condition: service_healthy
@@ -116,6 +134,8 @@ services:
     build:
       context: .
       dockerfile: agents/7_correlation_guard/Dockerfile
+    env_file:
+      - .env
     depends_on:
       redis:
         condition: service_healthy
@@ -125,6 +145,8 @@ services:
     build:
       context: .
       dockerfile: agents/8_bankroll_sizer/Dockerfile
+    env_file:
+      - .env
     depends_on:
       redis:
         condition: service_healthy
@@ -134,17 +156,27 @@ services:
     build:
       context: .
       dockerfile: agents/4_execution_oracle/Dockerfile
+    env_file:
+      - .env
     depends_on:
       redis:
         condition: service_healthy
     restart: unless-stopped
     ports:
       - "8001:8001"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
 
   agent_13_parlay_generator:
     build:
       context: .
       dockerfile: agents/13_parlay_generator/Dockerfile
+    env_file:
+      - .env
     volumes:
       - ./data:/app/data
     depends_on:
@@ -153,11 +185,19 @@ services:
     restart: unless-stopped
     ports:
       - "8009:8009"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8009/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
 
   agent_14_clv_tracker:
     build:
       context: .
       dockerfile: agents/14_clv_tracker/Dockerfile
+    env_file:
+      - .env
     volumes:
       - ./data:/app/data
     depends_on:
@@ -166,11 +206,19 @@ services:
     restart: unless-stopped
     ports:
       - "8010:8010"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8010/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
 
   agent_15_drift_monitor:
     build:
       context: .
       dockerfile: agents/15_drift_monitor/Dockerfile
+    env_file:
+      - .env
     volumes:
       - ./data:/app/data
     depends_on:
@@ -179,11 +227,19 @@ services:
     restart: unless-stopped
     ports:
       - "8011:8011"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8011/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
 
   agent_16_hedge_oracle:
     build:
       context: .
       dockerfile: agents/16_hedge_oracle/Dockerfile
+    env_file:
+      - .env
     volumes:
       - ./data:/app/data
     depends_on:
@@ -192,44 +248,76 @@ services:
     restart: unless-stopped
     ports:
       - "8012:8012"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8012/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
 
   agent_17_velocity_agent:
     build:
       context: .
       dockerfile: agents/17_velocity_agent/Dockerfile
+    env_file:
+      - .env
     depends_on:
       redis:
         condition: service_healthy
     restart: unless-stopped
     ports:
       - "8013:8013"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8013/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
 
   agent_18_liquidity_oracle:
     build:
       context: .
       dockerfile: agents/18_liquidity_oracle/Dockerfile
+    env_file:
+      - .env
     depends_on:
       redis:
         condition: service_healthy
     restart: unless-stopped
     ports:
       - "8014:8014"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8014/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
 
   agent_19_sharp_profiler:
     build:
       context: .
       dockerfile: agents/19_sharp_profiler/Dockerfile
+    env_file:
+      - .env
     depends_on:
       redis:
         condition: service_healthy
     restart: unless-stopped
     ports:
       - "8015:8015"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8015/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
 
   agent_20_hedge_executor:
     build:
       context: .
       dockerfile: agents/20_hedge_executor/Dockerfile
+    env_file:
+      - .env
     volumes:
       - ./data:/app/data
     depends_on:
@@ -238,39 +326,69 @@ services:
     restart: unless-stopped
     ports:
       - "8016:8016"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8016/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
 
   agent_21_rotation_tracker:
     build:
       context: .
       dockerfile: agents/21_rotation_tracker/Dockerfile
+    env_file:
+      - .env
     depends_on:
       redis:
         condition: service_healthy
     restart: unless-stopped
     ports:
       - "8017:8017"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8017/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
 
   agent_22_data_watchdog:
     build:
       context: .
       dockerfile: agents/22_data_watchdog/Dockerfile
+    env_file:
+      - .env
     depends_on:
       redis:
         condition: service_healthy
     restart: unless-stopped
     ports:
       - "8018:8018"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8018/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
 
   agent_23_game_session_manager:
     build:
       context: .
       dockerfile: agents/23_game_session_manager/Dockerfile
+    env_file:
+      - .env
     depends_on:
       redis:
         condition: service_healthy
     restart: unless-stopped
     ports:
       - "8019:8019"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8019/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
 
   web_server:
     build:
