@@ -184,39 +184,47 @@ def generate_parlay():
             detail="No live player props available to build a parlay from (Odds API feed empty). Try closer to game time."
         )
 
-    chosen = random.sample(candidates, 2)
+    # Prefer building the entry on a single pick'em platform (PrizePicks or
+    # Underdog) since entries can't mix platforms.
+    by_book = {}
+    for c in candidates:
+        by_book.setdefault(c.get("book") or "DFS", []).append(c)
+    platform, platform_props = max(by_book.items(), key=lambda kv: len(kv[1]))
+    pool = platform_props if len(platform_props) >= 2 else candidates
+    chosen = random.sample(pool, 2)
+
+    # Pick'em payout multipliers (2-pick power play ≈ 3x on both platforms).
+    PICKEM_MULTIPLIERS = {2: 3.0, 3: 6.0, 4: 10.0}
+    multiplier = PICKEM_MULTIPLIERS[2]
 
     def to_leg(prop):
-        odds = int(prop["odds"])
-        # Edge model placeholder: market-implied edge unknown without our own
-        # projections; report 0 rather than a fabricated edge.
-        true_odds = max(0.40, min(0.70, round(1.0 / to_decimal(odds), 2)))
         return {
             "player": prop["player"],
             "team": prop.get("team", ""),
             "stat": prop["stat"],
             "line": prop["line"],
             "over_under": "OVER",
-            "book_odds": odds,
-            "true_odds": true_odds,
+            # Pick'em has no per-leg juice; represent as even-odds picks.
+            "book_odds": 100,
+            "true_odds": 0.5,
             "edge_pct": 0.0,
             "opposing_team": prop.get("game", ""),
             "book": prop.get("book"),
         }
 
     leg1, leg2 = to_leg(chosen[0]), to_leg(chosen[1])
-    odds1, odds2 = leg1["book_odds"], leg2["book_odds"]
     
-    # Calculate Parlay Odds
-    dec_odds1 = to_decimal(odds1)
-    dec_odds2 = to_decimal(odds2)
-    combined_dec = dec_odds1 * dec_odds2
+    # Pick'em entry payout: fixed multiplier (e.g. 3x for a 2-pick power play),
+    # expressed also as equivalent American odds for the UI.
+    combined_dec = multiplier
     parlay_odds = to_american(combined_dec)
     
     summary = generate_nemotron_summary(leg1, leg2)
     
     return {
         "legs": [leg1, leg2],
+        "platform": platform,
+        "payout_multiplier": multiplier,
         "parlay_odds": parlay_odds,
         "summary": summary
     }

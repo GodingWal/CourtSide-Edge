@@ -33,7 +33,7 @@ def odds_api_loop(pubsub: RedisPubSub):
                 for prop in props:
                     if prop.get("line") is None:
                         continue
-                    key = f"{prop['player']}|{prop['stat']}"
+                    key = f"{prop['player']}|{prop['stat']}|{prop.get('book', 'DFS')}"
                     payload = {
                         "source": "Agent 1",
                         "feed": "odds_api",
