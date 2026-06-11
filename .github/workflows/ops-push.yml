@@ -37,6 +37,10 @@ jobs:
             PORT='${{ vars.VAST_PORT || '26918' }}'
           fi
           chmod 600 ~/.ssh/id_ops
-          ssh-keyscan -p "$PORT" -H "$HOST" >> ~/.ssh/known_hosts 2>/dev/null
           echo "── output from $TARGET ($HOST) ──"
-          ssh -i ~/.ssh/id_ops -p "$PORT" "$USER@$HOST" "$REMOTE_CMD"
+          for i in 1 2 3; do
+            ssh -i ~/.ssh/id_ops -p "$PORT" \
+              -o StrictHostKeyChecking=accept-new -o ConnectTimeout=20 \
+              "$USER@$HOST" "$REMOTE_CMD" && exit 0 || { echo "ssh attempt $i failed; retrying in $((i*10))s"; sleep $((i*10)); }
+          done
+          echo "✗ all ssh attempts failed" >&2; exit 1
