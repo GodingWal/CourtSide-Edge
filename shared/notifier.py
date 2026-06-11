@@ -11,6 +11,7 @@ or crash the execution pipeline.
 """
 import logging
 import os
+import threading
 
 import requests
 
@@ -27,7 +28,19 @@ def enabled() -> bool:
 
 
 def notify(text: str) -> bool:
-    """Send one alert to every configured channel. Returns True if any sent."""
+    """Dispatch one alert to every configured channel.
+
+    Sends from a background thread so callers inside Redis listener
+    callbacks are never blocked on notification network I/O. Returns True
+    when at least one channel is configured (i.e. a send was dispatched).
+    """
+    if not enabled():
+        return False
+    threading.Thread(target=_send, args=(text,), daemon=True).start()
+    return True
+
+
+def _send(text: str) -> bool:
     sent = False
     if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
         try:

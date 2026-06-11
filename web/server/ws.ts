@@ -1,6 +1,7 @@
 import { IncomingMessage } from 'http';
 import { WebSocket } from 'ws';
 import { config } from './config';
+import { safeTokenEqual } from './middleware';
 
 // Store active WebSocket connections
 export const wsClients = new Set<WebSocket>();
@@ -22,12 +23,16 @@ export const verifyWsClient = (info: { req: IncomingMessage }): boolean => {
     return true;
   }
   const authHeader = info.req.headers.authorization;
-  if (authHeader && authHeader.startsWith('Bearer ') && authHeader.slice(7) === config.API_KEY) {
+  if (authHeader && authHeader.startsWith('Bearer ') && safeTokenEqual(authHeader.slice(7), config.API_KEY)) {
     return true;
   }
   try {
+    // Query-param tokens are a fallback for browser WebSocket clients that
+    // can't set headers. Note they can land in proxy logs — prefer the
+    // header, or front the upgrade with nginx-injected auth.
     const url = new URL(info.req.url || '', 'http://localhost');
-    if (url.searchParams.get('token') === config.API_KEY) {
+    const token = url.searchParams.get('token');
+    if (token && safeTokenEqual(token, config.API_KEY)) {
       return true;
     }
   } catch {

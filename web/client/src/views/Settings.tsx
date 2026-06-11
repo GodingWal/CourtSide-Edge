@@ -4,6 +4,24 @@ import { useToast } from '../components/ToastProvider';
 import { SkeletonCard } from '../components/Skeleton';
 import { API_BASE } from '../lib/config';
 
+interface RotationAlert {
+  player?: string;
+  fouls?: number;
+  period?: string | number;
+  status: string;
+  adjustment: string;
+  timestamp?: number;
+}
+
+interface DriftStatus {
+  calibration: Record<string, number> | null;
+  mae: number | null;
+  bias: number | null;
+  brier_score?: number | null;
+  brier_sample?: number;
+  settled_bets_analyzed: number;
+}
+
 interface AgentHealth {
   id: string;
   name: string;
@@ -29,10 +47,10 @@ export default function Settings() {
   // Agents status
   const [agents, setAgents] = useState<AgentHealth[]>([]);
   const [currentBankroll, setCurrentBankroll] = useState('');
-  const [rotations, setRotations] = useState<any[]>([]);
+  const [rotations, setRotations] = useState<RotationAlert[]>([]);
 
   // Drift status
-  const [driftStatus, setDriftStatus] = useState<any>({
+  const [driftStatus, setDriftStatus] = useState<DriftStatus>({
     calibration: null,
     mae: null,
     bias: null,
@@ -88,6 +106,8 @@ export default function Settings() {
   };
 
   useEffect(() => {
+    // Initial data load; all setState happens after the fetches resolve.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     fetchData();
   }, []);
 
@@ -158,7 +178,7 @@ export default function Settings() {
         description: 'Bankroll variables updated successfully.',
         variant: 'success'
       });
-    } catch (err) {
+    } catch {
       toast({
         title: 'Error Saving Settings',
         description: 'Could not write bankroll configuration to database.',
@@ -182,7 +202,7 @@ export default function Settings() {
         description: 'Display and notifications settings updated.',
         variant: 'success'
       });
-    } catch (err) {
+    } catch {
       toast({
         title: 'Error Saving Settings',
         description: 'Could not write settings to database.',
@@ -416,7 +436,7 @@ export default function Settings() {
                 No calibration data yet — Agent 15 publishes after enough settled bets.
               </p>
             ) : (
-            Object.entries(driftStatus.calibration).map(([stat, offset]: any) => (
+            Object.entries(driftStatus.calibration).map(([stat, offset]) => (
               <div key={stat} className="bg-cs-dark/30 border border-cs-border/30 rounded-xl p-3 flex items-center justify-between">
                 <span className="font-bold text-xs text-white">{stat} adjustment</span>
                 <span className={`font-mono text-xs font-black ${offset >= 0 ? 'text-emerald-400' : 'text-cs-red-bright'}`}>

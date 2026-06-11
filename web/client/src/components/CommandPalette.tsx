@@ -103,11 +103,6 @@ export function CommandPalette() {
     return commands.filter((c) => c.label.toLowerCase().includes(q));
   }, [query, commands]);
 
-  // Reset selection when filter changes
-  useEffect(() => {
-    setSelectedIndex(0);
-  }, [filtered.length]);
-
   /* ---- Execute command ------------------------------------------- */
 
   const execute = useCallback(
@@ -238,7 +233,7 @@ export function CommandPalette() {
                 type="text"
                 placeholder="Type a command…"
                 value={query}
-                onChange={(e) => setQuery(e.target.value)}
+                onChange={(e) => { setQuery(e.target.value); setSelectedIndex(0); }}
                 className="cs-input flex-1 border-none bg-transparent px-0 py-0 text-sm focus:ring-0"
                 onKeyDown={handleModalKeyDown}
               />

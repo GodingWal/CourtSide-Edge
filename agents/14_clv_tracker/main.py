@@ -2,6 +2,7 @@ import os
 import threading
 from fastapi import FastAPI
 import uvicorn
+from shared.odds_math import implied_probability
 from shared.redis_client import RedisPubSub
 
 from shared.base_agent import run_polling_loop, setup_logging, db_connect
@@ -13,24 +14,13 @@ app = FastAPI(title='Agent 14: CLV Tracker')
 DB_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../data/hoopstats_wnba.db'))
 pubsub = None
 
-# In-memory cache of opening lines at bet placement
-bet_opening_lines: dict = {}
-
-
-def to_implied_prob(american: int) -> float:
-    """Convert American odds to implied probability."""
-    if american > 0:
-        return 100.0 / (american + 100.0)
-    else:
-        return abs(american) / (abs(american) + 100.0)
-
 
 def calculate_clv(opening_odds: int, closing_odds: int) -> float:
     """Calculate CLV percentage.
     Positive CLV means the line moved in your favor (you got a better number).
     """
-    opening_prob = to_implied_prob(opening_odds)
-    closing_prob = to_implied_prob(closing_odds)
+    opening_prob = implied_probability(opening_odds)
+    closing_prob = implied_probability(closing_odds)
     return round((closing_prob - opening_prob) / opening_prob * 100, 2)
 
 
@@ -138,8 +128,12 @@ def record_closing_line(data: dict):
 
 def on_live_odds(message):
     """When live odds update comes in, check if any active bets need CLV recorded."""
-    logger.info('Agent 14 received live odds update for CLV tracking')
-    
+    # Only messages carrying a closing price can settle CLV; checking first
+    # avoids a full pending-bets DB scan on every odds tick.
+    if not message.get('closing_odds') or not message.get('player'):
+        return
+    logger.info('Agent 14 received closing odds for CLV tracking')
+
     try:
         if not os.path.exists(DB_PATH):
             return

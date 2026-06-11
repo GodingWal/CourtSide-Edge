@@ -1,4 +1,5 @@
 import json
+import time
 
 from shared.redis_client import StreamConsumer
 from shared.audit_logger import AuditLogger
@@ -12,13 +13,26 @@ audit = AuditLogger()
 # Correlation thresholds for flagging stacked legs in the same game.
 CORR_BONUS_THRESHOLD = 0.25   # positively correlated same-player legs
 CORR_TRAP_THRESHOLD = -0.15   # negatively correlated legs
+# Exposure entries expire once a game is long over; without expiry the
+# counter only grows and permanently blocks a game_id after 3-4 edges.
+EXPOSURE_TTL_SECONDS = 6 * 3600
 
 class CorrelationGuard:
     def __init__(self, redis_client=None):
-        self.active_game_exposures = {}
+        self.active_game_exposures = {}   # game_id -> [exposure timestamps]
         self.game_legs = {}          # game_id -> [(player, stat), ...]
         self.redis_client = redis_client
         self._correlations = {}
+
+    def _prune_expired(self):
+        cutoff = time.time() - EXPOSURE_TTL_SECONDS
+        for game_id in list(self.active_game_exposures):
+            kept = [ts for ts in self.active_game_exposures[game_id] if ts >= cutoff]
+            if kept:
+                self.active_game_exposures[game_id] = kept
+            else:
+                self.active_game_exposures.pop(game_id, None)
+                self.game_legs.pop(game_id, None)
 
     def _stat_corr(self, stat_a, stat_b):
         """League correlation between two stats (matrix published by Agent 3)."""
@@ -57,9 +71,10 @@ class CorrelationGuard:
         return flag, flagged_against
 
     def check_correlation(self, edge_data):
+        self._prune_expired()
         game_id = edge_data.get('game_id', 'UNKNOWN')
         confidence = edge_data.get('confidence', 0.5)
-        exposure = self.active_game_exposures.get(game_id, 0)
+        exposure = len(self.active_game_exposures.get(game_id, []))
 
         # Dynamic exposure limit based on confidence
         max_exposure = 4 if confidence > 0.85 else 3
@@ -68,7 +83,7 @@ class CorrelationGuard:
             logger.warning(f'Rejecting edge for game {game_id}: exposure {exposure} >= max {max_exposure}')
             return False, f'Game exposure {exposure} exceeds max {max_exposure}'
 
-        self.active_game_exposures[game_id] = exposure + 1
+        self.active_game_exposures.setdefault(game_id, []).append(time.time())
         return True, f'Game exposure now {exposure + 1}/{max_exposure}'
 
 # `stream` is the same StreamConsumer used for consumption; it doubles as the

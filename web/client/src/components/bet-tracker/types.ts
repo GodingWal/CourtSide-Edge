@@ -32,8 +32,32 @@ export interface BetStats {
   avg_clv?: number;
 }
 
+// Draft leg edited in the ticket-upload confirm form.
+export interface DraftLeg {
+  player: string;
+  stat: string;
+  line: number;
+  over_under?: 'OVER' | 'UNDER';
+  book_odds?: number;
+  opposing_team?: string;
+}
+
+export interface GeneratedParlayLeg {
+  player: string;
+  team?: string;
+  stat: string;
+  line: number;
+  over_under: 'OVER' | 'UNDER';
+  book_odds: number;
+  true_odds?: number | null;
+  edge_pct?: number | null;
+  projected_value?: number | null;
+  opposing_team?: string;
+  book?: string | null;
+}
+
 export interface GeneratedParlay {
-  legs: any[];
+  legs: GeneratedParlayLeg[];
   parlay_odds: number;
   summary: string;
   platform?: string;

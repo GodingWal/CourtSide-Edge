@@ -1,7 +1,6 @@
 import { Router } from 'express';
 import { db } from '../db';
 import { settings } from '../schema';
-import { eq } from 'drizzle-orm';
 import { writeLimiter, validateRequest } from '../middleware';
 import { updateSettingSchema } from '../schemas.validation';
 
@@ -24,12 +23,11 @@ router.get('/settings', async (req, res) => {
 router.put('/settings', writeLimiter, validateRequest(updateSettingSchema), async (req, res) => {
   try {
     const { key, value } = req.body;
-    const existing = await db.select().from(settings).where(eq(settings.key, key)).limit(1);
-    if (existing.length > 0) {
-      await db.update(settings).set({ value: value.toString() }).where(eq(settings.key, key));
-    } else {
-      await db.insert(settings).values({ key, value: value.toString() });
-    }
+    // Atomic upsert: the old select-then-insert raced concurrent writers on
+    // the primary key and 500ed on the conflict.
+    await db.insert(settings)
+      .values({ key, value: String(value) })
+      .onConflictDoUpdate({ target: settings.key, set: { value: String(value) } });
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: 'Failed to update setting' });

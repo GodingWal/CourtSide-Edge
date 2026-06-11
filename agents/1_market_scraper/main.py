@@ -40,7 +40,9 @@ def odds_api_loop(pubsub: RedisPubSub):
                         "player": prop["player"],
                         "stat": prop["stat"],
                         "line": prop["line"],
-                        "odds": prop.get("over_odds") or -110,
+                        # Real prices only - None when the book posts no over
+                        # price (consumers must skip, not assume -110).
+                        "odds": prop.get("over_odds"),
                         "under_odds": prop.get("under_odds"),
                         "book": prop.get("book"),
                         "game": f"{game['away']} @ {game['home']}",
@@ -75,56 +77,64 @@ def main():
     last_lines: dict = {}
 
     while True:
-        games = get_scoreboard()
-        if not games:
-            logger.info("No WNBA games on today's scoreboard (or feed unavailable).")
-        for game in games:
-            odds = game.get("odds")
-            if not odds or odds.get("over_under") is None:
-                continue
+        try:
+            poll_game_lines(pubsub, last_lines)
+        except Exception as e:
+            # One Redis/network hiccup must not kill the scraper process.
+            logger.error(f"Game-line poll failed: {e}")
+        time.sleep(POLL_SECONDS)
 
-            payload = {
-                "source": "Agent 1",
-                "game_id": game["game_id"],
-                "espn_id": game["espn_id"],
-                "home": game["home"],
-                "away": game["away"],
-                "state": game["state"],
-                "provider": odds.get("provider"),
-                "details": odds.get("details"),
-                "spread": odds.get("spread"),
-                "over_under": odds.get("over_under"),
-                "timestamp": time.time(),
+
+def poll_game_lines(pubsub: RedisPubSub, last_lines: dict):
+    games = get_scoreboard()
+    if not games:
+        logger.info("No WNBA games on today's scoreboard (or feed unavailable).")
+    for game in games:
+        odds = game.get("odds")
+        if not odds or odds.get("over_under") is None:
+            continue
+
+        payload = {
+            "source": "Agent 1",
+            "game_id": game["game_id"],
+            "espn_id": game["espn_id"],
+            "home": game["home"],
+            "away": game["away"],
+            "state": game["state"],
+            "provider": odds.get("provider"),
+            "details": odds.get("details"),
+            "spread": odds.get("spread"),
+            "over_under": odds.get("over_under"),
+            "timestamp": time.time(),
+        }
+
+        # Only publish when the line actually changed (real movement).
+        prev = last_lines.get(game["game_id"])
+        changed = prev is None or (
+            prev.get("spread") != payload["spread"] or prev.get("over_under") != payload["over_under"]
+        )
+        if changed:
+            if prev is not None:
+                payload["prev_spread"] = prev.get("spread")
+                payload["prev_over_under"] = prev.get("over_under")
+                logger.info(
+                    f"Line move {game['game_id']}: spread {prev.get('spread')}→{payload['spread']}, "
+                    f"O/U {prev.get('over_under')}→{payload['over_under']}"
+                )
+            else:
+                logger.info(f"Opening line {game['game_id']}: {payload['details']} O/U {payload['over_under']}")
+            pubsub.publish("channel_live_odds", payload)
+            last_lines[game["game_id"]] = {
+                "spread": payload["spread"],
+                "over_under": payload["over_under"],
             }
 
-            # Only publish when the line actually changed (real movement).
-            prev = last_lines.get(game["game_id"])
-            changed = prev is None or (
-                prev.get("spread") != payload["spread"] or prev.get("over_under") != payload["over_under"]
-            )
-            if changed:
-                if prev is not None:
-                    payload["prev_spread"] = prev.get("spread")
-                    payload["prev_over_under"] = prev.get("over_under")
-                    logger.info(
-                        f"Line move {game['game_id']}: spread {prev.get('spread')}→{payload['spread']}, "
-                        f"O/U {prev.get('over_under')}→{payload['over_under']}"
-                    )
-                else:
-                    logger.info(f"Opening line {game['game_id']}: {payload['details']} O/U {payload['over_under']}")
-                pubsub.publish("channel_live_odds", payload)
-                last_lines[game["game_id"]] = {
-                    "spread": payload["spread"],
-                    "over_under": payload["over_under"],
-                }
-
-            # Keep the latest snapshot queryable by other agents (hedge oracle).
-            try:
-                pubsub.client.hset("live:lines", game["game_id"], str(payload["over_under"]))
-            except Exception as e:
-                logger.warning(f"Failed to cache live line: {e}")
-
-        time.sleep(POLL_SECONDS)
+        # Keep the latest snapshot queryable by other agents (hedge oracle).
+        try:
+            pubsub.client.hset("live:lines", game["game_id"], str(payload["over_under"]))
+            pubsub.client.expire("live:lines", 6 * 3600)  # don't serve stale days-old lines
+        except Exception as e:
+            logger.warning(f"Failed to cache live line: {e}")
 
 
 if __name__ == "__main__":

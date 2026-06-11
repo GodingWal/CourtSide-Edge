@@ -25,6 +25,11 @@ export { logger };
 export const app = express();
 const port = config.PORT;
 
+// Behind the host nginx reverse proxy: trust exactly one hop so req.ip is the
+// real client (otherwise every visitor shares 127.0.0.1 and the per-IP rate
+// limit becomes one global bucket).
+app.set('trust proxy', 1);
+
 app.use(cors({ origin: config.FRONTEND_URL }));
 app.use(express.json());
 
@@ -57,8 +62,11 @@ async function start() {
     logger.error({ err }, 'Failed to run database seed');
   }
 
-  // Connect to Redis optionally
-  if (redisClient) {
+  // Connect to Redis in the background: with a reconnect strategy the connect
+  // promise only resolves once Redis is reachable, and HTTP startup must not
+  // block on that.
+  const setupRedis = async () => {
+    if (!redisClient) return;
     try {
       await redisClient.connect();
       logger.info('Connected to Redis');
@@ -108,9 +116,11 @@ async function start() {
         )
       );
     } catch (err) {
-      logger.warn('Redis is running offline. WebSocket pub/sub stream disabled.');
+      logger.warn({ err }, 'Redis setup failed; retrying in 10s.');
+      setTimeout(setupRedis, 10_000);
     }
-  }
+  };
+  void setupRedis();
 
   const server = createServer(app);
 
@@ -126,16 +136,21 @@ async function start() {
   const shutdown = async (signal: string) => {
     logger.info({ signal }, 'Received shutdown signal, draining connections...');
 
-    // 1. Stop accepting new connections
-    server.close(() => {
-      logger.info('HTTP server closed');
-    });
-
-    // 2. Close all WebSocket clients
+    // 1. Close all WebSocket clients first so the HTTP server can drain.
     for (const client of wsClients) {
       client.close(1001, 'Server shutting down');
     }
     wsClients.clear();
+
+    // 2. Stop accepting new connections and wait (bounded) for in-flight
+    // requests — previously process.exit(0) raced the close callback.
+    await Promise.race([
+      new Promise<void>((resolve) => server.close(() => {
+        logger.info('HTTP server closed');
+        resolve();
+      })),
+      new Promise<void>((resolve) => setTimeout(resolve, 5000))
+    ]);
 
     // 3. Disconnect Redis
     if (redisClient) {

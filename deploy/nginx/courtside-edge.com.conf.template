@@ -52,6 +52,14 @@ server {
         return 301 https://courtside-edge.com$request_uri;
     }
 
+    # Dashboard login. Without this, the proxy_set_header below hands the
+    # API bearer token to EVERY visitor, making the API effectively public
+    # (bet writes, settings, bankroll, LLM chat). The htpasswd file is
+    # created by install-nginx.sh from DASHBOARD_USER/DASHBOARD_PASSWORD
+    # in deploy/env/web.env.
+    auth_basic "CourtSideEdge";
+    auth_basic_user_file /etc/nginx/.htpasswd-courtside;
+
     add_header X-Frame-Options "SAMEORIGIN" always;
     add_header X-Content-Type-Options "nosniff" always;
     add_header Referrer-Policy "strict-origin-when-cross-origin" always;

@@ -63,10 +63,8 @@ def analyze_drift():
             calibration[stat] = round(-bias * 0.5, 2) # dampening multiplier
             logger.info(f"Stat: {stat} | Sample Count: {len(errors)} | Bias detected: {bias:.2f} | Calibration Factor: {calibration[stat]:.2f}")
 
-        # Ensure defaults exist
-        for default_stat, default_val in [("PTS", -0.4), ("REB", 0.2), ("AST", 0.1)]:
-            if default_stat not in calibration:
-                calibration[default_stat] = default_val
+        # Stats with no settled sample get NO offset (Agent 3 treats absence
+        # as zero) - fabricated default offsets would bias real projections.
 
         # Save to context store
         context_client.write_context(

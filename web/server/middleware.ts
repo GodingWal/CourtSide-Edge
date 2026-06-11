@@ -1,7 +1,15 @@
 import express from 'express';
 import rateLimit from 'express-rate-limit';
+import { createHash, timingSafeEqual } from 'crypto';
 import { ZodSchema } from 'zod';
 import { config } from './config';
+
+// Constant-time token comparison (hashing first equalizes lengths).
+export const safeTokenEqual = (a: string, b: string): boolean => {
+  const ha = createHash('sha256').update(a).digest();
+  const hb = createHash('sha256').update(b).digest();
+  return timingSafeEqual(ha, hb);
+};
 
 // ── Auth Middleware ─────────────────────────────────────────────────────────
 // Bearer-token auth is enforced whenever API_KEY is set, regardless of NODE_ENV.
@@ -14,7 +22,7 @@ export const authMiddleware = (req: express.Request, res: express.Response, next
     return res.status(401).json({ error: 'Unauthorized: Missing Bearer token' });
   }
   const token = authHeader.slice(7);
-  if (token !== config.API_KEY) {
+  if (!safeTokenEqual(token, config.API_KEY)) {
     return res.status(403).json({ error: 'Forbidden: Invalid API key' });
   }
   next();

@@ -28,9 +28,17 @@ class SteamDetector:
         if not market:
             return None
         stat = odds_data.get("stat") or ("TOTAL" if odds_data.get("over_under") is not None else "LINE")
-        key = f"{market}:{stat}"
+        # Per-book history: different books post different numbers for the
+        # same market, and mixing them reads as phantom steam.
+        book = odds_data.get("book") or odds_data.get("provider") or "consensus"
+        key = f"{market}:{stat}:{book}"
         now = odds_data.get("timestamp", time.time())
 
+        if key not in self.line_history and len(self.line_history) > 2000:
+            cutoff = now - 24 * 3600
+            self.line_history = {
+                k: h for k, h in self.line_history.items() if h and h[-1][0] >= cutoff
+            }
         history = self.line_history.setdefault(key, [])
         history.append((now, float(line)))
         del history[:-HISTORY_CAP]

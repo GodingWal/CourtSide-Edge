@@ -139,6 +139,7 @@ def on_execution_order(msg_id, message, stream):
         'status': 'EXECUTED'
     }
     execution_log.append(execution_record)
+    del execution_log[:-500]  # bound in-memory history
 
     # Telegram/Discord execution alert (manual-execution workflow): the
     # human places the bet; this is the real-time prompt to do so.
@@ -160,6 +161,22 @@ def on_execution_order(msg_id, message, stream):
         output_payload=execution_record,
         confidence=confidence
     )
+
+
+def refresh_drawdown(redis_client):
+    """Pull the real drawdown the web tier mirrors into Redis.
+
+    The web server computes drawdown vs. peak whenever the bankroll is set
+    (POST /api/bankroll) and writes bankroll:drawdown_pct. Without this feed
+    the circuit breaker could never trip - current_drawdown was a constant.
+    """
+    global current_drawdown
+    try:
+        raw = redis_client.get('bankroll:drawdown_pct')
+        if raw is not None:
+            current_drawdown = float(raw) / 100.0
+    except Exception as e:
+        logger.warning(f'Could not refresh drawdown from Redis: {e}')
 
 
 def process_health_message(msg):
@@ -196,9 +213,8 @@ def start_stream_consumer():
     )
     
     try:
-        # Idle keepalive: actual work happens in Redis callback threads.
-        # Block in long interruptible waits instead of waking every second.
-        run_polling_loop(interval=30.0)
+        # Keepalive + periodic refresh of the circuit-breaker drawdown.
+        run_polling_loop(task=lambda: refresh_drawdown(pubsub.client), interval=30.0)
     except Exception as e:
         logger.error(f'Stream consumer error: {e}')
         stream.close()

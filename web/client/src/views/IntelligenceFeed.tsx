@@ -36,7 +36,32 @@ function mapInjuryStatus(status: string): InjuryStatus {
   return 'questionable'; // DOUBTFUL / QUESTIONABLE / PROBABLE
 }
 
-function parseEvents(events: any[]) {
+// Loose shape of agent-published qualitative payloads; every field is
+// optional because different channels carry different keys.
+interface QualitativePayload {
+  player_name?: string;
+  team?: string;
+  injury_status?: string;
+  game_impact?: string;
+  fatigue_penalty?: number;
+  motivation_score?: number;
+  crew?: string | string[];
+  game_id?: string;
+  tendencies?: {
+    fouls_per_40?: number | null;
+    pace_effect?: number | null;
+    ou_tendency?: string;
+    ou_hit_rate?: string;
+  };
+}
+
+interface QualitativeEvent {
+  channel: string;
+  payload: QualitativePayload | string | null;
+  timestamp: number;
+}
+
+function parseEvents(events: QualitativeEvent[]) {
   const injuries: InjuryItem[] = [];
   const sentiment: SentimentItem[] = [];
   const referees: RefereeItem[] = [];

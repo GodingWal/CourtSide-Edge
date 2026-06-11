@@ -38,8 +38,9 @@ export default function AlphaSandbox() {
       const meta = `local Hermes · ${data.elapsed_seconds ?? '?'}s`;
       setLastMeta(meta);
       setMessages((prev) => [...prev, { role: 'agent', text: data.reply ?? '(empty reply)', meta }]);
-    } catch (err: any) {
-      setMessages((prev) => [...prev, { role: 'error', text: err?.message || 'Failed to reach Agent 12.' }]);
+    } catch (err) {
+      const text = err instanceof Error ? err.message : 'Failed to reach Agent 12.';
+      setMessages((prev) => [...prev, { role: 'error', text }]);
     } finally {
       setSending(false);
     }

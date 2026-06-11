@@ -9,14 +9,16 @@ interface FeedAlert {
   time: string;
 }
 
-function classify(data: any): FeedAlert['type'] {
+type AlertPayload = Record<string, unknown> & { message?: unknown; player?: unknown; stat?: unknown; line?: unknown; direction?: unknown };
+
+function classify(data: AlertPayload): FeedAlert['type'] {
   const channel = String(data.channel || data.source || '').toLowerCase();
   if (channel.includes('steam') || channel.includes('velocity')) return 'steam';
   if (channel.includes('injury') || channel.includes('news')) return 'injury';
   return 'ev';
 }
 
-function describe(data: any): string {
+function describe(data: AlertPayload): string {
   if (typeof data.message === 'string') return data.message;
   if (data.player && data.stat) {
     return `${data.player} ${data.stat}${data.line !== undefined ? ` ${data.line}` : ''}${data.direction ? ` ${data.direction}` : ''}`;

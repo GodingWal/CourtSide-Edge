@@ -3,7 +3,7 @@ import { Receipt, Upload, Sparkles } from 'lucide-react';
 import { SkeletonCard, SkeletonTable } from '../components/Skeleton';
 import { useToast } from '../components/ToastProvider';
 import { API_BASE } from '../lib/config';
-import type { Bet, BetStats, GeneratedParlay } from '../components/bet-tracker/types';
+import type { Bet, BetStats, DraftLeg, GeneratedParlay } from '../components/bet-tracker/types';
 import BetStatsRow from '../components/bet-tracker/BetStatsRow';
 import BetsTable from '../components/bet-tracker/BetsTable';
 import SettleModal from '../components/bet-tracker/SettleModal';
@@ -43,7 +43,7 @@ export default function BetTracker() {
   const [confirmOverUnder, setConfirmOverUnder] = useState<'OVER' | 'UNDER'>('OVER');
   const [confirmOpponent, setConfirmOpponent] = useState('');
   // Parlay legs form fields
-  const [confirmLegs, setConfirmLegs] = useState<any[]>([]);
+  const [confirmLegs, setConfirmLegs] = useState<DraftLeg[]>([]);
 
   // Generator states (Agent 13)
   const [generatorOpen, setGeneratorOpen] = useState(false);
@@ -89,7 +89,10 @@ export default function BetTracker() {
   };
 
   useEffect(() => {
+    // Initial data load; all setState happens after the fetches resolve.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     fetchData();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const toggleExpandParlay = (id: number) => {
@@ -161,7 +164,7 @@ export default function BetTracker() {
     setSubmittingWager(true);
 
     try {
-      let body: any = {};
+      let body: Record<string, unknown> = {};
       if (confirmIsParlay === 1) {
         body = {
           is_parlay: 1,
@@ -201,7 +204,7 @@ export default function BetTracker() {
       setUploadOpen(false);
       setUploadFile(null);
       fetchData();
-    } catch (err) {
+    } catch {
       toast({
         title: 'Database Fault',
         description: 'Failed to write OCR bet to SQLite ledger.',
@@ -278,7 +281,7 @@ export default function BetTracker() {
 
       setGeneratorOpen(false);
       fetchData();
-    } catch (err) {
+    } catch {
       toast({
         title: 'Database Fault',
         description: 'Failed to write generated parlay to SQLite ledger.',
@@ -316,7 +319,7 @@ export default function BetTracker() {
       setActualValue('');
       setSettleResult('WIN');
       fetchData();
-    } catch (err) {
+    } catch {
       toast({
         title: 'Sync Failure',
         description: 'Failed to settle wager in database.',

@@ -19,17 +19,32 @@ class RedisPubSub:
     def __init__(self):
         self.client = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, password=REDIS_PASSWORD, decode_responses=True)
         self.pubsub = self.client.pubsub()
+        self.thread = None
 
     def publish(self, channel: str, message: Any):
         """Publish a message to a Redis channel."""
         self.client.publish(channel, json.dumps(message))
 
     def subscribe(self, channel: str, callback: Callable[[dict], None]):
-        """Subscribe to a Redis channel and execute callback on new messages."""
-        self.pubsub.subscribe(**{channel: lambda m: callback(json.loads(m['data']))})
-        
-        # Start a thread to listen for messages
-        self.thread = self.pubsub.run_in_thread(sleep_time=0.001)
+        """Subscribe to a Redis channel and execute callback on new messages.
+
+        Callback errors (including malformed JSON payloads) are logged and
+        swallowed — an exception must not kill the shared listener thread,
+        which would silently stop ALL of this process's subscriptions while
+        its heartbeat keeps reporting it healthy.
+        """
+        def _handler(m, _cb=callback, _ch=channel):
+            try:
+                _cb(json.loads(m['data']))
+            except Exception:
+                logger.exception(f'Subscriber callback failed on channel {_ch}')
+
+        self.pubsub.subscribe(**{channel: _handler})
+
+        # One listener thread serves every channel subscribed on this pubsub
+        # connection; starting a second reader on the same socket races it.
+        if self.thread is None or not self.thread.is_alive():
+            self.thread = self.pubsub.run_in_thread(sleep_time=0.001)
 
     def push_recent(self, key: str, payload: Any, cap: int = 50):
         """Maintain a capped list of recent signals (read by the web API)."""
@@ -38,7 +53,7 @@ class RedisPubSub:
 
     def close(self):
         """Close the pubsub connection."""
-        if hasattr(self, 'thread'):
+        if self.thread is not None:
             self.thread.stop()
         self.pubsub.close()
         self.client.close()
@@ -85,24 +100,32 @@ class StreamConsumer:
         self._running = True
         
         def _consume_loop():
-            # First, process any pending (unacknowledged) messages
+            # First, drain ALL pending (unacknowledged) messages, not just the
+            # first batch — otherwise a backlog deeper than one batch sits
+            # unprocessed until the next restart.
             try:
-                pending = self.client.xreadgroup(
-                    self.group_name, self.consumer_name,
-                    {stream: '0'}, count=10
-                )
-                if pending:
-                    for stream_name, messages in pending:
-                        for msg_id, msg_data in messages:
-                            if msg_data:  # Skip empty entries
-                                try:
-                                    data = json.loads(msg_data.get('data', '{}'))
-                                    callback(msg_id, data)
-                                    self.client.xack(stream, self.group_name, msg_id)
-                                    logger.info(f'Recovered pending message {msg_id} on {stream}')
-                                except Exception as e:
-                                    logger.error(f'Failed to process pending message {msg_id}: {e}')
-                                    self._move_to_dlq(stream, msg_id, msg_data, str(e))
+                while self._running:
+                    pending = self.client.xreadgroup(
+                        self.group_name, self.consumer_name,
+                        {stream: '0'}, count=100
+                    )
+                    messages = pending[0][1] if pending else []
+                    if not messages:
+                        break
+                    for msg_id, msg_data in messages:
+                        if not msg_data:
+                            # Ack empty entries so they don't stay pending and
+                            # spin this drain loop forever.
+                            self.client.xack(stream, self.group_name, msg_id)
+                            continue
+                        try:
+                            data = json.loads(msg_data.get('data', '{}'))
+                            callback(msg_id, data)
+                            self.client.xack(stream, self.group_name, msg_id)
+                            logger.info(f'Recovered pending message {msg_id} on {stream}')
+                        except Exception as e:
+                            logger.error(f'Failed to process pending message {msg_id}: {e}')
+                            self._move_to_dlq(stream, msg_id, msg_data, str(e))
             except Exception as e:
                 logger.error(f'Error processing pending messages: {e}')
 

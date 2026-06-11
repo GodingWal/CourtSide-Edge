@@ -19,9 +19,15 @@ x-agent: &agent
   env_file: [env/agents.env]
   restart: unless-stopped
 
+# Agents that call the host's local LLM (Ollama) need host.docker.internal.
+x-llm-agent: &llm-agent
+  env_file: [env/agents.env]
+  restart: unless-stopped
+  extra_hosts: ["host.docker.internal:host-gateway"]
+
 services:
   agent_12_alpha_sandbox:
-    <<: *agent
+    <<: *llm-agent
     build: { context: .., dockerfile: agents/12_alpha_sandbox/Dockerfile }
 
   agent_1_market_scraper:
@@ -29,11 +35,11 @@ services:
     build: { context: .., dockerfile: agents/1_market_scraper/Dockerfile }
 
   agent_2_news_sentinel:
-    <<: *agent
+    <<: *llm-agent
     build: { context: .., dockerfile: agents/2_news_sentinel/Dockerfile }
 
   agent_9_news_sentiment:
-    <<: *agent
+    <<: *llm-agent
     build: { context: .., dockerfile: agents/9_news_sentiment/Dockerfile }
 
   agent_3_projection_engine:

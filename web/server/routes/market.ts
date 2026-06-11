@@ -35,6 +35,17 @@ router.post('/bankroll', writeLimiter, async (req, res) => {
     const peak = Math.max(balance, ...hist.map((h) => h.balance), 0);
     const drawdown_pct = peak > 0 ? Math.round(((peak - balance) / peak) * 10000) / 100 : 0;
     await db.insert(bankroll_history).values({ timestamp: Date.now(), balance, drawdown_pct });
+    // Mirror into Redis for the agent tier: Agent 8 sizes against
+    // bankroll:current and Agent 4's circuit breaker reads
+    // bankroll:drawdown_pct (it has no other path to the real drawdown).
+    if (redisClient?.isOpen) {
+      try {
+        await redisClient.set('bankroll:current', String(balance));
+        await redisClient.set('bankroll:drawdown_pct', String(drawdown_pct));
+      } catch (redisErr) {
+        logger.warn({ err: redisErr }, 'Failed to mirror bankroll into Redis');
+      }
+    }
     res.status(201).json({ success: true, balance });
   } catch (err) {
     logger.error({ err }, 'Failed to set bankroll');
@@ -79,8 +90,12 @@ router.get('/drift/status', async (req, res) => {
 
     // Brier score (plan §9): model win probability (true_odds) vs. outcome,
     // over settled straight bets that carried a model probability.
+    // true_odds must be a probability for Brier to mean anything; bets where
+    // the field holds odds (or Agent 13's flat 0.5 pick'em placeholder) are
+    // excluded rather than poisoning the score.
     const brierBets = allBets.filter(
-      (b) => b.is_parlay === 0 && (b.result === 'WIN' || b.result === 'LOSS') && b.true_odds !== null
+      (b) => b.is_parlay === 0 && (b.result === 'WIN' || b.result === 'LOSS')
+        && b.true_odds !== null && b.true_odds > 0 && b.true_odds < 1 && b.true_odds !== 0.5
     );
     const brier_score = brierBets.length
       ? Math.round(
