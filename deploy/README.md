@@ -93,6 +93,12 @@ One-time setup (repo **Settings → Secrets and variables → Actions**):
    ssh-copy-id -i deploy_key.pub -p 26918 root@151.237.25.234
    ```
 2. Add **secrets** `VPS_SSH_KEY` and `VAST_SSH_KEY` (paste the private key).
+   Strongly recommended: also add `VAST_API_KEY` (console.vast.ai → Account)
+   and `VAST_INSTANCE_ID` (the numeric id of the agent box). vast.ai
+   instances change their SSH port and regenerate `authorized_keys` on
+   restart; with these set, the deploy job resolves the live endpoint from
+   the vast.ai API and re-attaches the deploy key before connecting, so
+   deploys survive instance restarts.
 3. Add the **variable** `DEPLOY_ENABLED=true` (master switch — jobs are skipped
    until this is set, so you never get red builds before it's configured).
 4. Optional **variables** to override defaults:
