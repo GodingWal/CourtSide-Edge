@@ -58,7 +58,8 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p ~/.ssh && chmod 700 ~/.ssh
-          printf '%s\n' "$SSH_KEY" > ~/.ssh/id_deploy && chmod 600 ~/.ssh/id_deploy
+          # tr strips Windows CR characters that corrupt pasted keys.
+          printf '%s\n' "$SSH_KEY" | tr -d '\r' > ~/.ssh/id_deploy && chmod 600 ~/.ssh/id_deploy
           ssh-keyscan -p "$PORT" -H "$HOST" >> ~/.ssh/known_hosts 2>/dev/null
           ssh -i ~/.ssh/id_deploy -p "$PORT" "$USER@$HOST" \
             "set -euo pipefail; cd $REPO_PATH && git fetch --all --prune && git reset --hard origin/main && bash deploy/scripts/deploy-web.sh"
@@ -82,7 +83,13 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p ~/.ssh && chmod 700 ~/.ssh
-          printf '%s\n' "$SSH_KEY" > ~/.ssh/id_deploy && chmod 600 ~/.ssh/id_deploy
+          # tr strips Windows CR characters that corrupt pasted keys.
+          printf '%s\n' "$SSH_KEY" | tr -d '\r' > ~/.ssh/id_deploy && chmod 600 ~/.ssh/id_deploy
+          if ! ssh-keygen -y -f ~/.ssh/id_deploy >/dev/null 2>&1; then
+            echo "✗ VAST_SSH_KEY secret is not a valid private key. Re-paste the" >&2
+            echo "  full key file (BEGIN to END lines) from a text editor." >&2
+            exit 1
+          fi
 
           # vast.ai instances change their SSH port and regenerate
           # authorized_keys on restart. When the API key + instance id are
