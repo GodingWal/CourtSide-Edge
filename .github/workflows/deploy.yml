@@ -7,7 +7,14 @@ name: Deploy
 # Required repository secrets:
 #   VPS_SSH_KEY    private key authorized on the VPS (root@76.13.100.125)
 #   VAST_SSH_KEY   private key authorized on the vast.ai box
-# Optional repository variables (defaults shown):
+# Optional repository secrets (strongly recommended — vast.ai instances change
+# their SSH port and wipe authorized_keys on restart; with these set the job
+# resolves the current host/port from the vast.ai API and re-attaches the
+# deploy key before connecting):
+#   VAST_API_KEY      vast.ai account API key (console.vast.ai → Account)
+#   VAST_INSTANCE_ID  numeric instance id of the agent box
+# Optional repository variables (defaults shown; VAST_HOST/VAST_PORT are the
+# static fallback used when VAST_API_KEY is not configured):
 #   VPS_HOST=76.13.100.125   VPS_USER=root   VPS_PORT=22    VPS_REPO_PATH=~/CourtSide-Edge
 #   VAST_HOST=151.237.25.234 VAST_USER=root  VAST_PORT=26918 VAST_REPO_PATH=~/CourtSide-Edge
 #   DEPLOY_ENABLED=true      master switch
@@ -66,6 +73,8 @@ jobs:
       - name: Deploy agent tier to the vast.ai box
         env:
           SSH_KEY: ${{ secrets.VAST_SSH_KEY }}
+          VAST_API_KEY: ${{ secrets.VAST_API_KEY }}
+          VAST_INSTANCE_ID: ${{ secrets.VAST_INSTANCE_ID }}
           HOST: ${{ vars.VAST_HOST || '151.237.25.234' }}
           USER: ${{ vars.VAST_USER || 'root' }}
           PORT: ${{ vars.VAST_PORT || '26918' }}
@@ -74,6 +83,48 @@ jobs:
           set -euo pipefail
           mkdir -p ~/.ssh && chmod 700 ~/.ssh
           printf '%s\n' "$SSH_KEY" > ~/.ssh/id_deploy && chmod 600 ~/.ssh/id_deploy
+
+          # vast.ai instances change their SSH port and regenerate
+          # authorized_keys on restart. When the API key + instance id are
+          # configured, resolve the live host/port and re-attach the deploy
+          # key so the connection survives restarts.
+          if [ -n "${VAST_API_KEY:-}" ] && [ -n "${VAST_INSTANCE_ID:-}" ]; then
+            echo "→ Resolving current SSH endpoint from the vast.ai API…"
+            INSTANCE_JSON=$(curl -fsS --retry 3 \
+              -H "Authorization: Bearer $VAST_API_KEY" \
+              "https://console.vast.ai/api/v0/instances/$VAST_INSTANCE_ID/")
+            LIVE_HOST=$(echo "$INSTANCE_JSON" | jq -r '.instances.ssh_host // .instances.public_ipaddr // empty')
+            LIVE_PORT=$(echo "$INSTANCE_JSON" | jq -r '.instances.ssh_port // empty')
+            if [ -n "$LIVE_HOST" ] && [ -n "$LIVE_PORT" ]; then
+              HOST="$LIVE_HOST"; PORT="$LIVE_PORT"
+              echo "→ Instance $VAST_INSTANCE_ID is at $HOST:$PORT"
+            else
+              echo "⚠ Could not resolve endpoint from API; falling back to $HOST:$PORT"
+            fi
+            echo "→ Attaching the deploy public key to the instance…"
+            PUBKEY=$(ssh-keygen -y -f ~/.ssh/id_deploy)
+            curl -fsS --retry 3 -X POST \
+              -H "Authorization: Bearer $VAST_API_KEY" \
+              -H "Content-Type: application/json" \
+              -d "$(jq -n --arg k "$PUBKEY" '{ssh_key: $k}')" \
+              "https://console.vast.ai/api/v0/instances/$VAST_INSTANCE_ID/ssh/" >/dev/null \
+              || echo "⚠ Key attach failed (it may already be attached); continuing."
+          fi
+
           ssh-keyscan -p "$PORT" -H "$HOST" >> ~/.ssh/known_hosts 2>/dev/null
-          ssh -i ~/.ssh/id_deploy -p "$PORT" "$USER@$HOST" \
-            "set -euo pipefail; cd $REPO_PATH && git fetch --all --prune && git reset --hard origin/main && bash deploy/scripts/deploy-agents.sh"
+
+          # Retry: key attachment can take a few seconds to propagate.
+          for attempt in 1 2 3; do
+            if ssh -i ~/.ssh/id_deploy -o IdentitiesOnly=yes -o BatchMode=yes \
+                 -o ConnectTimeout=15 -p "$PORT" "$USER@$HOST" \
+                 "set -euo pipefail; cd $REPO_PATH && git fetch --all --prune && git reset --hard origin/main && bash deploy/scripts/deploy-agents.sh"; then
+              exit 0
+            fi
+            echo "⚠ SSH attempt $attempt failed; retrying in $((attempt * 10))s…"
+            sleep $((attempt * 10))
+          done
+          echo "✗ Could not deploy to the vast.ai box. If the instance was" >&2
+          echo "  restarted, set the VAST_API_KEY + VAST_INSTANCE_ID secrets so" >&2
+          echo "  this job can re-resolve the endpoint and re-attach the key," >&2
+          echo "  or update VAST_HOST/VAST_PORT and re-authorize VAST_SSH_KEY." >&2
+          exit 1
