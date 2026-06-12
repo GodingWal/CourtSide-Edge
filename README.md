@@ -202,6 +202,23 @@ Kelly fractions reduced across all regimes to prevent over-aggressive sizing:
 
 ---
 
+## 2.4 Pick Validation & Statistical Rigor (v5.4)
+
+Post-mortem of the 2026-06-11 slate (edge-sign mismatches, a hallucinated "debut", sub-noise edges published as Buys) produced a dedicated validation mesh — no path to publication bypasses it:
+
+```
+projection → picks.raw → [Agent 24 Validation Gate] → picks.validated → narrative
+          → picks.narrated → [Agent 25 Claim Verifier] → picks.publishable → [Agent 26 Publisher]
+```
+
+- **Agent 24 — Validation Gate**: edge-sign consistency (a Buy with projection under the line is rejected, never auto-corrected), injury staleness (24h) + roster checks, payout-implied breakeven thresholds with a configurable safety margin, and blowout/minutes-risk escalation. Sub-threshold picks are retained as `LEAN` for calibration, never published.
+- **Agent 25 — Claim Verifier**: lineage check (a message injected onto `picks.narrated` without a validated ancestor is rejected), numeric scan (any narrative number absent from the payload ⟹ `FABRICATED_NUMERIC`), and deterministic claim verification (`debut`/`rookie`/injury mentions must map to payload fields, else `UNGROUNDED_CLAIM`).
+- **Agent 26 — Pick Publisher**: the only subscriber that reaches users. Re-checks the freshest line snapshot before publishing; adverse moves ≥ 0.5 re-run the threshold gate and demote to `LEAN` when the pick no longer clears it. Capture and publication lines are both recorded for CLV.
+
+The supporting library lives in `shared/picks/` (frozen Pydantic `Pick` schema with a computed-only `edge`, negative-binomial distribution outputs, Gaussian-copula same-game correlation for entry EV, A–D confidence grading, and the append-only `pick_log` powering weekly Brier/CLV reports). Every production incident becomes a permanent fixture in `agents/golden_fixtures/`, replayed by `agents/test_golden_regressions.py` as a CI gate. See `shared/picks/README.md`.
+
+---
+
 ## 3. Developer Setup & Environment Instructions
 
 ### Prerequisites

@@ -31,6 +31,9 @@ jobs:
       - run: pip install -r requirements.txt
       - run: python -m compileall agents shared infrastructure
       - run: ruff check agents shared infrastructure
+      # Golden regression suite: every observed pick-pipeline production
+      # failure is a permanent fixture; this gate blocks pipeline PRs.
+      - run: python -m pytest agents/test_golden_regressions.py -v
       - run: python -m pytest
   build-server:
     runs-on: ubuntu-latest

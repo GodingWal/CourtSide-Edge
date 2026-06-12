@@ -414,6 +414,43 @@ services:
       retries: 3
       start_period: 15s
 
+  agent_24_validation_gate:
+    build:
+      context: .
+      dockerfile: agents/24_validation_gate/Dockerfile
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  agent_25_claim_verifier:
+    build:
+      context: .
+      dockerfile: agents/25_claim_verifier/Dockerfile
+    env_file:
+      - .env
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  agent_26_pick_publisher:
+    build:
+      context: .
+      dockerfile: agents/26_pick_publisher/Dockerfile
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
   web_server:
     build:
       context: ./web/server

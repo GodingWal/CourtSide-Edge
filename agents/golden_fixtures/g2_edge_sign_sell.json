@@ -1,0 +1,22 @@
+{
+  "id": "G2",
+  "description": "2026-06-11 slate: Jones labeled Sell with a stated +0.8 edge",
+  "pick": {
+    "pick_id": "g2",
+    "player": "Jonquel Jones",
+    "team": "New York Liberty",
+    "stat": "PTS",
+    "book": "prizepicks",
+    "entry_type": "power",
+    "legs": 3,
+    "recommendation": "Sell",
+    "projection": 14.3,
+    "std": 4.8,
+    "line": 13.5,
+    "hit_probability": 0.56,
+    "breakeven_probability": 0.5848
+  },
+  "payload": null,
+  "narrative": null,
+  "expect": {"published": false, "status": "REJECTED", "codes": ["EDGE_SIGN_MISMATCH"]}
+}

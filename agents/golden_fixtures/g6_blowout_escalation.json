@@ -1,0 +1,35 @@
+{
+  "id": "G6",
+  "description": "Clark over published in a ~80% home-win-probability game: Buy on a starter clears base threshold by 1pp but not the +3pp blowout escalation",
+  "pick": {
+    "pick_id": "g6",
+    "player": "Caitlin Clark",
+    "team": "Indiana Fever",
+    "stat": "PTS",
+    "book": "prizepicks",
+    "entry_type": "power",
+    "legs": 3,
+    "recommendation": "Buy",
+    "projection": 21.5,
+    "std": 5.5,
+    "line": 19.5,
+    "hit_probability": 0.6148,
+    "breakeven_probability": 0.5848
+  },
+  "payload": {
+    "player": {"name": "Caitlin Clark", "team": "Indiana Fever", "position": "G", "career_games": 70, "seasons": 3},
+    "stat": {"category": "PTS", "line": 19.5, "book": "prizepicks"},
+    "projection": {"mean": 21.5, "std": 5.5, "hit_probability": 0.6148},
+    "form": {"l5_avg": 22.4, "l10_avg": 21.1, "minutes_l5": 31.0},
+    "matchup": {"opponent": "Connecticut Sun", "opp_def_rank_vs_stat": 11, "pace_rank": 5},
+    "game": {"spread": -12.5, "total": 162.0, "win_probability": 0.80, "home": true},
+    "injuries": []
+  },
+  "narrative": null,
+  "expect": {
+    "published": false,
+    "status": "LEAN",
+    "codes": ["BELOW_THRESHOLD", "BLOWOUT_RISK"],
+    "flags": ["BLOWOUT_RISK"]
+  }
+}
