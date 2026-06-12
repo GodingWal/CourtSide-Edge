@@ -76,6 +76,27 @@ optional `narrative`, and `expect` (`status`, `codes`, optional `flags`);
 injury freshness is expressed relative to the suite's frozen reference time
 via `last_updated_hours_ago`.
 
+## Rejection triage (Agent 27)
+
+`triage.py` powers a bounded agentic loop as an **analyst, never a trader**:
+when rejection volume spikes (current hour ≥ 3× the trailing 24h per-hour
+baseline), the local Hermes model investigates with a whitelist of read-only
+tools (rejection counts/samples, pick log slices, injury/roster feed
+freshness, agent heartbeats) and writes a markdown diagnosis to
+`recent:triage_reports` + `./data/triage_report_latest.md`.
+
+Guardrails, in order:
+1. **No path to publication**: the module writes no picks.* channel and
+   nothing the publisher reads — enforced by test
+   (`test_triage_never_publishes_to_picks_channels`).
+2. **Whitelisted read-only tools**: the model names a tool from the registry;
+   unknown names and bad arguments come back as observations, not crashes.
+3. **Bounded**: `TRIAGE_MAX_STEPS` tool calls (default 6), then the loop must
+   conclude; two consecutive malformed responses abort.
+4. **Deterministic fallback**: with no LLM reachable (or on abort), a
+   facts-only baseline report is produced — triage degrades to facts, not to
+   silence.
+
 ## Weekly calibration job (P2-3)
 
 ```python
