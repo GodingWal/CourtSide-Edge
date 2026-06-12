@@ -118,11 +118,14 @@ jobs:
               || echo "⚠ Key attach failed (it may already be attached); continuing."
           fi
 
-          ssh-keyscan -p "$PORT" -H "$HOST" >> ~/.ssh/known_hosts 2>/dev/null
+          # keyscan can be refused by the vast.ai SSH proxy; accept-new below
+          # covers host verification, so a scan failure must not abort the job.
+          ssh-keyscan -p "$PORT" -H "$HOST" >> ~/.ssh/known_hosts 2>/dev/null || true
 
           # Retry: key attachment can take a few seconds to propagate.
           for attempt in 1 2 3; do
             if ssh -i ~/.ssh/id_deploy -o IdentitiesOnly=yes -o BatchMode=yes \
+                 -o StrictHostKeyChecking=accept-new \
                  -o ConnectTimeout=15 -p "$PORT" "$USER@$HOST" \
                  "set -euo pipefail; cd $REPO_PATH && git fetch --all --prune && git reset --hard origin/main && bash deploy/scripts/deploy-agents.sh"; then
               exit 0
