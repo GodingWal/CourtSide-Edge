@@ -451,6 +451,19 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  agent_27_rejection_triage:
+    build:
+      context: .
+      dockerfile: agents/27_rejection_triage/Dockerfile
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
   web_server:
     build:
       context: ./web/server

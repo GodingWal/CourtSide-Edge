@@ -217,6 +217,8 @@ projection → picks.raw → [Agent 24 Validation Gate] → picks.validated → 
 
 The supporting library lives in `shared/picks/` (frozen Pydantic `Pick` schema with a computed-only `edge`, negative-binomial distribution outputs, Gaussian-copula same-game correlation for entry EV, A–D confidence grading, and the append-only `pick_log` powering weekly Brier/CLV reports). Every production incident becomes a permanent fixture in `agents/golden_fixtures/`, replayed by `agents/test_golden_regressions.py` as a CI gate. See `shared/picks/README.md`.
 
+- **Agent 27 — Rejection Triage Analyst**: a bounded agentic loop (analyst, never a trader). On rejection-volume spikes, the local Hermes model investigates with whitelisted read-only tools (rejection counts/samples, pick log slices, feed freshness, agent heartbeats) and writes a markdown diagnosis to `recent:triage_reports`. Hard caps on tool calls, observation-not-crash error handling, a deterministic facts-only fallback when no LLM is reachable, and a structural guarantee (tested) that it publishes to no `picks.*` channel.
+
 ---
 
 ## 3. Developer Setup & Environment Instructions
