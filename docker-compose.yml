@@ -133,6 +133,8 @@ services:
       redis:
         condition: service_healthy
     restart: unless-stopped
+    networks:
+      - deploy_default
 
   agent_5_referee_engine:
     build:
