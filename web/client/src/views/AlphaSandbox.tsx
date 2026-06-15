@@ -1,15 +1,21 @@
 import { useEffect, useRef, useState } from 'react';
-import { Cpu, Send, Terminal } from 'lucide-react';
+import { Cpu, Send, Terminal, ExternalLink } from 'lucide-react';
 import { API_BASE } from '../lib/config';
 
 interface ChatMessage {
-  role: 'user' | 'agent' | 'error';
+  role: 'user' | 'agent' | 'error' | 'info';
   text: string;
   meta?: string;
 }
 
 export default function AlphaSandbox() {
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [messages, setMessages] = useState<ChatMessage[]>([
+    {
+      role: 'info',
+      text: 'Agent 12 has been upgraded to Kimi Claw (Moonshot k2.6).\n\nFor live analysis with full context of props, projections, and injuries, message the assistant directly.',
+      meta: 'system',
+    },
+  ]);
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
   const [lastMeta, setLastMeta] = useState<string | null>(null);
@@ -35,11 +41,25 @@ export default function AlphaSandbox() {
       if (!res.ok) {
         throw new Error(data?.error || `Request failed (${res.status})`);
       }
-      const meta = `local Hermes · ${data.elapsed_seconds ?? '?'}s`;
-      setLastMeta(meta);
-      setMessages((prev) => [...prev, { role: 'agent', text: data.reply ?? '(empty reply)', meta }]);
+      // New format: Kimi Claw redirect
+      if (data.status === 'upgraded') {
+        const meta = 'Kimi Claw · External';
+        setLastMeta(meta);
+        setMessages((prev) => [
+          ...prev,
+          {
+            role: 'info',
+            text: data.response || 'Analysis is now handled by Kimi Claw. Message the assistant directly for real-time picks.',
+            meta,
+          },
+        ]);
+      } else {
+        const meta = `Kimi Claw · ${data.elapsed_seconds ?? '?'}s`;
+        setLastMeta(meta);
+        setMessages((prev) => [...prev, { role: 'agent', text: data.reply ?? '(empty reply)', meta }]);
+      }
     } catch (err) {
-      const text = err instanceof Error ? err.message : 'Failed to reach Agent 12.';
+      const text = err instanceof Error ? err.message : 'Failed to reach Kimi Claw.';
       setMessages((prev) => [...prev, { role: 'error', text }]);
     } finally {
       setSending(false);
@@ -52,11 +72,11 @@ export default function AlphaSandbox() {
       <div className="flex flex-wrap items-center justify-between gap-2 px-4 md:px-6 py-3 shrink-0">
         <div className="flex items-center gap-3">
           <Cpu className="w-5 h-5 text-cs-red" />
-          <span className="cs-badge">Agent 12 · Quantitative Signal</span>
+          <span className="cs-badge">Agent 12 · Kimi Claw</span>
         </div>
         <div className="cs-card px-3 py-1.5 flex items-center gap-2">
           <span className="cs-stat-label">Engine</span>
-          <span className="text-xs font-mono text-white/80">{lastMeta ?? 'local Hermes (GPU)'}</span>
+          <span className="text-xs font-mono text-white/80">{lastMeta ?? 'Kimi Claw (External)'}</span>
         </div>
       </div>
 
@@ -74,9 +94,9 @@ export default function AlphaSandbox() {
             {messages.length === 0 && (
               <div className="h-full flex items-center justify-center text-center px-6">
                 <p className="text-sm text-cs-muted leading-relaxed">
-                  Ask Agent 12 about today's matchups, prop lines, pace, fatigue or referee impact.
+                  Ask Kimi Claw about today's matchups, prop lines, pace, fatigue or referee impact.
                   <br />
-                  <span className="text-xs">Answers are generated live by the Hermes model running on the GPU server.</span>
+                  <span className="text-xs">Answers are generated live by the Moonshot k2.6 model.</span>
                 </p>
               </div>
             )}
@@ -85,6 +105,18 @@ export default function AlphaSandbox() {
                 <div key={i} className="flex justify-end animate-slide-up">
                   <div className="max-w-[85%] md:max-w-[75%] rounded-2xl rounded-br-md px-4 py-3 bg-cs-red/10 border border-cs-red/20">
                     <p className="text-sm text-white leading-relaxed whitespace-pre-wrap">{m.text}</p>
+                  </div>
+                </div>
+              ) : m.role === 'info' ? (
+                <div key={i} className="flex justify-start animate-slide-up">
+                  <div className="max-w-[90%] md:max-w-[80%] rounded-2xl rounded-bl-md px-4 py-4 border space-y-2 bg-blue-950/30 border-blue-500/30">
+                    <div className="flex items-center gap-2">
+                      <ExternalLink className="w-3.5 h-3.5 text-blue-400" />
+                      <span className="text-xs font-semibold text-blue-400 tracking-wide uppercase">
+                        {m.meta === 'system' ? 'System Notice' : 'Kimi Claw'}
+                      </span>
+                    </div>
+                    <p className="text-sm text-white/80 leading-relaxed whitespace-pre-wrap">{m.text}</p>
                   </div>
                 </div>
               ) : (
@@ -99,7 +131,7 @@ export default function AlphaSandbox() {
                     <div className="flex items-center gap-2">
                       <Cpu className="w-3.5 h-3.5 text-cs-red" />
                       <span className="text-xs font-semibold text-cs-red tracking-wide uppercase">
-                        {m.role === 'error' ? 'Engine Error' : 'Agent 12'}
+                        {m.role === 'error' ? 'Engine Error' : 'Kimi Claw'}
                       </span>
                     </div>
                     <p className="text-sm text-white/80 leading-relaxed whitespace-pre-wrap">{m.text}</p>
@@ -111,7 +143,7 @@ export default function AlphaSandbox() {
             {sending && (
               <div className="flex justify-start">
                 <div className="rounded-2xl rounded-bl-md px-4 py-3 bg-cs-dark border border-cs-border/30">
-                  <span className="text-sm text-cs-muted animate-pulse">Agent 12 is analyzing…</span>
+                  <span className="text-sm text-cs-muted animate-pulse">Kimi Claw is analyzing…</span>
                 </div>
               </div>
             )}
@@ -126,7 +158,7 @@ export default function AlphaSandbox() {
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={(e) => e.key === 'Enter' && send()}
                 disabled={sending}
-                placeholder="Ask Agent 12 to discover a signal…"
+                placeholder="Ask Kimi Claw to discover a signal…"
                 className="cs-input flex-1"
               />
               <button
@@ -161,7 +193,7 @@ export default function AlphaSandbox() {
                       ) : m.role === 'error' ? (
                         <span className="text-red-400">ERROR: {m.text.slice(0, 70)}</span>
                       ) : (
-                        <span className="text-cs-red">reply · {m.meta ?? 'ok'}</span>
+                        <span className="text-cs-red">{m.role === 'info' ? 'NOTICE' : 'Kimi Claw'} · {m.meta ?? 'ok'}</span>
                       )}
                     </p>
                   ))
