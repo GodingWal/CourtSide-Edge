@@ -1,6 +1,8 @@
 FROM python:3.11-slim
 WORKDIR /app
-COPY requirements.txt .
+COPY agents/30_retraining_agent/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
-COPY main.py .
-CMD ["python", "main.py"]
+COPY shared /app/shared
+COPY agents/30_retraining_agent /app/agents/30_retraining_agent
+ENV PYTHONPATH=/app
+CMD ["python", "agents/30_retraining_agent/main.py"]
