@@ -6,8 +6,10 @@ import {
   useLocation,
 } from "react-router-dom";
 import Sidebar from "./components/Sidebar";
+import SystemCortexBar from "./components/SystemCortexBar";
 import MarketDivergence from "./views/MarketDivergence";
 import AlphaSandbox from "./views/AlphaSandbox";
+import SystemStatus from "./views/SystemStatus";
 import BankrollDiagnostics from "./views/BankrollDiagnostics";
 import IntelligenceFeed from "./views/IntelligenceFeed";
 import BetTracker from "./views/BetTracker";
@@ -19,6 +21,7 @@ import ErrorBoundary from "./components/ErrorBoundary";
 
 const pageTitles: Record<string, string> = {
   "/": "Market Divergence",
+  "/system": "System Status",
   "/sandbox": "Alpha Sandbox",
   "/diagnostics": "Bankroll Diagnostics",
   "/intelligence": "Intelligence Feed",
@@ -44,48 +47,12 @@ function getPageTitle(pathname: string): string {
   return match ? pageTitles[match] : "CourtSideEdge";
 }
 
-function useAgentCount() {
-  const [count, setCount] = useState<number>(0);
-
-  useEffect(() => {
-    let cancelled = false;
-
-    async function fetchAgents() {
-      try {
-        const res = await fetch("/api/agents/health");
-        if (!res.ok) return;
-        const data = await res.json();
-        if (cancelled) return;
-
-        if (Array.isArray(data)) {
-          const online = data.filter(
-            (a: { status?: string }) => a.status === "online"
-          ).length;
-          setCount(online);
-        } else if (typeof data.online === "number") {
-          setCount(data.online);
-        } else if (typeof data.count === "number") {
-          setCount(data.count);
-        }
-      } catch (err) {
-        // graceful fallback — header will show 0
-        console.error("Failed to fetch agent health:", err);
-      }
-    }
-
-    fetchAgents();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  return count;
-}
+/* Pages that show the SystemCortexBar */
+const cortexBarPages = ["/", "/system", "/diagnostics", "/bets", "/stats"];
 
 function AppShell() {
   const location = useLocation();
   const time = useCurrentTime();
-  const agentCount = useAgentCount();
   const title = getPageTitle(location.pathname);
   const formattedTime = time.toLocaleTimeString("en-US", {
     hour: "2-digit",
@@ -94,6 +61,8 @@ function AppShell() {
     hour12: false,
   });
 
+  const showCortexBar = cortexBarPages.includes(location.pathname);
+
   return (
     <div className="flex min-h-screen bg-cs-black font-sans text-white">
       <Sidebar />
@@ -101,41 +70,45 @@ function AppShell() {
 
       <div className="ml-0 flex flex-1 flex-col md:ml-[72px]">
         {/* Header */}
-        <header className="sticky top-0 z-10 flex h-14 items-center justify-between border-b border-cs-border/30 bg-cs-black/80 px-4 backdrop-blur-lg md:px-6">
-          {/* Left: leave room for mobile hamburger */}
+        <header className="sticky top-0 z-40 flex h-14 items-center justify-between border-b border-cs-border/30 bg-cs-black/80 px-4 backdrop-blur-lg md:px-6">
+          {/* Left */}
           <div className="flex items-center gap-3 pl-10 md:pl-0">
             <h1 className="text-sm font-semibold tracking-wide text-white">
               {title}
             </h1>
             <span className="hidden h-4 w-px bg-cs-border/40 sm:block" />
-            <span className="hidden text-xs text-cs-muted sm:block">
-              v5.0.0
+            <span className="hidden text-[10px] text-cs-muted font-mono sm:block uppercase tracking-wider">
+              v5.5
             </span>
           </div>
 
           {/* Right */}
-          <div className="flex items-center gap-3 sm:gap-5">
+          <div className="flex items-center gap-4">
+            {/* Live indicator */}
             <div className="flex items-center gap-2">
               <span className="relative flex h-2 w-2">
-                <span className="absolute inline-flex h-full w-full animate-pulse-slow rounded-full bg-emerald-400 opacity-60" />
-                <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-400" />
+                <span className="absolute inline-flex h-full w-full animate-pulse-slow rounded-full bg-cs-success opacity-60" />
+                <span className="relative inline-flex h-2 w-2 rounded-full bg-cs-success" />
               </span>
-              <span className="text-xs font-medium text-cs-muted">
-                <span className="text-emerald-400">{agentCount}</span>{" "}
-                <span className="hidden sm:inline">Agents </span>Online
+              <span className="hidden text-[10px] font-bold text-cs-success uppercase tracking-wider sm:block">
+                Live
               </span>
             </div>
             <span className="hidden h-4 w-px bg-cs-border/40 sm:block" />
-            <span className="hidden font-mono text-xs tabular-nums text-cs-muted sm:block">
+            <span className="hidden font-mono text-[10px] tabular-nums text-cs-muted sm:block">
               {formattedTime}
             </span>
           </div>
         </header>
 
+        {/* System Cortex Bar — sticky below header on key pages */}
+        {showCortexBar && <SystemCortexBar />}
+
         {/* Main content area */}
         <main className="flex-1 overflow-y-auto">
           <Routes>
             <Route path="/" element={<MarketDivergence />} />
+            <Route path="/system" element={<SystemStatus />} />
             <Route path="/sandbox" element={<AlphaSandbox />} />
             <Route path="/diagnostics" element={<BankrollDiagnostics />} />
             <Route path="/intelligence" element={<IntelligenceFeed />} />

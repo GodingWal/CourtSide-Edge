@@ -1,22 +1,23 @@
 import { useEffect, useState } from 'react';
-import { Activity, TrendingUp, Zap, CircleDot, ArrowUpRight, ArrowDownRight, Sparkles } from 'lucide-react';
+import {
+  Activity,
+  TrendingUp,
+  Zap,
+  CircleDot,
+  ArrowUpRight,
+  ArrowDownRight,
+  Sparkles,
+  BarChart3,
+  Target,
+} from 'lucide-react';
 import { API_BASE } from '../lib/config';
+import AlertFeed from '../components/AlertFeed';
 
-
-/* ── radar pulse for empty alert state ─────────────────────────────── */
-function RadarPulse() {
-  return (
-    <div className="relative flex items-center justify-center w-16 h-16 mx-auto mb-4">
-      <span className="absolute inline-flex h-full w-full rounded-full bg-cs-red/20 animate-ping" />
-      <span className="absolute inline-flex h-10 w-10 rounded-full bg-cs-red/10 animate-pulse-slow" />
-      <CircleDot className="relative z-10 w-6 h-6 text-cs-red" />
-    </div>
-  );
-}
+/* ── Types ── */
 
 interface StreamMessage {
   channel: string;
-  message: unknown;
+  message: Record<string, unknown>;
 }
 
 interface VelocityAlert {
@@ -51,15 +52,38 @@ interface MarketEdge {
   divergence_score?: number;
   edge?: number;
   confidence?: number;
+  over_under?: string;
+}
+
+/* ── Edge strength color helper ── */
+
+function edgeColorClass(edge: number = 0): string {
+  if (edge >= 8) return 'text-emerald-400 bg-emerald-500/12 border-emerald-500/20';
+  if (edge >= 5) return 'text-amber-400 bg-amber-500/10 border-amber-500/20';
+  return 'text-cs-muted bg-cs-dark border-cs-border/40';
+}
+
+function edgeGlowClass(edge: number = 0): string {
+  if (edge >= 8) return 'shadow-glow-success';
+  if (edge >= 5) return 'shadow-glow-warning';
+  return '';
 }
 
 /* ═══════════════════════════════════════════════════════════════════ */
+
 export default function MarketDivergence() {
   const [messages, setMessages] = useState<StreamMessage[]>([]);
   const [velocityAlerts, setVelocityAlerts] = useState<VelocityAlert[]>([]);
   const [sharpConsensus, setSharpConsensus] = useState<SharpMove[]>([]);
   const [edges, setEdges] = useState<MarketEdge[]>([]);
-  const [betStats, setBetStats] = useState<{ avg_edge: number; avg_clv?: number; win_rate: number; wins: number; losses: number; total_profit: number } | null>(null);
+  const [betStats, setBetStats] = useState<{
+    avg_edge: number;
+    avg_clv?: number;
+    win_rate: number;
+    wins: number;
+    losses: number;
+    total_profit: number;
+  } | null>(null);
 
   /* real edges + bet stats */
   useEffect(() => {
@@ -101,12 +125,9 @@ export default function MarketDivergence() {
     const fetchVelocity = async () => {
       try {
         const res = await fetch(`${API_BASE}/velocity/alerts`);
-        if (res.ok) {
-          const data = await res.json();
-          setVelocityAlerts(data);
-        }
+        if (res.ok) setVelocityAlerts(await res.json());
       } catch (err) {
-        console.error("Failed to fetch velocity:", err);
+        console.error('Failed to fetch velocity:', err);
       }
     };
     fetchVelocity();
@@ -119,12 +140,9 @@ export default function MarketDivergence() {
     const fetchSharp = async () => {
       try {
         const res = await fetch(`${API_BASE}/sharp/consensus`);
-        if (res.ok) {
-          const data = await res.json();
-          setSharpConsensus(data);
-        }
+        if (res.ok) setSharpConsensus(await res.json());
       } catch (err) {
-        console.error("Failed to fetch sharp consensus:", err);
+        console.error('Failed to fetch sharp consensus:', err);
       }
     };
     fetchSharp();
@@ -132,271 +150,304 @@ export default function MarketDivergence() {
     return () => clearInterval(interval);
   }, []);
 
-  /* ── render ─────────────────────────────────────────────────────── */
+  const edgeValue = (e: MarketEdge) => e.divergence_score ?? e.edge ?? 0;
+  const winCount = betStats ? betStats.wins + betStats.losses : 0;
+
   return (
-    <div className="p-4 md:p-8 space-y-6 max-w-[1440px] mx-auto w-full min-h-screen animate-fade-in">
-      {/* ── Header ─────────────────────────────────────────────────── */}
+    <div className="p-4 md:p-8 space-y-5 max-w-[1440px] mx-auto w-full min-h-screen animate-fade-in">
+      {/* ── Title row ──────────────────────────────────────────── */}
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl md:text-3xl font-extrabold text-white tracking-tight flex items-center gap-3">
-          <Activity className="w-7 h-7 text-cs-red drop-shadow-[0_0_8px_rgba(239,68,68,0.6)]" />
-          Market Divergence Terminal
-        </h1>
-        <span className="text-xs text-cs-muted font-mono tracking-widest uppercase">
-          Live &bull; {new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
-        </span>
+        <div className="flex items-center gap-3">
+          <div className="w-9 h-9 rounded-xl bg-cs-red/10 border border-cs-red/20 flex items-center justify-center shadow-glow-red-sm">
+            <Target className="w-4.5 h-4.5 text-cs-red" />
+          </div>
+          <div>
+            <h1 className="text-xl md:text-2xl font-extrabold text-white tracking-tight">
+              Market Divergence
+            </h1>
+            <p className="text-[11px] text-cs-muted font-mono mt-0.5">
+              Agent 11 · Edge Detection · {edges.length} active · {new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+            </p>
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="relative flex h-2.5 w-2.5">
+            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-cs-success opacity-75" />
+            <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-cs-success" />
+          </span>
+          <span className="text-[10px] text-cs-muted font-mono uppercase tracking-wider hidden sm:inline">Live</span>
+        </div>
       </div>
 
-      {/* ── KPI Row ────────────────────────────────────────────────── */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
-        {/* Card 1 — Active Edges */}
-        <div
-          className="cs-card p-6 group hover:shadow-glow-red transition-shadow duration-500 animate-slide-up"
-          style={{ animationDelay: '0ms' }}
-        >
-          <p className="cs-stat-label flex items-center gap-1.5">
-            <Zap className="w-3.5 h-3.5 text-cs-red" />
-            Active Edges
-          </p>
-          <div className="flex items-end justify-between mt-2">
-            <span className="cs-stat text-4xl">{edges.length}</span>
+      {/* ── KPI Row ────────────────────────────────────────────── */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        {/* Active Edges */}
+        <div className="cs-card p-5 group hover:border-cs-red/40 transition-all duration-300">
+          <div className="flex items-center justify-between">
+            <span className="cs-stat-label flex items-center gap-1.5">
+              <Zap className="w-3.5 h-3.5 text-cs-red" />
+              Active Edges
+            </span>
+            <span className="cs-badge">Agent 11</span>
+          </div>
+          <span className="cs-stat text-4xl mt-3 block">{edges.length}</span>
+          <div className="mt-3 flex items-center gap-2">
+            <span className="text-[10px] text-cs-muted font-mono">
+              {edges.filter(e => (e.confidence ?? 0) >= 0.85).length} strong
+            </span>
+            <span className="text-cs-muted/30">·</span>
+            <span className="text-[10px] text-cs-muted font-mono">
+              {edges.filter(e => (e.confidence ?? 0) < 0.85).length} moderate
+            </span>
           </div>
         </div>
 
-        {/* Card 2 — Win Rate (30d) */}
-        <div
-          className="cs-card p-6 group hover:shadow-glow-red transition-shadow duration-500 animate-slide-up"
-          style={{ animationDelay: '100ms' }}
-        >
-          <p className="cs-stat-label flex items-center gap-1.5">
-            <TrendingUp className="w-3.5 h-3.5 text-cs-red" />
-            Win Rate (30d)
-          </p>
-          <span className="cs-stat text-4xl text-gradient-red mt-2 block">
-            {betStats && (betStats.wins + betStats.losses) > 0 ? `${betStats.win_rate.toFixed(1)}%` : '—'}
+        {/* Win Rate */}
+        <div className="cs-card p-5 group hover:border-cs-success/40 transition-all duration-300">
+          <div className="flex items-center justify-between">
+            <span className="cs-stat-label flex items-center gap-1.5">
+              <TrendingUp className="w-3.5 h-3.5 text-cs-success" />
+              Win Rate (30d)
+            </span>
+            <span className="cs-badge-success">{winCount} bets</span>
+          </div>
+          <span className="cs-stat text-4xl mt-3 block text-gradient-success">
+            {winCount > 0 ? `${betStats?.win_rate.toFixed(1)}%` : '—'}
           </span>
-          {/* thin progress bar */}
+          {/* Progress bar */}
           <div className="mt-3 h-1.5 w-full rounded-full bg-cs-dark overflow-hidden">
             <div
-              className="h-full rounded-full bg-gradient-to-r from-cs-red to-cs-red-bright shadow-glow-red-sm"
+              className="h-full rounded-full bg-gradient-to-r from-emerald-600 to-emerald-400 transition-all duration-700"
               style={{ width: `${Math.min(100, betStats?.win_rate ?? 0)}%` }}
             />
           </div>
         </div>
 
-        {/* Card 3 — Bankroll P&L */}
-        <div
-          className="cs-card p-6 group hover:shadow-glow-red transition-shadow duration-500 animate-slide-up"
-          style={{ animationDelay: '200ms' }}
-        >
-          <p className="cs-stat-label flex items-center gap-1.5">
-            <Activity className="w-3.5 h-3.5 text-cs-red" />
-            Bankroll P&amp;L
-          </p>
+        {/* Bankroll P&L */}
+        <div className="cs-card p-5 group hover:border-cs-info/40 transition-all duration-300">
+          <div className="flex items-center justify-between">
+            <span className="cs-stat-label flex items-center gap-1.5">
+              <Activity className="w-3.5 h-3.5 text-cs-info" />
+              Bankroll P&L
+            </span>
+            <span className="cs-badge-info">All settled</span>
+          </div>
           <span
-            className="cs-stat text-4xl mt-2 block"
+            className="cs-stat text-4xl mt-3 block"
             style={{ color: (betStats?.total_profit ?? 0) >= 0 ? '#22c55e' : '#ef4444' }}
           >
-            {betStats ? `${betStats.total_profit >= 0 ? '+' : '-'}$${Math.abs(betStats.total_profit).toLocaleString(undefined, { maximumFractionDigits: 0 })}` : '—'}
+            {betStats
+              ? `${betStats.total_profit >= 0 ? '+' : '-'}$${Math.abs(betStats.total_profit).toLocaleString(undefined, { maximumFractionDigits: 0 })}`
+              : '—'}
           </span>
-          <p className="text-xs text-cs-muted mt-1">all settled bets</p>
+          {betStats?.avg_clv !== undefined && (
+            <p className="text-[10px] text-cs-muted font-mono mt-3">
+              Avg CLV: {betStats.avg_clv.toFixed(1)}%
+            </p>
+          )}
         </div>
       </div>
 
-      {/* ── Middle Section ─────────────────────────────────────────── */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Left — EV Discrepancies Table */}
-        <div className="lg:col-span-2 cs-card p-0 overflow-hidden animate-slide-up" style={{ animationDelay: '300ms' }}>
-          <div className="px-6 pt-6 pb-4 border-b border-cs-border">
-            <h2 className="text-lg font-bold text-white flex items-center gap-2">
-              <CircleDot className="w-4 h-4 text-cs-red-bright animate-pulse-slow" />
-              Live EV Discrepancies
-            </h2>
-          </div>
+      {/* ── Main Content: 2 columns ────────────────────────────── */}
+      <div className="grid grid-cols-1 lg:grid-cols-5 gap-5">
+        {/* LEFT COLUMN (3/5) — Tables */}
+        <div className="lg:col-span-3 space-y-5">
+          {/* Live EV Discrepancies Table */}
+          <div className="cs-card p-0 overflow-hidden">
+            <div className="px-5 pt-5 pb-3 border-b border-cs-border flex items-center justify-between">
+              <h2 className="text-base font-bold text-white flex items-center gap-2">
+                <CircleDot className="w-4 h-4 text-cs-red-bright animate-pulse-slow" />
+                Live EV Discrepancies
+              </h2>
+              <span className="text-[9px] font-mono text-cs-muted uppercase tracking-wider">
+                {edges.length} rows
+              </span>
+            </div>
 
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm text-left">
-              <thead>
-                <tr className="border-b border-cs-border text-cs-muted text-xs uppercase tracking-wider">
-                  <th className="px-6 py-3 font-semibold">Player</th>
-                  <th className="px-6 py-3 font-semibold">Market</th>
-                  <th className="px-6 py-3 font-semibold">Book Line</th>
-                  <th className="px-6 py-3 font-semibold">True Line</th>
-                  <th className="px-6 py-3 font-semibold text-right">Edge%</th>
-                  <th className="px-6 py-3 font-semibold text-center">Signal</th>
-                </tr>
-              </thead>
-              <tbody>
-                {edges.length === 0 ? (
-                  <tr>
-                    <td colSpan={6} className="px-6 py-10 text-center text-cs-muted font-mono text-xs">
-                      No live edges detected yet. Agent 11 publishes here when real market divergence is found.
-                    </td>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm text-left">
+                <thead>
+                  <tr className="border-b border-cs-border text-cs-muted text-[10px] uppercase tracking-wider">
+                    <th className="px-5 py-3 font-semibold">Player</th>
+                    <th className="px-5 py-3 font-semibold">Market</th>
+                    <th className="px-5 py-3 font-semibold text-right">Book</th>
+                    <th className="px-5 py-3 font-semibold text-right">True</th>
+                    <th className="px-5 py-3 font-semibold text-right">Edge%</th>
+                    <th className="px-5 py-3 font-semibold text-center">Conf</th>
                   </tr>
-                ) : (
-                  edges.map((row, i) => (
-                    <tr
-                      key={row.trace_id ?? i}
-                      className={`border-b border-cs-border/40 transition-colors hover:bg-cs-red/[0.04] ${
-                        i % 2 === 0 ? 'bg-cs-dark/50' : 'bg-transparent'
-                      }`}
-                    >
-                      <td className="px-6 py-4 font-medium text-white whitespace-nowrap">{row.player ?? '—'}</td>
-                      <td className="px-6 py-4 text-cs-muted">
-                        {row.stat ?? row.market_classification ?? '—'}
-                        {row.book && <span className="block text-[10px] font-mono text-cs-muted/70">{row.book}</span>}
-                      </td>
-                      <td className="px-6 py-4 text-cs-muted font-mono text-xs">{row.line !== undefined ? `${row.line} ${row.odds ?? ''}` : '—'}</td>
-                      <td className="px-6 py-4 text-white font-mono text-xs">{row.true_line ?? '—'}</td>
-                      <td className="px-6 py-4 text-right">
-                        <span
-                          className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-bold"
-                          style={{ color: '#22c55e', backgroundColor: 'rgba(34,197,94,0.12)' }}
-                        >
-                          +{row.divergence_score ?? row.edge ?? 0}%
-                        </span>
-                      </td>
-                      <td className="px-6 py-4 text-center">
-                        <span
-                          className={`cs-badge text-xs font-bold tracking-wide ${
-                            (row.confidence ?? 0) >= 0.85
-                              ? 'bg-cs-red/15 text-cs-red-bright shadow-glow-red-sm'
-                              : 'bg-amber-500/10 text-amber-400'
-                          }`}
-                        >
-                          {(row.confidence ?? 0) >= 0.85 ? 'STRONG' : 'MODERATE'}
-                        </span>
+                </thead>
+                <tbody>
+                  {edges.length === 0 ? (
+                    <tr>
+                      <td colSpan={6} className="px-5 py-12 text-center text-cs-muted font-mono text-xs">
+                        <div className="flex flex-col items-center gap-2">
+                          <BarChart3 className="w-6 h-6 text-cs-muted/30" />
+                          <span>No live edges detected yet.</span>
+                          <span className="text-cs-muted/50">Agent 11 publishes here when market divergence is found.</span>
+                        </div>
                       </td>
                     </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
+                  ) : (
+                    edges.map((row, i) => {
+                      const ev = edgeValue(row);
+                      return (
+                        <tr
+                          key={row.trace_id ?? i}
+                          className={`border-b border-cs-border/40 transition-colors hover:bg-white/[0.02] ${
+                            i % 2 === 0 ? 'bg-cs-dark/30' : 'bg-transparent'
+                          }`}
+                        >
+                          <td className="px-5 py-3.5 font-semibold text-white whitespace-nowrap">
+                            {row.player ?? '—'}
+                            {row.over_under && (
+                              <span className="ml-1.5 text-[9px] font-mono text-cs-muted">{row.over_under}</span>
+                            )}
+                          </td>
+                          <td className="px-5 py-3.5 text-cs-muted text-xs">
+                            {row.stat ?? row.market_classification ?? '—'}
+                            {row.book && (
+                              <span className="block text-[9px] font-mono text-cs-muted/50 mt-0.5">{row.book}</span>
+                            )}
+                          </td>
+                          <td className="px-5 py-3.5 text-cs-muted font-mono text-xs text-right">
+                            {row.line !== undefined ? `${row.line}` : '—'}
+                            {row.odds !== null && row.odds !== undefined && (
+                              <span className="text-cs-muted/50"> @ {row.odds}</span>
+                            )}
+                          </td>
+                          <td className="px-5 py-3.5 text-white font-mono text-xs text-right">
+                            {row.true_line ?? '—'}
+                          </td>
+                          <td className="px-5 py-3.5 text-right">
+                            <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold border ${edgeColorClass(ev)} ${edgeGlowClass(ev)}`}>
+                              {ev > 0 ? '+' : ''}{ev.toFixed(1)}%
+                            </span>
+                          </td>
+                          <td className="px-5 py-3.5 text-center">
+                            <div className="flex items-center justify-center gap-1">
+                              <div className="w-8 h-1 rounded-full bg-cs-dark overflow-hidden">
+                                <div
+                                  className={`h-full rounded-full ${(row.confidence ?? 0) >= 0.85 ? 'bg-emerald-500' : (row.confidence ?? 0) >= 0.6 ? 'bg-amber-500' : 'bg-cs-muted'}`}
+                                  style={{ width: `${Math.round((row.confidence ?? 0) * 100)}%` }}
+                                />
+                              </div>
+                              <span className="text-[9px] font-mono text-cs-muted w-5 text-left">
+                                {Math.round((row.confidence ?? 0) * 100)}
+                              </span>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
+            </div>
           </div>
-        </div>
 
-        {/* New Line Velocity Anomalies (Agent 17) */}
-        <div className="lg:col-span-2 cs-card p-6 space-y-4 animate-slide-up" style={{ animationDelay: '350ms' }}>
-          <div className="border-b border-cs-border/40 pb-3 flex items-center justify-between">
-            <h2 className="text-base font-bold text-white flex items-center gap-2">
-              <Sparkles className="w-4 h-4 text-cs-red" />
-              Agent 17: Line Movement Velocity Feed
-            </h2>
-            <span className="text-[10px] bg-cs-red/20 text-cs-red-bright px-2 py-0.5 rounded font-mono font-bold">
-              REAL-TIME VOLATILITY
-            </span>
-          </div>
+          {/* Line Velocity Anomalies */}
+          <div className="cs-card p-5">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-sm font-bold text-white flex items-center gap-2">
+                <Sparkles className="w-4 h-4 text-cs-warning" />
+                Line Movement Velocity
+              </h2>
+              <span className="cs-badge-warning text-[9px]">Agent 17</span>
+            </div>
 
-          <div className="space-y-3">
-            {velocityAlerts.length === 0 ? (
-              <p className="text-xs text-cs-muted font-mono text-center py-4">No velocity anomalies detected in this cycle.</p>
-            ) : (
-              velocityAlerts.map((item, idx) => (
-                <div key={idx} className="bg-cs-dark/30 border border-cs-border/30 rounded-xl p-3.5 flex flex-col md:flex-row justify-between md:items-center gap-3 hover:border-cs-border/60 transition-colors">
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <span className="font-bold text-white text-sm">{item.player}</span>
-                      <span className="text-[10px] text-cs-muted bg-cs-dark px-1.5 py-0.2 rounded font-mono">{item.stat}</span>
-                    </div>
-                    <div className="text-xs text-cs-muted mt-1">{item.reason}</div>
-                  </div>
-                  
-                  <div className="flex items-center gap-4 text-right">
-                    <div>
-                      <div className="text-[10px] text-cs-muted uppercase font-mono">Shift Velocity</div>
-                      <div className={`text-xs font-mono font-bold flex items-center gap-0.5 justify-end ${item.direction === 'UP' ? 'text-emerald-400' : 'text-cs-red-bright'}`}>
-                        {item.direction === 'UP' ? <ArrowUpRight className="w-3.5 h-3.5" /> : <ArrowDownRight className="w-3.5 h-3.5" />}
-                        {item.delta} lines / {item.odds_delta} odds
+            <div className="space-y-2">
+              {velocityAlerts.length === 0 ? (
+                <div className="text-center py-6">
+                  <Activity className="w-5 h-5 text-cs-muted/30 mx-auto mb-2" />
+                  <p className="text-xs text-cs-muted font-mono">No velocity anomalies detected.</p>
+                </div>
+              ) : (
+                velocityAlerts.slice(0, 5).map((item, idx) => (
+                  <div
+                    key={idx}
+                    className="flex items-center justify-between bg-cs-dark/40 border border-cs-border/30 rounded-xl px-4 py-3 hover:border-cs-border/60 transition-colors"
+                  >
+                    <div className="flex items-center gap-3 min-w-0">
+                      <span className={`shrink-0 text-xs font-bold px-1.5 py-0.5 rounded font-mono ${
+                        item.direction === 'UP' ? 'text-emerald-400 bg-emerald-500/10' : 'text-cs-danger bg-cs-danger-dim'
+                      }`}>
+                        {item.direction === 'UP' ? <ArrowUpRight className="w-3 h-3 inline" /> : <ArrowDownRight className="w-3 h-3 inline" />}
+                      </span>
+                      <div className="min-w-0">
+                        <span className="text-sm font-semibold text-white">{item.player}</span>
+                        <span className="text-[10px] text-cs-muted font-mono ml-2">{item.stat}</span>
+                        <p className="text-[10px] text-cs-muted/70 truncate">{item.reason}</p>
                       </div>
                     </div>
+                    <div className="text-right shrink-0 ml-3">
+                      <div className="text-xs font-mono font-bold text-white">{item.delta}</div>
+                      <div className="text-[9px] font-mono text-cs-muted">{item.duration_seconds}s</div>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* RIGHT COLUMN (2/5) — Alerts + Sharp */}
+        <div className="lg:col-span-2 space-y-5">
+          {/* Alert Stream */}
+          <div className="cs-card p-0 overflow-hidden flex flex-col">
+            <div className="px-5 pt-5 pb-0 border-b border-cs-border flex items-center justify-between">
+              <h2 className="text-base font-bold text-white flex items-center gap-2">
+                <Zap className="w-4 h-4 text-cs-red-bright" />
+                Alert Stream
+              </h2>
+              <span className="relative flex h-2.5 w-2.5">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-cs-success opacity-75" />
+                <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-cs-success" />
+              </span>
+            </div>
+            <AlertFeed messages={messages} maxHeight="max-h-[420px]" />
+          </div>
+
+          {/* Sharp Consensus */}
+          <div className="cs-card p-5">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-sm font-bold text-white flex items-center gap-2">
+                <TrendingUp className="w-4 h-4 text-cs-success" />
+                Sharp Consensus
+              </h2>
+              <span className="cs-badge-success text-[9px]">Agent 19</span>
+            </div>
+
+            <div className="space-y-2">
+              {sharpConsensus.length === 0 ? (
+                <div className="text-center py-6">
+                  <TrendingUp className="w-5 h-5 text-cs-muted/30 mx-auto mb-2" />
+                  <p className="text-xs text-cs-muted font-mono">No sharp moves detected.</p>
+                </div>
+              ) : (
+                sharpConsensus.slice(0, 5).map((item, idx) => (
+                  <div
+                    key={idx}
+                    className="flex items-center justify-between bg-cs-dark/40 border border-cs-border/30 rounded-xl px-4 py-3 hover:border-cs-border/60 transition-colors"
+                  >
                     <div>
-                      <div className="text-[10px] text-cs-muted uppercase font-mono">Time Window</div>
-                      <div className="text-xs font-mono text-white font-bold">{item.duration_seconds}s</div>
+                      <span className="text-sm font-semibold text-white">{item.player}</span>
+                      <span className="text-[10px] text-cs-muted font-mono ml-2">{item.stat}</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-[9px] font-mono font-bold text-cs-muted bg-cs-dark px-1.5 py-0.5 rounded">
+                        {item.book}
+                      </span>
+                      <span className={`text-xs font-mono font-bold flex items-center gap-0.5 ${
+                        item.direction === 'UP' ? 'text-emerald-400' : 'text-cs-danger'
+                      }`}>
+                        {item.direction === 'UP' ? <ArrowUpRight className="w-3.5 h-3.5" /> : <ArrowDownRight className="w-3.5 h-3.5" />}
+                        {item.move}
+                      </span>
                     </div>
                   </div>
-                </div>
-              ))
-            )}
-          </div>
-        </div>
-
-        {/* Right — Alert Stream */}
-        <div className="lg:col-span-1 cs-card p-0 flex flex-col animate-slide-up" style={{ animationDelay: '400ms' }}>
-          <div className="px-6 pt-6 pb-4 border-b border-cs-border flex items-center justify-between">
-            <h2 className="text-lg font-bold text-white flex items-center gap-2">
-              <Zap className="w-4 h-4 text-cs-red-bright" />
-              Alert Stream
-            </h2>
-            <span className="relative flex h-2.5 w-2.5">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-cs-red opacity-75" />
-              <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-cs-red-bright" />
-            </span>
-          </div>
-
-          <div className="flex-1 overflow-y-auto p-4 space-y-3 max-h-[420px] scrollbar-thin scrollbar-thumb-cs-border scrollbar-track-transparent">
-            {messages.length === 0 ? (
-              <div className="flex flex-col items-center justify-center h-full py-12 text-center">
-                <RadarPulse />
-                <p className="text-sm text-cs-muted font-medium animate-pulse-slow">
-                  Scanning markets…
-                </p>
-                <p className="text-xs text-cs-muted/50 mt-1">Waiting for live signals</p>
-              </div>
-            ) : (
-              messages.map((m, i) => (
-                <div
-                  key={i}
-                  className="bg-cs-dark/60 border border-cs-border/50 rounded-lg p-3.5 hover:border-cs-red/30 transition-colors animate-fade-in"
-                >
-                  <div className="flex items-center justify-between mb-1.5">
-                    <span className="text-cs-red font-bold text-sm tracking-wide">{m.channel}</span>
-                    <span className="text-[10px] text-cs-muted font-mono">
-                      {new Date().toLocaleTimeString()}
-                    </span>
-                  </div>
-                  <pre className="text-cs-muted text-xs leading-relaxed overflow-hidden text-ellipsis whitespace-pre-wrap break-all font-mono">
-                    {JSON.stringify(m.message, null, 2)}
-                  </pre>
-                </div>
-              ))
-            )}
-          </div>
-        </div>
-
-        {/* Agent 19: Sharp Line Movement Alert Feed */}
-        <div className="lg:col-span-1 cs-card p-6 flex flex-col space-y-4 animate-slide-up" style={{ animationDelay: '450ms' }}>
-          <div className="border-b border-cs-border/40 pb-3 flex items-center justify-between">
-            <h2 className="text-base font-bold text-white flex items-center gap-2">
-              <TrendingUp className="w-4 h-4 text-cs-red" />
-              Agent 19: Sharp Consensus Feed
-            </h2>
-            <span className="text-[10px] bg-cs-red/20 text-cs-red-bright px-2 py-0.5 rounded font-mono font-bold">
-              SHARP MOVES
-            </span>
-          </div>
-
-          <div className="flex-1 overflow-y-auto space-y-3 max-h-[350px] scrollbar-thin scrollbar-thumb-cs-border scrollbar-track-transparent">
-            {sharpConsensus.length === 0 ? (
-              <p className="text-xs text-cs-muted font-mono text-center py-4">No sharp line moves detected.</p>
-            ) : (
-              sharpConsensus.map((item, idx) => (
-                <div key={idx} className="bg-cs-dark/30 border border-cs-border/30 rounded-xl p-3.5 hover:border-cs-border/60 transition-colors">
-                  <div className="flex items-center justify-between">
-                    <span className="font-bold text-white text-sm">{item.player}</span>
-                    <span className="text-[10px] text-cs-muted bg-cs-dark px-1.5 py-0.2 rounded font-mono">{item.stat}</span>
-                  </div>
-                  <div className="flex items-center justify-between mt-2">
-                    <div className="text-xs text-cs-muted font-mono flex items-center gap-1.5">
-                      <span className="text-cs-muted bg-cs-dark/40 px-1 py-0.5 rounded font-bold">{item.book}</span>
-                      <span>{item.move}</span>
-                    </div>
-                    <span className={`text-xs font-mono font-bold flex items-center gap-0.5 ${item.direction === 'UP' ? 'text-emerald-400' : 'text-cs-red-bright'}`}>
-                      {item.direction === 'UP' ? <ArrowUpRight className="w-3.5 h-3.5" /> : <ArrowDownRight className="w-3.5 h-3.5" />}
-                      {item.direction}
-                    </span>
-                  </div>
-                </div>
-              ))
-            )}
+                ))
+              )}
+            </div>
           </div>
         </div>
       </div>

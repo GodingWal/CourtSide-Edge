@@ -11,6 +11,7 @@
   }
   *::-webkit-scrollbar {
     width: 6px;
+    height: 6px;
   }
   *::-webkit-scrollbar-track {
     background: transparent;
@@ -44,6 +45,13 @@
   .cs-card:hover {
     @apply border-cs-border shadow-glow-red-sm;
   }
+  .cs-card-elevated {
+    @apply bg-cs-card/90 backdrop-blur-xl border border-cs-border/60 rounded-2xl shadow-card;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+  .cs-card-elevated:hover {
+    @apply border-cs-red/30 shadow-glow-red-sm;
+  }
   .cs-input {
     @apply w-full bg-cs-dark border border-cs-border/50 rounded-xl px-4 py-3 text-white text-sm
            placeholder:text-cs-muted/60 outline-none transition-all duration-300
@@ -61,11 +69,52 @@
     @apply inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold
            bg-cs-red/10 text-cs-red-bright border border-cs-red/20;
   }
+  .cs-badge-success {
+    @apply inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold
+           bg-cs-success-dim text-cs-success border border-cs-success/20;
+  }
+  .cs-badge-warning {
+    @apply inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold
+           bg-cs-warning-dim text-cs-warning border border-cs-warning/20;
+  }
+  .cs-badge-danger {
+    @apply inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold
+           bg-cs-danger-dim text-cs-danger border border-cs-danger/20 animate-pulse-danger;
+  }
+  .cs-badge-info {
+    @apply inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold
+           bg-cs-info-dim text-cs-info border border-cs-info/20;
+  }
   .cs-stat {
     @apply text-3xl font-bold tracking-tight;
   }
   .cs-stat-label {
     @apply text-[11px] text-cs-muted uppercase tracking-[0.12em] font-medium;
+  }
+  .cs-divider {
+    @apply h-px bg-gradient-to-r from-transparent via-cs-border/60 to-transparent;
+  }
+  .cs-trust-bar-bg {
+    @apply h-1.5 w-full rounded-full bg-cs-dark overflow-hidden;
+  }
+  .cs-trust-bar-fill {
+    @apply h-full rounded-full transition-all duration-700 ease-out;
+  }
+  .cs-alert-card {
+    @apply border border-cs-border/40 rounded-xl p-3.5 transition-all duration-200
+           hover:border-cs-border/70;
+  }
+  .cs-alert-card-steam {
+    @apply cs-alert-card bg-cs-success-dim/30 border-l-2 border-l-cs-success;
+  }
+  .cs-alert-card-news {
+    @apply cs-alert-card bg-cs-info-dim/30 border-l-2 border-l-cs-info;
+  }
+  .cs-alert-card-risk {
+    @apply cs-alert-card bg-cs-danger-dim/30 border-l-2 border-l-cs-danger;
+  }
+  .cs-alert-card-edge {
+    @apply cs-alert-card bg-cs-warning-dim/20 border-l-2 border-l-cs-warning;
   }
 }
 
@@ -73,7 +122,25 @@
   .text-gradient-red {
     @apply bg-clip-text text-transparent bg-gradient-to-r from-cs-red to-rose-400;
   }
+  .text-gradient-success {
+    @apply bg-clip-text text-transparent bg-gradient-to-r from-cs-success to-emerald-300;
+  }
   .border-gradient {
     border-image: linear-gradient(to right, transparent, rgba(220,38,38,0.3), transparent) 1;
+  }
+  .glow-success {
+    box-shadow: 0 0 12px rgba(34, 197, 94, 0.15);
+  }
+  .glow-warning {
+    box-shadow: 0 0 12px rgba(234, 179, 8, 0.15);
+  }
+  .glow-danger {
+    box-shadow: 0 0 16px rgba(239, 68, 68, 0.25);
+  }
+  .glow-info {
+    box-shadow: 0 0 12px rgba(59, 130, 246, 0.15);
+  }
+  .tabular-nums {
+    font-variant-numeric: tabular-nums;
   }
 }
