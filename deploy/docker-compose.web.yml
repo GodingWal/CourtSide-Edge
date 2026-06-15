@@ -153,6 +153,35 @@ services:
       timeout: 5s
       retries: 3
       start_period: 15s
+
+  agent_29_backtest_agent:
+    build: { context: .., dockerfile: agents/29_backtest_agent/Dockerfile }
+    env_file: [env/web.env]
+    volumes: ["../data:/app/data"]
+    depends_on: { redis: { condition: service_healthy } }
+    restart: unless-stopped
+
+  agent_30_retraining_agent:
+    build: { context: .., dockerfile: agents/30_retraining_agent/Dockerfile }
+    env_file: [env/web.env]
+    volumes: ["../data:/app/data"]
+    depends_on: { redis: { condition: service_healthy } }
+    restart: unless-stopped
+
+  agent_31_portfolio_risk:
+    build: { context: .., dockerfile: agents/31_portfolio_risk/Dockerfile }
+    env_file: [env/web.env]
+    volumes: ["../data:/app/data"]
+    depends_on: { redis: { condition: service_healthy } }
+    restart: unless-stopped
+
+  agent_32_explainability_agent:
+    build: { context: .., dockerfile: agents/32_explainability_agent/Dockerfile }
+    env_file: [env/web.env]
+    volumes: ["../data:/app/data"]
+    depends_on: { redis: { condition: service_healthy } }
+    restart: unless-stopped
+
   agent_24_validation_gate:
     build: { context: .., dockerfile: agents/24_validation_gate/Dockerfile }
     env_file: [env/web.env]
