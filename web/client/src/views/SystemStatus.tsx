@@ -77,10 +77,6 @@ function modeBadge(mode: string): string {
   }
 }
 
-function EmptyState({ text }: { text: string }) {
-  return <p className="text-xs text-cs-muted font-mono text-center py-6">{text}</p>;
-}
-
 /* ═══════════════════════════════════════════════════════════════════ */
 
 export default function SystemStatus() {
