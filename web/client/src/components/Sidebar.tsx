@@ -7,6 +7,7 @@ import {
   PieChart,
   Database,
   Receipt,
+  Server,
   Settings,
   Menu,
   X,
@@ -14,6 +15,7 @@ import {
 
 const navItems = [
   { path: "/", label: "Market Divergence", icon: Activity },
+  { path: "/system", label: "System Status", icon: Server },
   { path: "/sandbox", label: "Alpha Sandbox", icon: Cpu },
   { path: "/diagnostics", label: "Bankroll", icon: PieChart },
   { path: "/intelligence", label: "Intelligence", icon: Database },

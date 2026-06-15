@@ -8,6 +8,7 @@ import {
 import Sidebar from "./components/Sidebar";
 import MarketDivergence from "./views/MarketDivergence";
 import AlphaSandbox from "./views/AlphaSandbox";
+import SystemStatus from "./views/SystemStatus";
 import BankrollDiagnostics from "./views/BankrollDiagnostics";
 import IntelligenceFeed from "./views/IntelligenceFeed";
 import BetTracker from "./views/BetTracker";
@@ -19,6 +20,7 @@ import ErrorBoundary from "./components/ErrorBoundary";
 
 const pageTitles: Record<string, string> = {
   "/": "Market Divergence",
+  "/system": "System Status",
   "/sandbox": "Alpha Sandbox",
   "/diagnostics": "Bankroll Diagnostics",
   "/intelligence": "Intelligence Feed",
@@ -46,6 +48,7 @@ function getPageTitle(pathname: string): string {
 
 function useAgentCount() {
   const [count, setCount] = useState<number>(0);
+  const [total, setTotal] = useState<number>(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -62,10 +65,13 @@ function useAgentCount() {
             (a: { status?: string }) => a.status === "online"
           ).length;
           setCount(online);
+          setTotal(data.length);
         } else if (typeof data.online === "number") {
           setCount(data.online);
+          setTotal(data.total || 0);
         } else if (typeof data.count === "number") {
           setCount(data.count);
+          setTotal(data.total || 0);
         }
       } catch (err) {
         // graceful fallback — header will show 0
@@ -79,13 +85,13 @@ function useAgentCount() {
     };
   }, []);
 
-  return count;
+  return { count, total };
 }
 
 function AppShell() {
   const location = useLocation();
   const time = useCurrentTime();
-  const agentCount = useAgentCount();
+  const { count: agentCount, total: totalAgents } = useAgentCount();
   const title = getPageTitle(location.pathname);
   const formattedTime = time.toLocaleTimeString("en-US", {
     hour: "2-digit",
@@ -121,7 +127,8 @@ function AppShell() {
                 <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-400" />
               </span>
               <span className="text-xs font-medium text-cs-muted">
-                <span className="text-emerald-400">{agentCount}</span>{" "}
+                <span className="text-emerald-400">{agentCount}</span>
+                <span className="text-cs-muted/60">/{totalAgents}</span>{" "}
                 <span className="hidden sm:inline">Agents </span>Online
               </span>
             </div>
@@ -136,6 +143,7 @@ function AppShell() {
         <main className="flex-1 overflow-y-auto">
           <Routes>
             <Route path="/" element={<MarketDivergence />} />
+            <Route path="/system" element={<SystemStatus />} />
             <Route path="/sandbox" element={<AlphaSandbox />} />
             <Route path="/diagnostics" element={<BankrollDiagnostics />} />
             <Route path="/intelligence" element={<IntelligenceFeed />} />

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Activity, TrendingUp, Zap, CircleDot, ArrowUpRight, ArrowDownRight, Sparkles } from 'lucide-react';
+import { Activity, TrendingUp, Zap, CircleDot, ArrowUpRight, ArrowDownRight, Sparkles, BarChart3, Shield, Cpu, Eye } from 'lucide-react';
 import { API_BASE } from '../lib/config';
 
 
@@ -60,6 +60,10 @@ export default function MarketDivergence() {
   const [sharpConsensus, setSharpConsensus] = useState<SharpMove[]>([]);
   const [edges, setEdges] = useState<MarketEdge[]>([]);
   const [betStats, setBetStats] = useState<{ avg_edge: number; avg_clv?: number; win_rate: number; wins: number; losses: number; total_profit: number } | null>(null);
+  const [metaAnalysis, setMetaAnalysis] = useState<any[]>([]);
+  const [backtestReports, setBacktestReports] = useState<any[]>([]);
+  const [riskReports, setRiskReports] = useState<any[]>([]);
+  const [explanations, setExplanations] = useState<any[]>([]);
 
   /* real edges + bet stats */
   useEffect(() => {
@@ -129,6 +133,66 @@ export default function MarketDivergence() {
     };
     fetchSharp();
     const interval = setInterval(fetchSharp, 5000);
+    return () => clearInterval(interval);
+  }, []);
+
+  /* Fetch meta analysis (Agent 28) */
+  useEffect(() => {
+    const fetchMeta = async () => {
+      try {
+        const res = await fetch(`${API_BASE}/meta/analysis`);
+        if (res.ok) setMetaAnalysis(await res.json());
+      } catch (err) {
+        console.error("Failed to fetch meta analysis:", err);
+      }
+    };
+    fetchMeta();
+    const interval = setInterval(fetchMeta, 30000);
+    return () => clearInterval(interval);
+  }, []);
+
+  /* Fetch backtest reports (Agent 29) */
+  useEffect(() => {
+    const fetchBacktest = async () => {
+      try {
+        const res = await fetch(`${API_BASE}/backtest/reports`);
+        if (res.ok) setBacktestReports(await res.json());
+      } catch (err) {
+        console.error("Failed to fetch backtest reports:", err);
+      }
+    };
+    fetchBacktest();
+    const interval = setInterval(fetchBacktest, 60000);
+    return () => clearInterval(interval);
+  }, []);
+
+  /* Fetch risk reports (Agent 31) */
+  useEffect(() => {
+    const fetchRisk = async () => {
+      try {
+        const res = await fetch(`${API_BASE}/risk/reports`);
+        if (res.ok) setRiskReports(await res.json());
+      } catch (err) {
+        console.error("Failed to fetch risk reports:", err);
+      }
+    };
+    fetchRisk();
+    const interval = setInterval(fetchRisk, 30000);
+    return () => clearInterval(interval);
+  }, []);
+
+  /* Fetch explanations (Agent 32) */
+  useEffect(() => {
+    const fetchExplanations = async () => {
+      try {
+        const res = await fetch(`${API_BASE}/explanations`);
+        if (res.ok) setExplanations(await res.json());
+      } catch (err) {
+        console.error("Failed to fetch explanations:", err);
+      }
+    };
+    fetchExplanations();
+    const interval = setInterval(fetchExplanations, 30000);
     return () => clearInterval(interval);
   }, []);
 
@@ -398,6 +462,136 @@ export default function MarketDivergence() {
               ))
             )}
           </div>
+        </div>
+      {/* ── Bottom Section: New Agents 28-32 ───────────────────────── */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* Agent 28: Meta-Analysis */}
+        <div className="cs-card p-6 space-y-4 animate-slide-up" style={{ animationDelay: '500ms' }}>
+          <div className="border-b border-cs-border/40 pb-3 flex items-center justify-between">
+            <h2 className="text-base font-bold text-white flex items-center gap-2">
+              <Cpu className="w-4 h-4 text-cs-red" />
+              Agent 28: Meta-Analysis
+            </h2>
+            <span className="text-[10px] bg-cs-red/20 text-cs-red-bright px-2 py-0.5 rounded font-mono font-bold">
+              META
+            </span>
+          </div>
+          {metaAnalysis.length === 0 ? (
+            <p className="text-xs text-cs-muted font-mono text-center py-4">No meta-analysis available yet.</p>
+          ) : (
+            <div className="space-y-3">
+              {metaAnalysis.slice(0, 3).map((item, idx) => (
+                <div key={idx} className="bg-cs-dark/30 border border-cs-border/30 rounded-xl p-3.5">
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm font-bold text-white">Score: {(item.confidence?.overall_score ?? 0).toFixed(1)}%</span>
+                    <span className="text-[10px] text-cs-muted bg-cs-dark px-1.5 py-0.2 rounded font-mono uppercase">{item.confidence?.mode ?? '—'}</span>
+                  </div>
+                  <div className="grid grid-cols-4 gap-2 mt-2 text-center">
+                    <div><div className="text-xs font-mono text-emerald-400">{(item.confidence?.projection_trust ?? 0).toFixed(0)}</div><div className="text-[9px] text-cs-muted">PROJ</div></div>
+                    <div><div className="text-xs font-mono text-emerald-400">{(item.confidence?.market_trust ?? 0).toFixed(0)}</div><div className="text-[9px] text-cs-muted">MKT</div></div>
+                    <div><div className="text-xs font-mono text-emerald-400">{(item.confidence?.context_trust ?? 0).toFixed(0)}</div><div className="text-[9px] text-cs-muted">CTX</div></div>
+                    <div><div className="text-xs font-mono text-emerald-400">{(item.confidence?.execution_trust ?? 0).toFixed(0)}</div><div className="text-[9px] text-cs-muted">EXEC</div></div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Agent 29: Backtest */}
+        <div className="cs-card p-6 space-y-4 animate-slide-up" style={{ animationDelay: '550ms' }}>
+          <div className="border-b border-cs-border/40 pb-3 flex items-center justify-between">
+            <h2 className="text-base font-bold text-white flex items-center gap-2">
+              <BarChart3 className="w-4 h-4 text-cs-red" />
+              Agent 29: Backtest (30d)
+            </h2>
+            <span className="text-[10px] bg-cs-red/20 text-cs-red-bright px-2 py-0.5 rounded font-mono font-bold">
+              VALIDATION
+            </span>
+          </div>
+          {backtestReports.length === 0 ? (
+            <p className="text-xs text-cs-muted font-mono text-center py-4">No backtest reports yet.</p>
+          ) : (
+            <div className="space-y-3">
+              {backtestReports.slice(0, 3).map((item, idx) => (
+                <div key={idx} className="bg-cs-dark/30 border border-cs-border/30 rounded-xl p-3.5">
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm font-bold text-white">{item.report?.period_days ?? 30}d Performance</span>
+                    <span className={`text-xs font-mono font-bold ${(item.report?.win_rate ?? 0) >= 50 ? 'text-emerald-400' : 'text-cs-red-bright'}`}>
+                      {(item.report?.win_rate ?? 0).toFixed(1)}% WR
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-3 gap-2 mt-2 text-center">
+                    <div><div className="text-xs font-mono text-white">{item.report?.total_bets ?? 0}</div><div className="text-[9px] text-cs-muted">BETS</div></div>
+                    <div><div className="text-xs font-mono text-white">${(item.report?.pnl ?? 0).toFixed(0)}</div><div className="text-[9px] text-cs-muted">PnL</div></div>
+                    <div><div className="text-xs font-mono text-white">{(item.report?.roi ?? 0).toFixed(1)}%</div><div className="text-[9px] text-cs-muted">ROI</div></div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Agent 31: Portfolio Risk */}
+        <div className="cs-card p-6 space-y-4 animate-slide-up" style={{ animationDelay: '600ms' }}>
+          <div className="border-b border-cs-border/40 pb-3 flex items-center justify-between">
+            <h2 className="text-base font-bold text-white flex items-center gap-2">
+              <Shield className="w-4 h-4 text-cs-red" />
+              Agent 31: Portfolio Risk
+            </h2>
+            <span className="text-[10px] bg-cs-red/20 text-cs-red-bright px-2 py-0.5 rounded font-mono font-bold">
+              RISK
+            </span>
+          </div>
+          {riskReports.length === 0 ? (
+            <p className="text-xs text-cs-muted font-mono text-center py-4">No risk reports yet.</p>
+          ) : (
+            <div className="space-y-3">
+              {riskReports.slice(0, 3).map((item, idx) => (
+                <div key={idx} className={`bg-cs-dark/30 border rounded-xl p-3.5 ${(item.report?.risk_level ?? 'NORMAL') === 'HIGH' ? 'border-red-500/40' : 'border-cs-border/30'}`}>
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm font-bold text-white">Risk Level</span>
+                    <span className={`text-xs font-mono font-bold ${(item.report?.risk_level ?? 'NORMAL') === 'HIGH' ? 'text-red-400' : 'text-emerald-400'}`}>
+                      {item.report?.risk_level ?? 'NORMAL'}
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-3 gap-2 mt-2 text-center">
+                    <div><div className="text-xs font-mono text-white">{(item.report?.utilization ?? 0).toFixed(1)}%</div><div className="text-[9px] text-cs-muted">UTIL</div></div>
+                    <div><div className="text-xs font-mono text-white">{item.report?.open_bets ?? 0}</div><div className="text-[9px] text-cs-muted">OPEN</div></div>
+                    <div><div className="text-xs font-mono text-white">{item.report?.breaches?.length ?? 0}</div><div className="text-[9px] text-cs-muted">BREACHES</div></div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Agent 32: Explainability */}
+        <div className="cs-card p-6 space-y-4 animate-slide-up" style={{ animationDelay: '650ms' }}>
+          <div className="border-b border-cs-border/40 pb-3 flex items-center justify-between">
+            <h2 className="text-base font-bold text-white flex items-center gap-2">
+              <Eye className="w-4 h-4 text-cs-red" />
+              Agent 32: Explainability
+            </h2>
+            <span className="text-[10px] bg-cs-red/20 text-cs-red-bright px-2 py-0.5 rounded font-mono font-bold">
+              XAI
+            </span>
+          </div>
+          {explanations.length === 0 ? (
+            <p className="text-xs text-cs-muted font-mono text-center py-4">No explanations generated yet.</p>
+          ) : (
+            <div className="space-y-3 max-h-[300px] overflow-y-auto scrollbar-thin scrollbar-thumb-cs-border scrollbar-track-transparent">
+              {explanations.slice(0, 5).map((item, idx) => (
+                <div key={idx} className="bg-cs-dark/30 border border-cs-border/30 rounded-xl p-3.5">
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="text-sm font-bold text-white">{item.player_name ?? item.pick_id ?? '—'}</span>
+                    <span className="text-[10px] text-cs-muted bg-cs-dark px-1.5 py-0.2 rounded font-mono">{item.explanation_type ?? 'PICK'}</span>
+                  </div>
+                  <p className="text-xs text-cs-muted leading-relaxed line-clamp-3">{item.explanation ?? 'No explanation text.'}</p>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       </div>
     </div>

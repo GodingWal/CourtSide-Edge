@@ -300,7 +300,16 @@ const AGENTS_LIST = [
   { id: '20', name: 'Hedge Executor' },
   { id: '21', name: 'Rotation Tracker' },
   { id: '22', name: 'Data Watchdog' },
-  { id: '23', name: 'Game Session Manager' }
+  { id: '23', name: 'Game Session Manager' },
+  { id: '24', name: 'Validation Gate' },
+  { id: '25', name: 'Claim Verifier' },
+  { id: '26', name: 'Pick Publisher' },
+  { id: '27', name: 'Rejection Triage' },
+  { id: '28', name: 'Meta-Agent' },
+  { id: '29', name: 'Backtesting Agent' },
+  { id: '30', name: 'Retraining Agent' },
+  { id: '31', name: 'Portfolio Risk' },
+  { id: '32', name: 'Explainability Agent' },
 ];
 
 router.get('/agents/health', async (req, res) => {
@@ -319,6 +328,158 @@ router.get('/agents/health', async (req, res) => {
   } catch (err) {
     logger.error({ err }, 'Failed to query agent health');
     res.status(500).json({ error: 'Failed to query agent health' });
+  }
+});
+
+router.get('/meta/analysis', async (req, res) => {
+  try {
+    res.json(await readRecentList('recent:meta_analysis', 10));
+  } catch (err) {
+    logger.error({ err }, 'Failed to fetch meta analysis');
+    res.status(500).json({ error: 'Failed to fetch meta analysis' });
+  }
+});
+
+router.get('/backtest/reports', async (req, res) => {
+  try {
+    res.json(await readRecentList('recent:backtest_reports', 10));
+  } catch (err) {
+    logger.error({ err }, 'Failed to fetch backtest reports');
+    res.status(500).json({ error: 'Failed to fetch backtest reports' });
+  }
+});
+
+router.get('/retraining/advisories', async (req, res) => {
+  try {
+    res.json(await readRecentList('recent:retraining_advisories', 10));
+  } catch (err) {
+    logger.error({ err }, 'Failed to fetch retraining advisories');
+    res.status(500).json({ error: 'Failed to fetch retraining advisories' });
+  }
+});
+
+router.get('/risk/reports', async (req, res) => {
+  try {
+    res.json(await readRecentList('recent:risk_reports', 10));
+  } catch (err) {
+    logger.error({ err }, 'Failed to fetch risk reports');
+    res.status(500).json({ error: 'Failed to fetch risk reports' });
+  }
+});
+
+router.get('/explanations', async (req, res) => {
+  try {
+    res.json(await readRecentList('recent:explanations', 25));
+  } catch (err) {
+    logger.error({ err }, 'Failed to fetch explanations');
+    res.status(500).json({ error: 'Failed to fetch explanations' });
+  }
+});
+
+// ── Human Override API ───────────────────────────────────────────────────
+// Allows human operators to halt/resume agents, override picks, and inject
+// manual decisions into the audit trail.
+
+const HUMAN_OVERRIDE_KEY = 'human_override:status';
+
+router.get('/override/status', async (req, res) => {
+  try {
+    if (!redisClient?.isOpen) {
+      return res.json({ active: false, reason: 'Redis unavailable', timestamp: Date.now() });
+    }
+    const raw = await redisClient.get(HUMAN_OVERRIDE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      return res.json({ active: true, ...parsed });
+    }
+    res.json({ active: false, reason: null, timestamp: Date.now() });
+  } catch (err) {
+    logger.error({ err }, 'Failed to fetch override status');
+    res.status(500).json({ error: 'Failed to fetch override status' });
+  }
+});
+
+router.post('/override/halt', writeLimiter, async (req, res) => {
+  try {
+    const { reason = 'manual halt', duration_minutes = 60 } = req.body || {};
+    if (!redisClient?.isOpen) {
+      return res.status(503).json({ error: 'Redis unavailable' });
+    }
+    const record = {
+      active: true,
+      mode: 'HALT',
+      reason: String(reason).slice(0, 500),
+      expires_at: Date.now() + duration_minutes * 60_000,
+      timestamp: Date.now(),
+    };
+    await redisClient.set(HUMAN_OVERRIDE_KEY, JSON.stringify(record), {
+      EX: duration_minutes * 60,
+    });
+    // Also push to events for audit trail
+    await db.insert(qualitative_events).values({
+      channel: 'human_override',
+      payload: JSON.stringify(record),
+      timestamp: Date.now(),
+    });
+    res.status(201).json({ success: true, ...record });
+  } catch (err) {
+    logger.error({ err }, 'Failed to set halt override');
+    res.status(500).json({ error: 'Failed to set halt override' });
+  }
+});
+
+router.post('/override/resume', writeLimiter, async (req, res) => {
+  try {
+    if (!redisClient?.isOpen) {
+      return res.status(503).json({ error: 'Redis unavailable' });
+    }
+    await redisClient.del(HUMAN_OVERRIDE_KEY);
+    const record = {
+      active: false,
+      mode: 'RESUME',
+      reason: 'manual resume',
+      timestamp: Date.now(),
+    };
+    await db.insert(qualitative_events).values({
+      channel: 'human_override',
+      payload: JSON.stringify(record),
+      timestamp: Date.now(),
+    });
+    res.status(201).json({ success: true, ...record });
+  } catch (err) {
+    logger.error({ err }, 'Failed to set resume override');
+    res.status(500).json({ error: 'Failed to set resume override' });
+  }
+});
+
+router.post('/override/pick', writeLimiter, async (req, res) => {
+  try {
+    const { pick_id, action, reason } = req.body || {};
+    if (!pick_id || !action) {
+      return res.status(400).json({ error: 'pick_id and action are required' });
+    }
+    if (!['APPROVE', 'REJECT', 'HALT'].includes(action)) {
+      return res.status(400).json({ error: 'action must be APPROVE, REJECT, or HALT' });
+    }
+    const record = {
+      pick_id: String(pick_id),
+      action: String(action),
+      reason: String(reason || 'manual override').slice(0, 500),
+      timestamp: Date.now(),
+    };
+    await db.insert(qualitative_events).values({
+      channel: 'human_override_pick',
+      payload: JSON.stringify(record),
+      timestamp: Date.now(),
+    });
+    // Also publish to Redis so live agents can react
+    if (redisClient?.isOpen) {
+      await redisClient.publish('channel_human_override', JSON.stringify(record));
+    }
+    res.status(201).json({ success: true, ...record });
+  } catch (err) {
+    logger.error({ err }, 'Failed to apply pick override');
+    res.status(500).json({ error: 'Failed to apply pick override' });
   }
 });
 
