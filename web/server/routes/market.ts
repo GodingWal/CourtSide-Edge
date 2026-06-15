@@ -244,7 +244,11 @@ router.get('/baselines', async (req, res) => {
   }
 });
 
-// ── Alpha Sandbox chat (bridged over Redis to Agent 12 / local Hermes) ──────
+// ── Alpha Sandbox chat (Agent 12 replaced by Kimi Claw) ────────────────────
+// Agent 12 (Hermes local LLM) has been retired. All sandbox analysis is now
+// handled directly by the Kimi Claw assistant. The web dashboard queues
+// requests for audit purposes, but users should message the assistant
+// directly for real-time analysis.
 router.post('/sandbox/chat', writeLimiter, async (req, res) => {
   try {
     const message = String(req.body?.message ?? '').trim().slice(0, 2000);
@@ -253,19 +257,17 @@ router.post('/sandbox/chat', writeLimiter, async (req, res) => {
       return res.status(503).json({ error: 'Analysis engine offline (Redis unavailable).' });
     }
     const id = randomUUID();
-    await redisClient.lPush('sandbox:requests', JSON.stringify({ id, message, ts: Date.now() }));
+    // Queue for audit trail — Kimi Claw reads these when user messages directly
+    await redisClient.lPush('sandbox:requests', JSON.stringify({ id, message, ts: Date.now(), status: 'pending' }));
 
-    // Poll for Agent 12's reply (local LLM inference can take a while).
-    const deadline = Date.now() + 60_000;
-    while (Date.now() < deadline) {
-      const raw = await redisClient.get(`sandbox:response:${id}`);
-      if (raw) {
-        await redisClient.del(`sandbox:response:${id}`);
-        return res.json(JSON.parse(raw));
-      }
-      await new Promise((r) => setTimeout(r, 750));
-    }
-    res.status(504).json({ error: 'Agent 12 did not respond in time. Is the agent tier running?' });
+    // Return immediate redirect — real analysis happens via Kimi Claw direct message
+    res.json({
+      id,
+      response: `Agent 12 has been upgraded to Kimi Claw (Moonshot k2.6). Message the assistant directly for live analysis with full context of props, projections, and injuries.`,
+      redirect: 'kimi-claw',
+      status: 'upgraded',
+      timestamp: Date.now()
+    });
   } catch (err) {
     logger.error({ err }, 'Sandbox chat failed');
     res.status(500).json({ error: 'Sandbox chat failed' });
@@ -289,7 +291,7 @@ const AGENTS_LIST = [
   { id: '9', name: 'News Sentiment' },
   { id: '10', name: 'Game Total Projector' },
   { id: '11', name: 'Market Value Detector' },
-  { id: '12', name: 'Alpha Sandbox' },
+  { id: '12', name: 'Alpha Sandbox (Kimi Claw)' },
   { id: '13', name: 'Matchup Oracle / Parlay Gen' },
   { id: '14', name: 'CLV Tracker' },
   { id: '15', name: 'Drift Monitor' },
@@ -300,7 +302,16 @@ const AGENTS_LIST = [
   { id: '20', name: 'Hedge Executor' },
   { id: '21', name: 'Rotation Tracker' },
   { id: '22', name: 'Data Watchdog' },
-  { id: '23', name: 'Game Session Manager' }
+  { id: '23', name: 'Game Session Manager' },
+  { id: '24', name: 'Validation Gate' },
+  { id: '25', name: 'Claim Verifier' },
+  { id: '26', name: 'Pick Publisher' },
+  { id: '27', name: 'Rejection Triage' },
+  { id: '28', name: 'Meta-Agent' },
+  { id: '29', name: 'Backtesting Agent' },
+  { id: '30', name: 'Retraining Agent' },
+  { id: '31', name: 'Portfolio Risk' },
+  { id: '32', name: 'Explainability Agent' },
 ];
 
 router.get('/agents/health', async (req, res) => {
@@ -319,6 +330,158 @@ router.get('/agents/health', async (req, res) => {
   } catch (err) {
     logger.error({ err }, 'Failed to query agent health');
     res.status(500).json({ error: 'Failed to query agent health' });
+  }
+});
+
+router.get('/meta/analysis', async (req, res) => {
+  try {
+    res.json(await readRecentList('recent:meta_analysis', 10));
+  } catch (err) {
+    logger.error({ err }, 'Failed to fetch meta analysis');
+    res.status(500).json({ error: 'Failed to fetch meta analysis' });
+  }
+});
+
+router.get('/backtest/reports', async (req, res) => {
+  try {
+    res.json(await readRecentList('recent:backtest_reports', 10));
+  } catch (err) {
+    logger.error({ err }, 'Failed to fetch backtest reports');
+    res.status(500).json({ error: 'Failed to fetch backtest reports' });
+  }
+});
+
+router.get('/retraining/advisories', async (req, res) => {
+  try {
+    res.json(await readRecentList('recent:retraining_advisories', 10));
+  } catch (err) {
+    logger.error({ err }, 'Failed to fetch retraining advisories');
+    res.status(500).json({ error: 'Failed to fetch retraining advisories' });
+  }
+});
+
+router.get('/risk/reports', async (req, res) => {
+  try {
+    res.json(await readRecentList('recent:risk_reports', 10));
+  } catch (err) {
+    logger.error({ err }, 'Failed to fetch risk reports');
+    res.status(500).json({ error: 'Failed to fetch risk reports' });
+  }
+});
+
+router.get('/explanations', async (req, res) => {
+  try {
+    res.json(await readRecentList('recent:explanations', 25));
+  } catch (err) {
+    logger.error({ err }, 'Failed to fetch explanations');
+    res.status(500).json({ error: 'Failed to fetch explanations' });
+  }
+});
+
+// ── Human Override API ───────────────────────────────────────────────────
+// Allows human operators to halt/resume agents, override picks, and inject
+// manual decisions into the audit trail.
+
+const HUMAN_OVERRIDE_KEY = 'human_override:status';
+
+router.get('/override/status', async (req, res) => {
+  try {
+    if (!redisClient?.isOpen) {
+      return res.json({ active: false, reason: 'Redis unavailable', timestamp: Date.now() });
+    }
+    const raw = await redisClient.get(HUMAN_OVERRIDE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      return res.json({ active: true, ...parsed });
+    }
+    res.json({ active: false, reason: null, timestamp: Date.now() });
+  } catch (err) {
+    logger.error({ err }, 'Failed to fetch override status');
+    res.status(500).json({ error: 'Failed to fetch override status' });
+  }
+});
+
+router.post('/override/halt', writeLimiter, async (req, res) => {
+  try {
+    const { reason = 'manual halt', duration_minutes = 60 } = req.body || {};
+    if (!redisClient?.isOpen) {
+      return res.status(503).json({ error: 'Redis unavailable' });
+    }
+    const record = {
+      active: true,
+      mode: 'HALT',
+      reason: String(reason).slice(0, 500),
+      expires_at: Date.now() + duration_minutes * 60_000,
+      timestamp: Date.now(),
+    };
+    await redisClient.set(HUMAN_OVERRIDE_KEY, JSON.stringify(record), {
+      EX: duration_minutes * 60,
+    });
+    // Also push to events for audit trail
+    await db.insert(qualitative_events).values({
+      channel: 'human_override',
+      payload: JSON.stringify(record),
+      timestamp: Date.now(),
+    });
+    res.status(201).json({ success: true, ...record });
+  } catch (err) {
+    logger.error({ err }, 'Failed to set halt override');
+    res.status(500).json({ error: 'Failed to set halt override' });
+  }
+});
+
+router.post('/override/resume', writeLimiter, async (req, res) => {
+  try {
+    if (!redisClient?.isOpen) {
+      return res.status(503).json({ error: 'Redis unavailable' });
+    }
+    await redisClient.del(HUMAN_OVERRIDE_KEY);
+    const record = {
+      active: false,
+      mode: 'RESUME',
+      reason: 'manual resume',
+      timestamp: Date.now(),
+    };
+    await db.insert(qualitative_events).values({
+      channel: 'human_override',
+      payload: JSON.stringify(record),
+      timestamp: Date.now(),
+    });
+    res.status(201).json({ success: true, ...record });
+  } catch (err) {
+    logger.error({ err }, 'Failed to set resume override');
+    res.status(500).json({ error: 'Failed to set resume override' });
+  }
+});
+
+router.post('/override/pick', writeLimiter, async (req, res) => {
+  try {
+    const { pick_id, action, reason } = req.body || {};
+    if (!pick_id || !action) {
+      return res.status(400).json({ error: 'pick_id and action are required' });
+    }
+    if (!['APPROVE', 'REJECT', 'HALT'].includes(action)) {
+      return res.status(400).json({ error: 'action must be APPROVE, REJECT, or HALT' });
+    }
+    const record = {
+      pick_id: String(pick_id),
+      action: String(action),
+      reason: String(reason || 'manual override').slice(0, 500),
+      timestamp: Date.now(),
+    };
+    await db.insert(qualitative_events).values({
+      channel: 'human_override_pick',
+      payload: JSON.stringify(record),
+      timestamp: Date.now(),
+    });
+    // Also publish to Redis so live agents can react
+    if (redisClient?.isOpen) {
+      await redisClient.publish('channel_human_override', JSON.stringify(record));
+    }
+    res.status(201).json({ success: true, ...record });
+  } catch (err) {
+    logger.error({ err }, 'Failed to apply pick override');
+    res.status(500).json({ error: 'Failed to apply pick override' });
   }
 });
 

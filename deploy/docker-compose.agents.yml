@@ -121,3 +121,19 @@ services:
     <<: *agent
     build: { context: .., dockerfile: agents/23_game_session_manager/Dockerfile }
     ports: ["127.0.0.1:8019:8019"]
+
+  agent_29_backtest_agent:
+    <<: *agent
+    build: { context: .., dockerfile: agents/29_backtest_agent/Dockerfile }
+
+  agent_30_retraining_agent:
+    <<: *agent
+    build: { context: .., dockerfile: agents/30_retraining_agent/Dockerfile }
+
+  agent_31_portfolio_risk:
+    <<: *agent
+    build: { context: .., dockerfile: agents/31_portfolio_risk/Dockerfile }
+
+  agent_32_explainability_agent:
+    <<: *agent
+    build: { context: .., dockerfile: agents/32_explainability_agent/Dockerfile }
