@@ -21,7 +21,8 @@ from typing import Dict, List, Optional
 from fastapi import FastAPI
 import uvicorn
 
-from shared.base_agent import setup_logging, db_connect, db_available
+from shared.base_agent import setup_logging, db_connect
+from shared.db import db_available
 from shared.context_client import ContextClient
 from shared.redis_client import RedisPubSub, StreamConsumer
 
@@ -284,8 +285,9 @@ class MetaAgent:
                 "SELECT * FROM bets ORDER BY placed_at DESC LIMIT ?", (limit,)
             )
             rows = cursor.fetchall()
+            cols = [d[0] for d in cursor.description] if cursor.description else []
             conn.close()
-            return [dict(row) for row in rows]
+            return [dict(zip(cols, row)) for row in rows]
         except Exception as e:
             logger.warning(f"Could not fetch bets: {e}")
         return []
@@ -300,7 +302,8 @@ class MetaAgent:
             )
             row = cursor.fetchone()
             conn.close()
-            return {"avg_clv_pct": row["avg_clv"] if row and row["avg_clv"] else 0}
+            avg_clv = row[0] if row and row[0] is not None else 0
+            return {"avg_clv_pct": avg_clv}
         except Exception as e:
             logger.warning(f"Could not fetch CLV: {e}")
         return {"avg_clv_pct": 0}
