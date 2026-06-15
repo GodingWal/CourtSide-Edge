@@ -569,7 +569,7 @@ services:
       dockerfile: Dockerfile
     container_name: courtside_web_client
     ports:
-      - "80:80"
+      - "127.0.0.1:8080:80"
     depends_on:
       web_server:
         condition: service_healthy
