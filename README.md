@@ -1,10 +1,65 @@
 # CourtSideEdge: Real-Time WNBA Quantitative Analytics & Wager Terminal
 
-CourtSideEdge is an agentic sports-betting system built for real-time edge detection, portfolio risk sizers, referee telemetry analysis, and high-EV parlay formulation. It orchestrates a **21-agent decoupled microservice architecture** communicating via Redis Pub/Sub and Redis Streams, persisting to PostgreSQL (or SQLite for single-host setups), and exposing live data via WebSockets and SSE to a premium dashboard.
+CourtSideEdge is an agentic sports-betting system built for real-time edge detection, portfolio risk sizers, referee telemetry analysis, and high-EV parlay formulation. It orchestrates a **29-agent decoupled microservice architecture** communicating via Redis Pub/Sub and Redis Streams, persisting to PostgreSQL (or SQLite for single-host setups), and exposing live data via WebSockets and SSE to a premium dashboard.
+
+> **Agent Roster: 0–28** | **Current Version: v5.5** | **Last Updated: 2026-06-15**
+
+---
+
+## Table of Contents
+
+1. [System Architecture](#1-system-architecture)
+2. [Architecture Improvements](#2-architecture-improvements)
+   - [v5.0](#2.0-v5.0) · [v5.1](#2.1-v5.1) · [v5.2](#2.2-v5.2) · [v5.3](#2.3-v5.3) · [v5.4](#2.4-v5.4) · [v5.5](#2.5-v5.5)
+3. [Developer Setup](#3-developer-setup--environment-instructions)
+4. [Telemetry Systems](#4-telemetry-systems--messaging-bus)
+5. [Data Schema](#5-data-schema)
+6. [API Reference](#6-api-reference)
+7. [Database Migrations](#7-database-migrations)
+8. [Testing](#8-testing)
+9. [Deployment](#9-deployment)
+10. [Project Structure](#10-project-structure)
 
 ---
 
 ## 1. System Architecture
+
+### The 29-Agent Roster
+
+| # | Agent | Role | Channel/Stream | Protocol |
+|---|-------|------|----------------|----------|
+| 0 | **Historical ETL** | Syncs team stats, rosters, past outcomes to SQLite/PostgreSQL | Direct DB | Batch |
+| 1 | **Market Scraper** | Monitors sportsbooks for live line openings & movements | `channel_live_odds` | Pub/Sub |
+| 2 | **News Sentinel** | Listens to Twitter/X for breaking team updates | `channel_roster_updates` | Pub/Sub |
+| 2.5 | **Game Flow Oracle** | Aggregates real-time play-by-play for mid-game shifts | `channel_live_flow` | Pub/Sub |
+| 3 | **Projection Engine** | 6-layer ensemble (Bayesian + Poisson + Copula + XGBoost). **Reads shared context store** for referee/fatigue/roster enrichments | `channel_true_projections` | Pub/Sub |
+| 4 | **Execution Oracle** | Enforces 15% max drawdown circuit breaker + **0.5 confidence gate** | `stream_execution_queue` | **Streams** |
+| 5 | **Referee Engine** | Profiles officiating crews for pace/foul effects. **Writes to context store** | `channel_referee_context` | Pub/Sub + Context |
+| 6 | **Steam Detector** | Spots syndicate action and sharp liquidity moves | `channel_steam_alerts` | Pub/Sub |
+| 7 | **Correlation Guard** | Monitors same-game exposure with **dynamic limits** (3-4 based on confidence) | `stream_market_intelligence` → `stream_approved_edges` | **Streams** |
+| 8 | **Bankroll Sizer** | **Dynamic Kelly** with adaptive fractions (HOT/NORMAL/COLD/HALT regimes) | `stream_approved_edges` → `stream_execution_queue` | **Streams** |
+| 9 | **News Sentiment** | NLP sentiment on coach quotes and travel fatigue. **Writes to context store** | `channel_sentiment_context` | Pub/Sub + Context |
+| 10 | **Game Total Projector** | Evaluates tempo/defense for full-game O/U bounds | `channel_game_totals` | Pub/Sub |
+| 11 | **Market Value Detector** | Scans book pricing discrepancies with **confidence scoring** | `stream_market_intelligence` | **Streams** |
+| 12 | **Alpha Sandbox** | Experimental research sandbox for testing new alpha signals offline | `channel_alpha_signals` | Pub/Sub |
+| 13 | **Parlay Gen & Matchup Oracle** | FastAPI service generating 2-leg EV parlays with qualitative summaries | `/api/parlay/generate` | REST |
+| 14 | **CLV Tracker** | Measures Closing-Line Value — the gold standard for betting sharpness | `channel_live_odds` + `/api/clv/*` | Pub/Sub + REST |
+| 15 | **Drift Monitor** | Calculates rolling projection error (MAE/bias) and writes offset context | `/api/drift/status` | REST + Context |
+| 16 | **Hedge Oracle** | Computes locked-in EV hedging and arbitrage middle actions | `/api/hedges` | REST + SQL |
+| 17 | **Velocity Agent** | Monitors rate-of-change velocity anomalies in lines/odds | `channel_live_odds` | Pub/Sub |
+| 18 | **Liquidity Oracle** | Monitors and exposes max bet limits per sportsbook to prevent limit rejections | `/api/liquidity/limits` | REST |
+| 19 | **Sharp Profiler** | Tracks Pinnacle/Circa lines as leading indicator of retail lag bets | `/api/sharp/consensus` | REST + Pub/Sub |
+| 20 | **Hedge Executor** | Places automated counter-hedges in the database for EV locks | `/api/hedges` | REST + SQL |
+| 21 | **Rotation Tracker** | Tracks fouls and live minutes adjustments to adjust projections | `/api/live/rotations` | REST + Context |
+| 22 | **Data Watchdog** | Monitors data pipeline health, freshness, and agent heartbeat timeouts | `channel_system_health` | Pub/Sub |
+| 23 | **Game Session Manager** | Manages active game sessions and coordinates per-game agent lifecycle | `channel_session_events` | Pub/Sub |
+| 24 | **Validation Gate** | Edge-sign consistency, injury staleness, breakeven threshold validation | `picks.raw` → `picks.validated` | **Streams** |
+| 25 | **Claim Verifier** | Lineage check, numeric scan, deterministic claim verification | `picks.narrated` → `picks.publishable` | **Streams** |
+| 26 | **Pick Publisher** | Final publication gate; re-checks line snapshots before release | `picks.publishable` | **Streams** |
+| 27 | **Rejection Triage Analyst** | Bounded agentic loop for diagnosing rejection-volume spikes | `recent:triage_reports` | Pub/Sub |
+| 28 | **Meta-Agent (Prefrontal Cortex)** | System-wide confidence scoring, health synthesis, calibration advisory | `channel_meta_analysis` | Pub/Sub + Context |
+
+### Architecture Diagram
 
 ```mermaid
 graph TD
@@ -20,23 +75,27 @@ graph TD
         A6[Agent 6: Steam Detector] -->|Market Volume / Steam Alerts| Redis
         A9[Agent 9: News Sentiment] -->|Coach Sentiment Scores| Redis
         A9 -->|Write Enrichments| CTX
+        A22[Agent 22: Data Watchdog] -->|Health / Freshness Alerts| Redis
+        A23[Agent 23: Game Session Manager] -->|Session Lifecycle| Redis
     end
 
     %% Shared Memory Layer
     subgraph Memory Layer [Shared Agent Memory]
         CTX -->|Read Context & Calibration| A3
         A15[Agent 15: Drift Monitor] -->|Write Calibration| CTX
+        A28[Agent 28: Meta-Agent] -->|Write Calibration Advisory| CTX
     end
 
     %% Analytical & Math Core
     subgraph Core Analytics [Analytical Engine & Guardrails]
-        A0[Agent 0: Historical ETL] -->|Historical Context| DB[(SQLite Database)]
+        A0[Agent 0: Historical ETL] -->|Historical Context| DB[(Database)]
         A3[Agent 3: Projection Engine] -->|True Odds Projections| Redis
         A10[Agent 10: Game Total Projector] -->|Game O/U Lines| Redis
         A11[Agent 11: Market Value Detector] -->|Confidence-Scored Divergence| Streams((Redis Streams))
         A7[Agent 7: Correlation Guard] -->|Correlation Coefficients| Streams
         A8[Agent 8: Bankroll Sizer] -->|Dynamic Kelly Sizing| Streams
         A13[Agent 13: Parlay Gen & Matchup Oracle] -->|FastAPI EV Parlays + Hermes Rationale| Redis
+        A12[Agent 12: Alpha Sandbox] -.->|Experimental Signals| A11
     end
 
     %% Decision Pipeline (Redis Streams with DLQ)
@@ -48,12 +107,32 @@ graph TD
         Streams -.->|Failed Messages| DLQ[Dead Letter Queue]
     end
 
+    %% Pick Validation Mesh (v5.4)
+    subgraph Validation Mesh [Pick Validation Mesh]
+        A3 -->|picks.raw| A24[Agent 24: Validation Gate]
+        A24 -->|picks.validated| A25[Agent 25: Claim Verifier]
+        A25 -->|picks.publishable| A26[Agent 26: Pick Publisher]
+        A26 -->|Published Picks| Redis
+        A27[Agent 27: Rejection Triage] -->|Diagnosis Reports| Redis
+    end
+
+    %% Meta-Agent Cortex (v5.5)
+    subgraph MetaCortex [System Prefrontal Cortex]
+        A28 -->|Meta-Confidence Score| CTX
+        A28 -->|System Health Report| Redis
+        A28 -->|Calibration Advisory| A8
+        A28 -->|Mode Changes| A4
+    end
+
     %% Audit & Tracking
     subgraph Audit & Tracking [Traceability & Calibration Layer]
         A11 -->|Log Decision| AUDIT[(Decision Audit Trail)]
         A7 -->|Log Decision| AUDIT
         A8 -->|Log Decision| AUDIT
         A4 -->|Log Decision| AUDIT
+        A24 -->|Log Decision| AUDIT
+        A25 -->|Log Decision| AUDIT
+        A26 -->|Log Decision| AUDIT
         A14[Agent 14: CLV Tracker] -->|Closing Line Value| DB
         DB -->|Query Settled Bets| A15
         DB -->|Query Active Bets| A16[Agent 16: Hedge Oracle]
@@ -71,130 +150,105 @@ graph TD
     Redis -->|Qualitative Event Logging| Backend
 ```
 
-### The 21-Agent Roster
-
-| # | Agent | Role | Channel/Stream | Protocol |
-|---|-------|------|----------------|----------|
-| 0 | **Historical ETL** | Syncs team stats, rosters, past outcomes to SQLite | Direct DB | Batch |
-| 1 | **Market Scraper** | Monitors sportsbooks for live line openings & movements | `channel_live_odds` | Pub/Sub |
-| 2 | **News Sentinel** | Listens to Twitter/X for breaking team updates | `channel_roster_updates` | Pub/Sub |
-| 2.5 | **Game Flow Oracle** | Aggregates real-time play-by-play for mid-game shifts | `channel_live_flow` | Pub/Sub |
-| 3 | **Projection Engine** | 6-layer ensemble (Bayesian + Poisson + Copula + XGBoost). **Reads shared context store** for referee/fatigue/roster enrichments | `channel_true_projections` | Pub/Sub |
-| 4 | **Execution Oracle** | Enforces 15% max drawdown circuit breaker + **0.5 confidence gate** | `stream_execution_queue` | **Streams** |
-| 5 | **Referee Engine** | Profiles officiating crews for pace/foul effects. **Writes to context store** | `channel_referee_context` | Pub/Sub + Context |
-| 6 | **Steam Detector** | Spots syndicate action and sharp liquidity moves | `channel_steam_alerts` | Pub/Sub |
-| 7 | **Correlation Guard** | Monitors same-game exposure with **dynamic limits** (3-4 based on confidence) | `stream_market_intelligence` → `stream_approved_edges` | **Streams** |
-| 8 | **Bankroll Sizer** | **Dynamic Kelly** with adaptive fractions (HOT/NORMAL/COLD/HALT regimes) | `stream_approved_edges` → `stream_execution_queue` | **Streams** |
-| 9 | **News Sentiment** | NLP sentiment on coach quotes and travel fatigue. **Writes to context store** | `channel_sentiment_context` | Pub/Sub + Context |
-| 10 | **Game Total Projector** | Evaluates tempo/defense for full-game O/U bounds | `channel_game_totals` | Pub/Sub |
-| 11 | **Market Value Detector** | Scans book pricing discrepancies with **confidence scoring** | `stream_market_intelligence` | **Streams** |
-| 13 | **Parlay Gen & Matchup Oracle** | FastAPI service generating 2-leg EV parlays with qualitative summaries | `/api/parlay/generate` | REST |
-| 14 | **CLV Tracker** | Measures Closing-Line Value — the gold standard for betting sharpness | `channel_live_odds` + `/api/clv/*` | Pub/Sub + REST |
-| 15 | **Drift Monitor** | Calculates rolling projection error (MAE/bias) and writes offset context | `/api/drift/status` | REST + Context |
-| 16 | **Hedge Oracle** | Computes locked-in EV hedging and arbitrage middle actions | `/api/hedges` | REST + SQL |
-| 17 | **Velocity Agent** | Monitors rate-of-change velocity anomalies in lines/odds | `channel_live_odds` | Pub/Sub |
-| 18 | **Liquidity Oracle** | Monitors and exposes max bet limits per sportsbook to prevent limit rejections | `/api/liquidity/limits` | REST |
-| 19 | **Sharp Profiler** | Tracks Pinnacle/Circa lines as leading indicator of retail lag bets | `/api/sharp/consensus` | REST + Pub/Sub |
-| 20 | **Hedge Executor** | Places automated counter-hedges in SQLite database for EV locks | `/api/hedges` | REST + SQL |
-| 21 | **Rotation Tracker** | Tracks fouls and live minutes adjustments to adjust projections | `/api/live/rotations` | REST + Context |
-
 ---
 
-## 2. Architecture Improvements (v5.0)
+## 2. Architecture Improvements
 
-### Shared Agent Memory Layer
+### 2.0 v5.0
+
+#### Shared Agent Memory Layer
 Agents no longer operate in isolation. A `agent_context_store` table and Redis hash (`agent:context:{game_id}`) act as a shared blackboard:
 - **Agent 5** writes referee foul bias profiles
 - **Agent 9** writes coach fatigue and sentiment scores
 - **Agent 3** reads all enrichments before running its ensemble, adjusting usage redistribution and pace projections
 
-### Confidence Scoring Protocol
+#### Confidence Scoring Protocol
 Every signal on Redis now carries a standardized confidence envelope (`confidence`, `sample_size`, `decay_seconds`). This allows:
 - Agent 7 to use dynamic correlation limits (allow 4 same-game bets if all signals are >0.85)
 - Agent 8 to scale Kelly fraction by signal confidence
 - Agent 4 to reject execution below a 0.5 confidence floor
 
-### Decision Audit Trail
+#### Decision Audit Trail
 A `decision_audit` table logs every agent's approve/reject/size/execute decision with a shared `trace_id` UUID. Query any trace to see the full decision chain: Agent 11 → 7 → 8 → 4.
 
-### Redis Streams & Dead-Letter Queue
+#### Redis Streams & Dead-Letter Queue
 The critical execution pipeline (`stream_market_intelligence` → `stream_approved_edges` → `stream_execution_queue`) uses Redis Streams with consumer groups instead of fire-and-forget Pub/Sub. Failed messages move to `*_dlq` streams for retry.
 
-### Dynamic Kelly Recalibration
-Agent 8 queries the last 50 settled bets from SQLite to compute realized win rate, then adapts:
+#### Dynamic Kelly Recalibration
+Agent 8 queries the last 50 settled bets from the database to compute realized win rate, then adapts:
 - Win rate ≥ 60% → 1/3 Kelly (HOT_STREAK)
 - Win rate ≥ 50% → 1/4 Kelly (NORMAL)
 - Win rate ≥ 48% → 1/6 Kelly (COLD_STREAK)
 - Win rate < 48% → **HALT all sizing**
 
-### Closing-Line Value (CLV) Tracker
+#### Closing-Line Value (CLV) Tracker
 Agent 14 records the closing odds at game time and calculates CLV percentage for every bet. The `/api/clv/summary` endpoint provides aggregate CLV statistics broken down by stat category and result type.
 
 ---
 
-## 2.1 Architecture Improvements (v5.1)
+### 2.1 v5.1
 
-### Projection Drift & Calibration (Agent 15)
-Agent 15 monitors settled bet outcomes from the SQLite ledger to compute Mean Absolute Error (MAE) and bias. It saves calibration multipliers into the context store, which Agent 3 reads to dynamically shift points, assists, and rebounds projections.
+#### Projection Drift & Calibration (Agent 15)
+Agent 15 monitors settled bet outcomes from the database ledger to compute Mean Absolute Error (MAE) and bias. It saves calibration multipliers into the context store, which Agent 3 reads to dynamically shift points, assists, and rebounds projections.
 
-### Dynamic Hedging & Arbitrage (Agent 16)
+#### Dynamic Hedging & Arbitrage (Agent 16)
 Agent 16 scans active bets against live lines to detect middle and lock-in profit hedging windows. Recommendations are saved to the `hedging_opportunities` table and surfaced on the diagnostics dashboard.
 
-### Line Movement Velocity (Agent 17)
+#### Line Movement Velocity (Agent 17)
 Agent 17 calculates odds/line velocity delta per minute. Real-time anomalies are pushed to `channel_steam_alerts` and rendered on the market divergence feed.
 
 ---
 
-## 2.2 Architecture Improvements (v5.2)
+### 2.2 v5.2
 
-### Sportsbook Limits & Liquidity Tracking (Agent 18)
+#### Sportsbook Limits & Liquidity Tracking (Agent 18)
 Agent 18 monitors sportsbook limits (e.g. Pinnacle, FanDuel, DraftKings) and registers active bet limits. The Bankroll Sizer (Agent 8) fetches these limits to scale stake sizes accordingly, preventing wager rejection.
 
-### Sharp Consensus Profiler (Agent 19)
+#### Sharp Consensus Profiler (Agent 19)
 Agent 19 tracks line changes on sharp books (Pinnacle/Circa) and publishes consensus triggers. Agent 11 subscribes to these moves to immediately identify and execute retail sportsbook lag wagers.
 
-### Automated Hedge Executions (Agent 20)
-Agent 20 integrates with Agent 16's Hedging Oracle to automatically execute offsetting bets in the SQLite ledger when locked-in EV thresholds are crossed. All automated hedges are logged in the `bets` ledger with `is_hedge = 1`.
+#### Automated Hedge Executions (Agent 20)
+Agent 20 integrates with Agent 16's Hedging Oracle to automatically execute offsetting bets in the database ledger when locked-in EV thresholds are crossed. All automated hedges are logged in the `bets` ledger with `is_hedge = 1`.
 
-### Live Rotations & Fouls Tracker (Agent 21)
+#### Live Rotations & Fouls Tracker (Agent 21)
 Agent 21 tracks game flow fouls and rotation changes. It publishes minutes adjustments directly to the shared context store, which Agent 3 reads to apply immediate projection reductions.
 
 ---
 
-## 2.3 Architecture Improvements (v5.3)
+### 2.3 v5.3
 
-### Database: PostgreSQL or SQLite
-Set `DATABASE_URL=postgresql://...` (see `.env.example`) and both the Express server and every Python agent switch from the SQLite file to PostgreSQL — one network endpoint shared by all tiers. This removes the single-host constraint on the ledger-coupled agents (the remote agent tier reads/writes the ledger directly instead of going through the HTTP audit fallback and Redis bankroll mirrors), and a wrong connection string fails loudly at startup instead of silently writing to a stray file. The bundled `postgres` compose service starts with `COMPOSE_PROFILES=postgres`; copy an existing ledger over with `deploy/scripts/migrate_sqlite_to_postgres.py`.
+#### Database: PostgreSQL or SQLite
+Set `DATABASE_URL=postgresql://...` (see `.env.example`) and both the Express server and every Python agent switch from SQLite to PostgreSQL — one network endpoint shared by all tiers. This removes the single-host constraint on the ledger-coupled agents. The bundled `postgres` compose service starts with `COMPOSE_PROFILES=postgres`; copy an existing ledger over with `deploy/scripts/migrate_sqlite_to_postgres.py`.
 
 Without `DATABASE_URL`, SQLite remains fully supported: **WAL (Write-Ahead Logging) mode** with a 5-second `busy_timeout` eliminates `SQLITE_BUSY` errors from concurrent agent writes, and foreign key enforcement is enabled.
 
-### Docker Healthchecks & Service Dependencies
+#### Docker Healthchecks & Service Dependencies
 All containers now include `healthcheck` definitions. Redis uses `redis-cli ping` and the web server uses an HTTP `/health` endpoint. `depends_on` entries use `condition: service_healthy` to prevent premature startup.
 
-### Production Web Client (Nginx)
+#### Production Web Client (Nginx)
 The web client Dockerfile uses a multi-stage build: Vite compiles to static assets, then Nginx serves them with SPA fallback, API proxy, WebSocket proxy, gzip compression, and 1-year static asset caching.
 
-### API Authentication
+#### API Authentication
 All `/api/*` endpoints are protected by Bearer token authentication in production mode. Set the `API_KEY` environment variable and include `Authorization: Bearer <key>` in requests. Auth is skipped in development and test modes.
 
-### Rate Limiting
+#### Rate Limiting
 Write endpoints (`POST`, `PUT`, `PATCH`) are rate-limited to **100 requests per minute per IP** using `express-rate-limit`.
 
-### Structured Logging
-All server logs use **Pino** for structured JSON output in production and pretty-printed colored output in development. This enables integration with log aggregation tools (ELK, Loki, Datadog).
+#### Structured Logging
+All server logs use **Pino** for structured JSON output in production and pretty-printed colored output in development.
 
-### Graceful Shutdown
+#### Graceful Shutdown
 The server handles `SIGTERM` and `SIGINT` signals by draining HTTP connections, closing WebSocket clients, disconnecting Redis, and closing the database before exiting.
 
-### Database Indexes
+#### Database Indexes
 Performance indexes added to frequently-queried columns:
 - `bets`: `placed_at`, `result`, `parent_id`
 - `decision_audit`: `trace_id`, `timestamp`
 - `agent_context_store`: composite `(game_id, agent_id)`
 - `qualitative_events`: `timestamp`
 
-### Kelly Fraction Safety (Agent 8)
-Kelly fractions reduced across all regimes to prevent over-aggressive sizing:
+#### Kelly Fraction Safety (Agent 8)
+Kelly fractions reduced across all regimes:
 - HOT_STREAK: 1/4 Kelly (was 1/3)
 - NORMAL: 1/6 Kelly (was 1/4)
 - COLD_STREAK: 1/10 Kelly (was 1/6)
@@ -202,7 +256,7 @@ Kelly fractions reduced across all regimes to prevent over-aggressive sizing:
 
 ---
 
-## 2.4 Pick Validation & Statistical Rigor (v5.4)
+### 2.4 v5.4
 
 Post-mortem of the 2026-06-11 slate (edge-sign mismatches, a hallucinated "debut", sub-noise edges published as Buys) produced a dedicated validation mesh — no path to publication bypasses it:
 
@@ -211,13 +265,55 @@ projection → picks.raw → [Agent 24 Validation Gate] → picks.validated → 
           → picks.narrated → [Agent 25 Claim Verifier] → picks.publishable → [Agent 26 Publisher]
 ```
 
-- **Agent 24 — Validation Gate**: edge-sign consistency (a Buy with projection under the line is rejected, never auto-corrected), injury staleness (24h) + roster checks, payout-implied breakeven thresholds with a configurable safety margin, and blowout/minutes-risk escalation. Sub-threshold picks are retained as `LEAN` for calibration, never published.
-- **Agent 25 — Claim Verifier**: lineage check (a message injected onto `picks.narrated` without a validated ancestor is rejected), numeric scan (any narrative number absent from the payload ⟹ `FABRICATED_NUMERIC`), and deterministic claim verification (`debut`/`rookie`/injury mentions must map to payload fields, else `UNGROUNDED_CLAIM`).
-- **Agent 26 — Pick Publisher**: the only subscriber that reaches users. Re-checks the freshest line snapshot before publishing; adverse moves ≥ 0.5 re-run the threshold gate and demote to `LEAN` when the pick no longer clears it. Capture and publication lines are both recorded for CLV.
+#### Agent 24 — Validation Gate
+Edge-sign consistency (a Buy with projection under the line is rejected, never auto-corrected), injury staleness (24h) + roster checks, payout-implied breakeven thresholds with a configurable safety margin, and blowout/minutes-risk escalation. Sub-threshold picks are retained as `LEAN` for calibration, never published.
 
-The supporting library lives in `shared/picks/` (frozen Pydantic `Pick` schema with a computed-only `edge`, negative-binomial distribution outputs, Gaussian-copula same-game correlation for entry EV, A–D confidence grading, and the append-only `pick_log` powering weekly Brier/CLV reports). Every production incident becomes a permanent fixture in `agents/golden_fixtures/`, replayed by `agents/test_golden_regressions.py` as a CI gate. See `shared/picks/README.md`.
+#### Agent 25 — Claim Verifier
+Lineage check (a message injected onto `picks.narrated` without a validated ancestor is rejected), numeric scan (any narrative number absent from the payload ⟹ `FABRICATED_NUMERIC`), and deterministic claim verification (`debut`/`rookie`/injury mentions must map to payload fields, else `UNGROUNDED_CLAIM`).
 
-- **Agent 27 — Rejection Triage Analyst**: a bounded agentic loop (analyst, never a trader). On rejection-volume spikes, the local Hermes model investigates with whitelisted read-only tools (rejection counts/samples, pick log slices, feed freshness, agent heartbeats) and writes a markdown diagnosis to `recent:triage_reports`. Hard caps on tool calls, observation-not-crash error handling, a deterministic facts-only fallback when no LLM is reachable, and a structural guarantee (tested) that it publishes to no `picks.*` channel.
+#### Agent 26 — Pick Publisher
+The only subscriber that reaches users. Re-checks the freshest line snapshot before publishing; adverse moves ≥ 0.5 re-run the threshold gate and demote to `LEAN` when the pick no longer clears it. Capture and publication lines are both recorded for CLV.
+
+#### Shared Picks Library (`shared/picks/`)
+Frozen Pydantic `Pick` schema with a computed-only `edge`, negative-binomial distribution outputs, Gaussian-copula same-game correlation for entry EV, A–D confidence grading, and the append-only `pick_log` powering weekly Brier/CLV reports. Every production incident becomes a permanent fixture in `agents/golden_fixtures/`, replayed by `agents/test_golden_regressions.py` as a CI gate. See `shared/picks/README.md`.
+
+#### Agent 27 — Rejection Triage Analyst
+A bounded agentic loop (analyst, never a trader). On rejection-volume spikes, the local Hermes model investigates with whitelisted read-only tools (rejection counts/samples, pick log slices, feed freshness, agent heartbeats) and writes a markdown diagnosis to `recent:triage_reports`. Hard caps on tool calls, observation-not-crash error handling, a deterministic facts-only fallback when no LLM is reachable, and a structural guarantee (tested) that it publishes to no `picks.*` channel.
+
+#### Agent 12 — Alpha Sandbox
+Experimental research sandbox for offline testing of new alpha signals. Generates synthetic projections against historical slates without touching the live decision pipeline. Results feed into Agent 11's Market Value Detector when correlation thresholds are met.
+
+#### Agent 22 — Data Watchdog
+Monitors data pipeline health across all agents, tracking feed freshness, heartbeat timeouts, and stale projection detection. Publishes `channel_system_health` alerts when any data source exceeds configurable staleness thresholds.
+
+#### Agent 23 — Game Session Manager
+Manages the lifecycle of active game sessions, coordinating per-game agent startup and teardown. Ensures agents subscribe/unsubscribe from game-specific channels as match times approach and conclude, preventing stale channel subscriptions.
+
+---
+
+### 2.5 v5.5
+
+#### Agent 28 — Meta-Agent (System Prefrontal Cortex)
+
+The Meta-Agent sits above the entire agent mesh and asks: *Given what Agent 3 projected, Agent 5 observed about refs, Agent 11 found as market edge, and Agent 15 detected as drift... should we actually pull the trigger?*
+
+It produces four outputs on every analysis cycle (default: every 30 seconds, or triggered by steam alerts):
+
+1. **`meta_confidence_score`** — Weighted composite of projection trust (35%), market trust (25%), context trust (20%), and execution trust (20%). Range: 0.0–1.0.
+
+2. **`system_health_report`** — Identifies which agents are drifting, stale, or failing based on Data Watchdog (Agent 22) feeds and heartbeat telemetry.
+
+3. **`final_narrative`** — Human-readable markdown synthesis explaining WHY the system is betting (or not), including component scores and recent win/loss context.
+
+4. **`calibration_advisory`** — Dynamically adjusts Agent 8 (Bankroll Sizer) parameters:
+   - **HOT_STREAK** (overall > 0.80, drift MAE < 2.5): Full Kelly fractions, 3% cap
+   - **NORMAL**: Standard Kelly fractions
+   - **COLD_STREAK** (overall < 0.55 or execution < 0.55): Reduced Kelly (0.5×), 1.5% cap
+   - **HALT** (overall < 0.35 or drift MAE > 5.0 or execution < 0.4): Zero exposure — system stops sizing
+
+**System Mode Hysteresis**: Mode changes trigger webhook alerts (configurable via `META_WEBHOOK_URL`). The Meta-Agent writes both `calibration_advisory` and `meta_confidence` entries to the shared context store under `game_id = "system_wide"` with 24-hour TTL, allowing any agent to query the current system regime.
+
+**Health Endpoint**: `GET /health` on port 8020 returns current mode and mode-change timestamp. `GET /status` returns recent message counts and subsystem health.
 
 ---
 
@@ -228,43 +324,48 @@ The supporting library lives in `shared/picks/` (frozen Pydantic `Pick` schema w
 - **Python** (v3.11+)
 - **Docker** & **Docker Compose** (Required for containerized runtime)
 
-### Local Development Flow
+### Quick Start
 
 1. **Clone & Configure Environment**:
-   Create a `.env` file at the root:
-   ```env
-   REDIS_URL=redis://localhost:6379
-   PORT=3000
-   ```
-
-2. **Database Seeding**:
-   The database schema is initialized and populated automatically when the backend server launches. To reset the DB manually:
    ```bash
-   cd web/server
-   npm run seed
+   git clone https://github.com/GodingWal/CourtSide-Edge.git
+   cd CourtSide-Edge
+   cp .env.example .env
+   # Edit .env with your values
    ```
 
-3. **Launch the Redis Bus & Agents (Docker)**:
+2. **Launch the Full Stack (Docker)**:
    ```bash
    docker-compose up --build -d
    ```
-   All services include Docker healthchecks — Redis verifies connectivity via `redis-cli ping` and the web server exposes a `/health` endpoint. Services wait for healthy dependencies before starting. The web client container uses a multi-stage Nginx build for production.
+   All services include Docker healthchecks. Services wait for healthy dependencies before starting.
 
-   *Note: If Docker is unavailable locally, the express backend handles connection failures gracefully and defaults to offline/SQLite-direct capabilities.*
+3. **Access the Dashboard**:
+   - Web UI: http://localhost:5173
+   - API: http://localhost:3000/api
+   - Agent health endpoints: http://localhost:8020/health (Meta-Agent)
 
-4. **Run Server & Client locally**:
-   - **Backend Server (Port 3000)**:
-     ```bash
-     cd web/server
-     npm install
-     npm run dev
-     ```
-   - **Frontend Dashboard (Port 5173)**:
-     ```bash
-     cd web/client
-     npm install
-     npm run dev
-     ```
+### Local Development (without Docker)
+
+```bash
+# Terminal 1 — Redis
+redis-server
+
+# Terminal 2 — Backend Server (Port 3000)
+cd web/server
+npm install
+npm run dev
+
+# Terminal 3 — Frontend Dashboard (Port 5173)
+cd web/client
+npm install
+npm run dev
+
+# Terminal 4+ — Individual agents
+cd agents/28_meta_agent
+pip install -r requirements.txt
+python main.py
+```
 
 ### Environment Variables
 
@@ -272,25 +373,61 @@ The supporting library lives in `shared/picks/` (frozen Pydantic `Pick` schema w
 |----------|---------|----------|-------------|
 | `PORT` | `3000` | No | Express server port |
 | `REDIS_URL` | `redis://localhost:6379` | No | Redis connection URL |
-| `DATABASE_PATH` | `../../data/hoopstats_wnba.db` | No | SQLite database file path |
+| `DATABASE_PATH` | `./data/hoopstats_wnba.db` | No | SQLite database file path |
+| `DATABASE_URL` | — | **PostgreSQL** | PostgreSQL connection string (overrides SQLite) |
+| `COMPOSE_PROFILES` | — | No | Set to `postgres` to start PostgreSQL service |
 | `NODE_ENV` | `development` | No | `development`, `production`, or `test` |
 | `API_KEY` | — | **Production only** | Bearer token for API authentication |
+| `FRONTEND_URL` | `http://localhost:5173` | No | CORS origin for the dashboard |
 | `KELLY_MAX_FRACTION` | `0.03` | No | Max bankroll fraction cap for Agent 8 |
+| `HERMES_API_KEY` | — | No | LLM API key for Hermes-powered agents |
+| `META_ANALYSIS_INTERVAL` | `30` | No | Meta-Agent analysis cycle (seconds) |
+| `META_HALT_THRESHOLD` | `0.35` | No | Confidence score below which system halts |
+| `META_HOT_THRESHOLD` | `0.80` | No | Confidence score for HOT_STREAK mode |
+| `META_DRIFT_HALT` | `5.0` | No | Drift MAE threshold for system halt |
+| `META_DRIFT_HOT` | `2.5` | No | Drift MAE threshold for hot streak |
+| `META_WEBHOOK_URL` | — | No | Webhook URL for Meta-Agent mode-change alerts |
 
 ---
 
 ## 4. Telemetry Systems & Messaging Bus
 
-### Pub/Sub Channel Registry (Informational)
-- `channel_live_odds`: Raw sportsbook odds updates
-- `channel_true_projections`: Player projections from Agent 3's ensemble
-- `channel_steam_alerts` / `channel_sharp_moves`: Market edge notifications
-- `channel_roster_updates` / `channel_referee_context` / `channel_sentiment_context`: Qualitative event streams, permanently logged to SQLite
+### Pub/Sub Channel Registry
+
+**Informational Channels:**
+| Channel | Publisher | Description |
+|---------|-----------|-------------|
+| `channel_live_odds` | Agent 1, Agent 14, Agent 17 | Raw sportsbook odds updates |
+| `channel_true_projections` | Agent 3 | Player projections from ensemble model |
+| `channel_steam_alerts` | Agent 6, Agent 17, Agent 19 | Market edge / steam notifications |
+| `channel_sharp_moves` | Agent 19 | Sharp book line changes |
+| `channel_roster_updates` | Agent 2 | Breaking team news |
+| `channel_referee_context` | Agent 5 | Referee profiles & pace effects |
+| `channel_sentiment_context` | Agent 9 | Coach fatigue & sentiment scores |
+| `channel_live_flow` | Agent 2.5 | Real-time play-by-play telemetry |
+| `channel_game_totals` | Agent 10 | Full-game O/U bounds |
+| `channel_alpha_signals` | Agent 12 | Experimental alpha signals (sandbox) |
+| `channel_system_health` | Agent 22 | Pipeline health & freshness alerts |
+| `channel_session_events` | Agent 23 | Game session lifecycle events |
+| `channel_meta_analysis` | Agent 28 | System-wide confidence & health reports |
+
+**Pick Pipeline Streams:**
+| Channel | Stage | Description |
+|---------|-------|-------------|
+| `picks.raw` | Agent 3 output | Raw projection picks |
+| `picks.validated` | Agent 24 output | Edge-sign validated picks |
+| `picks.narrated` | Narrative layer | Picks with generated rationale |
+| `picks.publishable` | Agent 25 output | Claim-verified, ready to publish |
+| `recent:triage_reports` | Agent 27 output | Rejection-spike diagnoses |
+| `recent:meta_analysis` | Agent 28 output | Recent meta-analysis snapshots |
 
 ### Redis Streams Registry (Critical Pipeline)
-- `stream_market_intelligence`: Agent 11 → Agent 7 (with consumer groups & DLQ)
-- `stream_approved_edges`: Agent 7 → Agent 8
-- `stream_execution_queue`: Agent 8 → Agent 4
+
+| Stream | Producer | Consumer | Description |
+|--------|----------|----------|-------------|
+| `stream_market_intelligence` | Agent 11 | Agent 7 | Value-detector output with consumer groups & DLQ |
+| `stream_approved_edges` | Agent 7 | Agent 8, Agent 28 | Correlation-guard-approved edges |
+| `stream_execution_queue` | Agent 8 | Agent 4 | Sized bets awaiting execution |
 
 ### Web Telemetry Bridging
 - **WebSockets (`ws://localhost:3000`)**: Real-time channel for odds matrices and health telemetry
@@ -298,35 +435,63 @@ The supporting library lives in `shared/picks/` (frozen Pydantic `Pick` schema w
 
 ---
 
-## 5. SQLite Data Schema
+## 5. Data Schema
 
-All persistent data lives in `hoopstats_wnba.db`:
+The system supports both **SQLite** (default, single-host) and **PostgreSQL** (production, multi-host). When `DATABASE_URL` is set, all tiers use PostgreSQL with the same schema.
+
+### Core Tables
 
 ```sql
 -- Core Players Registry
-CREATE TABLE players (id TEXT PRIMARY KEY, name TEXT NOT NULL, team TEXT NOT NULL, status TEXT);
+CREATE TABLE players (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    team TEXT NOT NULL,
+    status TEXT
+);
 
 -- Bankroll Tracking
-CREATE TABLE bankroll_history (id INTEGER PRIMARY KEY AUTOINCREMENT, timestamp INTEGER NOT NULL, balance REAL NOT NULL, drawdown_pct REAL NOT NULL);
+CREATE TABLE bankroll_history (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    timestamp INTEGER NOT NULL,
+    balance REAL NOT NULL,
+    drawdown_pct REAL NOT NULL
+);
 
 -- Wager Ledger (parlay containers + child legs + CLV tracking)
 CREATE TABLE bets (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    parent_id INTEGER, is_parlay INTEGER, is_hedge INTEGER,
-    player TEXT, stat TEXT, line REAL, over_under TEXT,
-    book_odds INTEGER NOT NULL, true_odds REAL, edge_pct REAL,
-    stake REAL NOT NULL, result TEXT, actual_value REAL, profit_loss REAL,
-    placed_at INTEGER NOT NULL, settled_at INTEGER,
-    opposing_team TEXT, notes TEXT,
-    closing_odds INTEGER, clv_pct REAL  -- Agent 14 CLV Tracker
+    parent_id INTEGER,
+    is_parlay INTEGER,
+    is_hedge INTEGER,
+    player TEXT,
+    stat TEXT,
+    line REAL,
+    over_under TEXT,
+    book_odds INTEGER NOT NULL,
+    true_odds REAL,
+    edge_pct REAL,
+    stake REAL NOT NULL,
+    result TEXT,
+    actual_value REAL,
+    profit_loss REAL,
+    placed_at INTEGER NOT NULL,
+    settled_at INTEGER,
+    opposing_team TEXT,
+    notes TEXT,
+    closing_odds INTEGER,
+    clv_pct REAL  -- Agent 14 CLV Tracker
 );
 
 -- Shared Agent Memory Layer
 CREATE TABLE agent_context_store (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    game_id TEXT NOT NULL, agent_id TEXT NOT NULL,
-    context_key TEXT NOT NULL, context_value TEXT NOT NULL,
-    confidence REAL NOT NULL, ttl_seconds INTEGER DEFAULT 3600,
+    game_id TEXT NOT NULL,
+    agent_id TEXT NOT NULL,
+    context_key TEXT NOT NULL,
+    context_value TEXT NOT NULL,
+    confidence REAL NOT NULL,
+    ttl_seconds INTEGER DEFAULT 3600,
     created_at INTEGER NOT NULL,
     UNIQUE(game_id, agent_id, context_key)
 );
@@ -334,16 +499,25 @@ CREATE TABLE agent_context_store (
 -- Decision Audit Trail
 CREATE TABLE decision_audit (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    trace_id TEXT NOT NULL, agent_id TEXT NOT NULL,
-    action TEXT NOT NULL, reason TEXT,
-    input_payload TEXT, output_payload TEXT,
-    confidence REAL, timestamp INTEGER NOT NULL
+    trace_id TEXT NOT NULL,
+    agent_id TEXT NOT NULL,
+    action TEXT NOT NULL,
+    reason TEXT,
+    input_payload TEXT,
+    output_payload TEXT,
+    confidence REAL,
+    timestamp INTEGER NOT NULL
 );
 
 -- Qualitative Event Logs
-CREATE TABLE qualitative_events (id INTEGER PRIMARY KEY AUTOINCREMENT, channel TEXT NOT NULL, payload TEXT NOT NULL, timestamp INTEGER NOT NULL);
+CREATE TABLE qualitative_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    channel TEXT NOT NULL,
+    payload TEXT NOT NULL,
+    timestamp INTEGER NOT NULL
+);
 
--- Hedging Opportunities (Agent 16 Dynamic Hedging Oracle)
+-- Hedging Opportunities (Agent 16)
 CREATE TABLE hedging_opportunities (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     bet_id INTEGER NOT NULL,
@@ -356,6 +530,39 @@ CREATE TABLE hedging_opportunities (
     hedge_instructions TEXT NOT NULL,
     created_at INTEGER NOT NULL
 );
+
+-- Pick Log (append-only, powers weekly Brier/CLV reports)
+CREATE TABLE pick_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    pick_id TEXT NOT NULL UNIQUE,
+    pick_type TEXT NOT NULL,
+    player TEXT,
+    stat TEXT,
+    line REAL,
+    over_under TEXT,
+    projection REAL,
+    confidence_grade TEXT,
+    edge_pct REAL,
+    result TEXT,
+    clv_pct REAL,
+    captured_at INTEGER NOT NULL,
+    published_at INTEGER,
+    published_odds INTEGER
+);
+```
+
+### Performance Indexes
+
+```sql
+-- Frequently queried columns
+CREATE INDEX idx_bets_placed_at ON bets(placed_at);
+CREATE INDEX idx_bets_result ON bets(result);
+CREATE INDEX idx_bets_parent ON bets(parent_id);
+CREATE INDEX idx_audit_trace ON decision_audit(trace_id);
+CREATE INDEX idx_audit_time ON decision_audit(timestamp);
+CREATE INDEX idx_ctx_game_agent ON agent_context_store(game_id, agent_id);
+CREATE INDEX idx_events_time ON qualitative_events(timestamp);
+CREATE INDEX idx_pick_log_time ON pick_log(captured_at);
 ```
 
 ---
@@ -391,6 +598,21 @@ CREATE TABLE hedging_opportunities (
 | `POST` | `/api/bets/upload` | Bet slip OCR (returns 501 — not implemented) |
 | `POST` | `/api/parlay/generate` | Agent 13 parlay generation |
 
+### Meta-Agent (Agent 28)
+| Method | Endpoint | Port | Description |
+|--------|----------|------|-------------|
+| `GET` | `/health` | 8020 | Current system mode and uptime |
+| `GET` | `/status` | 8020 | Recent message counts and subsystem health |
+
+### System Health
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/health` | Server health check (used by Docker) |
+| `GET` | `/api/drift/status` | Agent 15 projection drift report |
+| `GET` | `/api/liquidity/limits` | Agent 18 sportsbook limit report |
+| `GET` | `/api/sharp/consensus` | Agent 19 sharp consensus report |
+| `GET` | `/api/hedges` | Agent 16 active hedging opportunities |
+
 ---
 
 ## 7. Database Migrations
@@ -406,13 +628,152 @@ npx drizzle-kit generate
 npx tsx migrate.ts
 ```
 
+### SQLite → PostgreSQL Migration
+
+```bash
+# Copy existing SQLite ledger to PostgreSQL
+python deploy/scripts/migrate_sqlite_to_postgres.py
+```
+
+---
+
 ## 8. Testing
 
-The server includes an integration test suite using **Vitest** and **Supertest**.
+### Python Agent Tests (pytest)
+
+```bash
+# Run all agent tests
+cd agents
+pytest
+
+# Run specific test suites
+pytest test_golden_regressions.py        # CI gate for production incidents
+pytest test_pick_mesh.py                 # Pick validation pipeline
+pytest test_gates.py                     # Stream processing gates
+pytest test_rejection_triage.py          # Agent 27 bounded loop
+pytest test_shared_helpers.py            # Database helpers & transactions
+```
+
+### Server Integration Tests (Vitest + Supertest)
 
 ```bash
 cd web/server
 npm run test
 ```
 
-Tests run against an isolated SQLite database and validate all API endpoints, validation logic, and settlement calculations. The test suite is also integrated into the GitHub Actions CI pipeline.
+Tests run against an isolated SQLite database and validate all API endpoints, validation logic, and settlement calculations.
+
+### GitHub Actions CI
+
+All test suites run automatically on pull requests via `.github/workflows/`. The pipeline includes:
+- Python agent tests with golden fixture regression gates
+- Server integration tests
+- Docker build verification
+- SSH deployment normalization checks
+
+---
+
+## 9. Deployment
+
+### Single-Host (Docker Compose)
+
+```bash
+docker-compose up --build -d
+```
+
+### PostgreSQL Mode
+
+```bash
+# Start with PostgreSQL instead of SQLite
+COMPOSE_PROFILES=postgres docker-compose up --build -d
+```
+
+### Two-Host Production (VPS Web + vast.ai Agents)
+
+The repository includes deployment configurations for splitting the web tier (VPS) from the agent compute tier (vast.ai GPU instances):
+
+```bash
+# See deploy/ for scripts and .ops/ for operational commands
+cd deploy
+# Copy and configure the two-host docker-compose override
+cp docker-compose.prod.yml docker-compose.override.yml
+```
+
+### Operational Commands (`.ops/`)
+
+```bash
+# Start agents natively on vast.ai
+cd .ops
+./cmd start-agents
+```
+
+### GitHub Actions
+
+Workflows in `.github/workflows/` handle:
+- **CI**: Test gate on every PR (Python + TypeScript)
+- **CD**: Normalize SSH keys and deploy to production hosts
+
+---
+
+## 10. Project Structure
+
+```
+CourtSide-Edge/
+├── agents/                          # 29 agent microservices
+│   ├── 0_historical_etl/
+│   ├── 1_market_scraper/
+│   ├── 2_news_sentinel/
+│   ├── 2.5_game_flow_oracle/
+│   ├── 3_projection_engine/
+│   ├── 4_execution_oracle/
+│   ├── 5_referee_engine/
+│   ├── 6_steam_detector/
+│   ├── 7_correlation_guard/
+│   ├── 8_bankroll_sizer/
+│   ├── 9_news_sentiment/
+│   ├── 10_game_total_projector/
+│   ├── 11_market_value_detector/
+│   ├── 12_alpha_sandbox/
+│   ├── 13_parlay_generator/
+│   ├── 14_clv_tracker/
+│   ├── 15_drift_monitor/
+│   ├── 16_hedge_oracle/
+│   ├── 17_velocity_agent/
+│   ├── 18_liquidity_oracle/
+│   ├── 19_sharp_profiler/
+│   ├── 20_hedge_executor/
+│   ├── 21_rotation_tracker/
+│   ├── 22_data_watchdog/
+│   ├── 23_game_session_manager/
+│   ├── 24_validation_gate/
+│   ├── 25_claim_verifier/
+│   ├── 26_pick_publisher/
+│   ├── 27_rejection_triage/
+│   ├── 28_meta_agent/              # System Prefrontal Cortex
+│   ├── golden_fixtures/            # Production incident regressions
+│   ├── conftest.py
+│   ├── test_*.py
+├── deploy/                          # Deployment scripts & configs
+├── .ops/                            # Operational commands
+├── infrastructure/
+│   └── hermes/                      # LLM integration service
+├── shared/                          # Shared libraries
+│   ├── base_agent.py
+│   ├── context_client.py
+│   ├── db.py
+│   ├── redis_client.py
+│   └── picks/                       # Pick schema & validation library
+├── web/
+│   ├── server/                      # Express + Drizzle ORM backend
+│   └── client/                      # React + Vite dashboard
+├── .github/workflows/               # CI/CD pipelines
+├── .env.example
+├── docker-compose.yml
+├── pytest.ini
+├── requirements.txt
+└── README.md
+```
+
+---
+
+*Built by [GodingWal](https://github.com/GodingWal) with contributions from Claude and Google Labs Jules.*
