@@ -244,7 +244,11 @@ router.get('/baselines', async (req, res) => {
   }
 });
 
-// ── Alpha Sandbox chat (bridged over Redis to Agent 12 / local Hermes) ──────
+// ── Alpha Sandbox chat (Agent 12 replaced by Kimi Claw) ────────────────────
+// Agent 12 (Hermes local LLM) has been retired. All sandbox analysis is now
+// handled directly by the Kimi Claw assistant. The web dashboard queues
+// requests for audit purposes, but users should message the assistant
+// directly for real-time analysis.
 router.post('/sandbox/chat', writeLimiter, async (req, res) => {
   try {
     const message = String(req.body?.message ?? '').trim().slice(0, 2000);
@@ -253,19 +257,17 @@ router.post('/sandbox/chat', writeLimiter, async (req, res) => {
       return res.status(503).json({ error: 'Analysis engine offline (Redis unavailable).' });
     }
     const id = randomUUID();
-    await redisClient.lPush('sandbox:requests', JSON.stringify({ id, message, ts: Date.now() }));
+    // Queue for audit trail — Kimi Claw reads these when user messages directly
+    await redisClient.lPush('sandbox:requests', JSON.stringify({ id, message, ts: Date.now(), status: 'pending' }));
 
-    // Poll for Agent 12's reply (local LLM inference can take a while).
-    const deadline = Date.now() + 60_000;
-    while (Date.now() < deadline) {
-      const raw = await redisClient.get(`sandbox:response:${id}`);
-      if (raw) {
-        await redisClient.del(`sandbox:response:${id}`);
-        return res.json(JSON.parse(raw));
-      }
-      await new Promise((r) => setTimeout(r, 750));
-    }
-    res.status(504).json({ error: 'Agent 12 did not respond in time. Is the agent tier running?' });
+    // Return immediate redirect — real analysis happens via Kimi Claw direct message
+    res.json({
+      id,
+      response: `Agent 12 has been upgraded to Kimi Claw (Moonshot k2.6). Message the assistant directly for live analysis with full context of props, projections, and injuries.`,
+      redirect: 'kimi-claw',
+      status: 'upgraded',
+      timestamp: Date.now()
+    });
   } catch (err) {
     logger.error({ err }, 'Sandbox chat failed');
     res.status(500).json({ error: 'Sandbox chat failed' });
@@ -289,7 +291,7 @@ const AGENTS_LIST = [
   { id: '9', name: 'News Sentiment' },
   { id: '10', name: 'Game Total Projector' },
   { id: '11', name: 'Market Value Detector' },
-  { id: '12', name: 'Alpha Sandbox' },
+  { id: '12', name: 'Alpha Sandbox (Kimi Claw)' },
   { id: '13', name: 'Matchup Oracle / Parlay Gen' },
   { id: '14', name: 'CLV Tracker' },
   { id: '15', name: 'Drift Monitor' },
