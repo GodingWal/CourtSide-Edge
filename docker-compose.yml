@@ -2,16 +2,20 @@ services:
   redis:
     image: redis:alpine
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6380:6379"
     volumes:
       - ./infrastructure/redis/data:/data
-    command: redis-server --appendonly yes
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD}
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
       interval: 10s
       timeout: 5s
       retries: 5
+    networks:
+      - deploy_default
 
   # Started with COMPOSE_PROFILES=postgres (see .env.example). Setting
   # DATABASE_URL switches the web server and every agent from SQLite to this.
@@ -118,6 +122,19 @@ services:
       redis:
         condition: service_healthy
     restart: unless-stopped
+
+  agent_12_alpha_sandbox:
+    build:
+      context: .
+      dockerfile: agents/12_alpha_sandbox/Dockerfile
+    env_file:
+      - .env
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - deploy_default
 
   agent_5_referee_engine:
     build:
@@ -485,6 +502,58 @@ services:
       retries: 3
       start_period: 15s
 
+  agent_29_backtest_agent:
+    build:
+      context: .
+      dockerfile: agents/29_backtest_agent/Dockerfile
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  agent_30_retraining_agent:
+    build:
+      context: .
+      dockerfile: agents/30_retraining_agent/Dockerfile
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  agent_31_portfolio_risk:
+    build:
+      context: .
+      dockerfile: agents/31_portfolio_risk/Dockerfile
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  agent_32_explainability_agent:
+    build:
+      context: .
+      dockerfile: agents/32_explainability_agent/Dockerfile
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
   web_server:
     build:
       context: ./web/server
@@ -513,12 +582,18 @@ services:
       dockerfile: Dockerfile
     container_name: courtside_web_client
     ports:
-      - "80:80"
+      - "127.0.0.1:8080:80"
     depends_on:
       web_server:
         condition: service_healthy
     restart: unless-stopped
+    networks:
+      - deploy_default
 
 secrets:
   api_key:
     file: ./.secrets/api_key.txt
+
+networks:
+  deploy_default:
+    external: true
