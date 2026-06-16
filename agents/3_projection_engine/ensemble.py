@@ -28,6 +28,10 @@ import numpy as np
 
 from shared.base_agent import db_connect
 from shared.db import db_available
+from shared.prop_calibration import calibrate_projection, estimate_hit_rate, assess_line_quality, get_deflation_factor
+from shared.context_scoring import calculate_context_score, get_context_multiplier
+from shared.recency_bias import check_contrarian_signals, get_line_spike
+from shared.team_bias import get_team_bias, get_team_direction, get_star_bias
 
 logger = logging.getLogger("EnsembleMathCore")
 
@@ -312,11 +316,58 @@ class EnsembleMathCore:
             # Counting stats: Poisson.
             stat_dist = rng.poisson(np.clip(lam, 0.01, None)).astype(float)
 
+        raw_projected = float(stat_dist.mean())
+
+        # ── Pattern Layer: calibration (deflation factors) ──────────────────
+        calibrated = calibrate_projection(raw_projected, stat)
+        calibration_delta = round(calibrated - raw_projected, 2)
+
+        # ── Pattern Layer: context scoring (pace + rest + home) ─────────────
+        ctx = calculate_context_score(
+            opp_pace=game_context.get("opp_pace", 89.5),
+            rest_days=rest_days if rest_days is not None else 1,
+            is_home=game_context.get("is_home", True),
+            role=game_context.get("role", "starter"),
+            stat=stat,
+        )
+        context_adj = ctx["total_adjustment"]
+        final_projected = calibrated + context_adj
+        final_projected = max(0, round(final_projected, 2))
+
+        # ── Pattern Layer: recency bias signals ─────────────────────────────
+        prev_stats = game_context.get("prev_stats", {})
+        recency_signals = check_contrarian_signals(
+            prev_points=prev_stats.get("points"),
+            prev_assists=prev_stats.get("assists"),
+            prev_rebounds=prev_stats.get("rebounds"),
+            prev_threes=prev_stats.get("threes"),
+            consecutive_overs=game_context.get("consecutive_overs", 0),
+            consecutive_unders=game_context.get("consecutive_unders", 0),
+            is_b2b=(rest_days is not None and rest_days <= 1),
+        )
+
+        # ── Pattern Layer: team bias ────────────────────────────────────────
+        team = self._player_team(player_name, as_of_date)
+        team_bias = get_team_bias(team) if team else 0.0
+        star_bias = get_star_bias(player_name)
+
         result = {
             "player": player_name,
             "stat": stat,
             "projected_minutes": round(float(minutes_dist.mean()), 2),
-            "projected_value": round(float(stat_dist.mean()), 2),
+            "projected_value_raw": round(raw_projected, 2),
+            "projected_value_calibrated": calibrated,
+            "projected_value": final_projected,
+            "calibration_delta": calibration_delta,
+            "deflation_factor": get_deflation_factor(stat),
+            "context_adjustment": context_adj,
+            "context_breakdown": ctx["breakdown"],
+            "context_risk_flags": ctx["risk_flags"],
+            "recency_signals": [s["action"] for s in recency_signals[:3]],
+            "team": team,
+            "team_bias": round(team_bias, 1),
+            "team_direction": get_team_direction(team) if team else "NEUTRAL",
+            "star_bias": round(star_bias, 1),
             "confidence_interval_95": [
                 round(float(np.percentile(stat_dist, 2.5)), 2),
                 round(float(np.percentile(stat_dist, 97.5)), 2),
@@ -331,6 +382,8 @@ class EnsembleMathCore:
         # True over probability vs. the posted line (feeds CLV/Brier tracking).
         line = game_context.get("line")
         if line is not None:
-            result["p_over_line"] = round(float(np.mean(stat_dist > float(line))), 4)
+            result["p_over_line_raw"] = round(float(np.mean(stat_dist > float(line))), 4)
+            result["p_over_line"] = round(estimate_hit_rate(float(line), calibrated, stat), 4)
+            result["line_quality"] = assess_line_quality(float(line), calibrated, stat)
 
         return result

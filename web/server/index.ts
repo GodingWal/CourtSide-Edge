@@ -18,6 +18,7 @@ import auditRouter from './routes/audit';
 import marketRouter from './routes/market';
 import streamRouter from './routes/stream';
 import statsRouter from './routes/stats';
+import patternsRouter from './routes/patterns';
 
 export { logger };
 
@@ -49,6 +50,7 @@ app.use('/api', contextRouter);
 app.use('/api', auditRouter);
 app.use('/api', streamRouter);
 app.use('/api', statsRouter);
+app.use('/api', patternsRouter);
 
 // ── Server Startup ──────────────────────────────────────────────────────────
 async function start() {
