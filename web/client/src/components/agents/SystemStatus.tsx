@@ -91,7 +91,7 @@ export const SystemStatus: React.FC = () => {
               ))}
             </div>
           ) : (
-            agentsByTier.map(({ tier, label, description, color, borderColor, bgColor, agents: tierAgents }) => (
+            agentsByTier.map(({ tier, label, color, borderColor, bgColor, agents: tierAgents }) => (
               <div
                 key={tier}
                 className={`rounded-xl border ${borderColor} ${bgColor} p-2.5`}

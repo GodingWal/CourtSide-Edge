@@ -20,6 +20,15 @@ export default {
         'cs-emerald-glow': 'rgba(16, 185, 129, 0.15)',
         'cs-amber': '#f59e0b',
         'cs-amber-bright': '#fbbf24',
+        'cs-neon-blue': '#3b82f6',
+        'cs-neon-blue-bright': '#60a5fa',
+        'cs-neon-blue-glow': 'rgba(59, 130, 246, 0.15)',
+        'cs-neon-purple': '#8b5cf6',
+        'cs-neon-purple-bright': '#a78bfa',
+        'cs-neon-purple-glow': 'rgba(139, 92, 246, 0.15)',
+        'cs-neon-cyan': '#06b6d4',
+        'cs-neon-cyan-bright': '#22d3ee',
+        'cs-neon-cyan-glow': 'rgba(6, 182, 212, 0.15)',
         'cs-console': '#0a0d11',
         'cs-console-border': '#151a22',
       },
@@ -32,6 +41,12 @@ export default {
         'glow-red-sm': '0 0 10px rgba(220, 38, 38, 0.1)',
         'glow-emerald': '0 0 20px rgba(16, 185, 129, 0.15), 0 0 60px rgba(16, 185, 129, 0.05)',
         'glow-emerald-sm': '0 0 10px rgba(16, 185, 129, 0.1)',
+        'glow-blue': '0 0 20px rgba(59, 130, 246, 0.15), 0 0 60px rgba(59, 130, 246, 0.05)',
+        'glow-blue-sm': '0 0 10px rgba(59, 130, 246, 0.1)',
+        'glow-purple': '0 0 20px rgba(139, 92, 246, 0.15), 0 0 60px rgba(139, 92, 246, 0.05)',
+        'glow-purple-sm': '0 0 10px rgba(139, 92, 246, 0.1)',
+        'glow-cyan': '0 0 20px rgba(6, 182, 212, 0.15), 0 0 60px rgba(6, 182, 212, 0.05)',
+        'glow-cyan-sm': '0 0 10px rgba(6, 182, 212, 0.1)',
         'card': '0 4px 30px rgba(0, 0, 0, 0.3)',
       },
       animation: {
@@ -41,6 +56,7 @@ export default {
         'scale-in': 'scaleIn 0.4s cubic-bezier(0.16, 1, 0.3, 1)',
         'typing': 'typing 1s steps(1) infinite',
         'scanline': 'scanline 8s linear infinite',
+        'pulse-glow': 'pulseGlow 2s cubic-bezier(0.4, 0, 0.6, 1) infinite',
       },
       keyframes: {
         fadeIn: {
@@ -62,6 +78,10 @@ export default {
         scanline: {
           '0%': { transform: 'translateY(-100%)' },
           '100%': { transform: 'translateY(100%)' },
+        },
+        pulseGlow: {
+          '0%, 100%': { opacity: '1', filter: 'brightness(1)' },
+          '50%': { opacity: '.7', filter: 'brightness(1.2)' },
         },
       },
     },
