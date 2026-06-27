@@ -1,8 +1,0 @@
-redis==5.0.3
-fastapi==0.110.0
-uvicorn==0.29.0
-numpy==1.26.4
-scipy==1.13.0
-scikit-learn==1.4.1.post1
-xgboost==2.0.3
-pymc==5.12.0

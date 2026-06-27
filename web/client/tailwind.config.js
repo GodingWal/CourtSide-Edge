@@ -15,6 +15,13 @@ export default {
         'cs-red': '#dc2626',
         'cs-red-bright': '#ef4444',
         'cs-red-glow': 'rgba(220, 38, 38, 0.15)',
+        'cs-emerald': '#10b981',
+        'cs-emerald-bright': '#34d399',
+        'cs-emerald-glow': 'rgba(16, 185, 129, 0.15)',
+        'cs-amber': '#f59e0b',
+        'cs-amber-bright': '#fbbf24',
+        'cs-console': '#0a0d11',
+        'cs-console-border': '#151a22',
       },
       fontFamily: {
         sans: ['Inter', 'system-ui', 'sans-serif'],
@@ -23,12 +30,17 @@ export default {
       boxShadow: {
         'glow-red': '0 0 20px rgba(220, 38, 38, 0.15), 0 0 60px rgba(220, 38, 38, 0.05)',
         'glow-red-sm': '0 0 10px rgba(220, 38, 38, 0.1)',
+        'glow-emerald': '0 0 20px rgba(16, 185, 129, 0.15), 0 0 60px rgba(16, 185, 129, 0.05)',
+        'glow-emerald-sm': '0 0 10px rgba(16, 185, 129, 0.1)',
         'card': '0 4px 30px rgba(0, 0, 0, 0.3)',
       },
       animation: {
         'pulse-slow': 'pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite',
         'fade-in': 'fadeIn 0.5s ease-out',
         'slide-up': 'slideUp 0.4s ease-out',
+        'scale-in': 'scaleIn 0.4s cubic-bezier(0.16, 1, 0.3, 1)',
+        'typing': 'typing 1s steps(1) infinite',
+        'scanline': 'scanline 8s linear infinite',
       },
       keyframes: {
         fadeIn: {
@@ -38,6 +50,18 @@ export default {
         slideUp: {
           '0%': { opacity: '0', transform: 'translateY(10px)' },
           '100%': { opacity: '1', transform: 'translateY(0)' },
+        },
+        scaleIn: {
+          '0%': { opacity: '0', transform: 'scale(0.95)' },
+          '100%': { opacity: '1', transform: 'scale(1)' },
+        },
+        typing: {
+          '0%, 100%': { opacity: '1' },
+          '50%': { opacity: '0' },
+        },
+        scanline: {
+          '0%': { transform: 'translateY(-100%)' },
+          '100%': { transform: 'translateY(100%)' },
         },
       },
     },

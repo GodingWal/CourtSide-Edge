@@ -12,12 +12,14 @@ import BankrollDiagnostics from "./views/BankrollDiagnostics";
 import IntelligenceFeed from "./views/IntelligenceFeed";
 import BetTracker from "./views/BetTracker";
 import Settings from "./views/Settings";
+import EdgeDashboard from "./views/EdgeDashboard";
 import { ToastProvider } from "./components/ToastProvider";
 import CommandPalette from "./components/CommandPalette";
 import ErrorBoundary from "./components/ErrorBoundary";
 
 const pageTitles: Record<string, string> = {
   "/": "Market Divergence",
+  "/edge": "Edge Dashboard",
   "/sandbox": "Alpha Sandbox",
   "/diagnostics": "Bankroll Diagnostics",
   "/intelligence": "Intelligence Feed",
@@ -133,6 +135,7 @@ function AppShell() {
         <main className="flex-1 overflow-y-auto">
           <Routes>
             <Route path="/" element={<MarketDivergence />} />
+            <Route path="/edge" element={<EdgeDashboard />} />
             <Route path="/sandbox" element={<AlphaSandbox />} />
             <Route path="/diagnostics" element={<BankrollDiagnostics />} />
             <Route path="/intelligence" element={<IntelligenceFeed />} />

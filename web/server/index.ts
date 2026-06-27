@@ -739,30 +739,24 @@ app.get('/api/live/rotations', async (req, res) => {
   ]);
 });
 
-// ── Agents Health Telemetry ─────────────────────────────────────────────────
+// ── 4-Tier Agent Architecture ───────────────────────────────────────────────
+// Tier 1: Data Ingestion    → Real-time feeds
+// Tier 2: Specialized AI    → Analysis & signal generation
+// Tier 3: Decision Engine   → Kelly Criterion sizing
+// Tier 4: Fulfillment       → Slip generation & routing
 const AGENTS_LIST = [
-  { id: '0', name: 'Historical ETL', port: null },
-  { id: '1', name: 'Market Scraper', port: null },
-  { id: '2', name: 'News Sentinel', port: null },
-  { id: '2.5', name: 'Game Flow Oracle', port: null },
-  { id: '3', name: 'Projection Engine', port: 8000 },
-  { id: '4', name: 'Execution Oracle', port: 8001 },
-  { id: '5', name: 'Referee Engine', port: null },
-  { id: '6', name: 'Steam Detector', port: null },
-  { id: '7', name: 'Correlation Guard', port: null },
-  { id: '8', name: 'Bankroll Sizer', port: null },
-  { id: '9', name: 'News Sentiment', port: null },
-  { id: '10', name: 'Game Total Projector', port: null },
-  { id: '11', name: 'Market Value Detector', port: null },
-  { id: '13', name: 'Matchup Oracle / Parlay Gen', port: 8009 },
-  { id: '14', name: 'CLV Tracker', port: 8010 },
-  { id: '15', name: 'Drift Monitor', port: 8011 },
-  { id: '16', name: 'Hedge Oracle', port: 8012 },
-  { id: '17', name: 'Velocity Agent', port: 8013 },
-  { id: '18', name: 'Liquidity Oracle', port: 8014 },
-  { id: '19', name: 'Sharp Profiler', port: 8015 },
-  { id: '20', name: 'Hedge Executor', port: 8016 },
-  { id: '21', name: 'Rotation Tracker', port: 8017 }
+  // Tier 1: Data Ingestion
+  { id: 'data-stats',   name: 'Stats API',       tier: 1, description: 'Play-by-play & box scores',  port: null },
+  { id: 'data-news',    name: 'News & Social',    tier: 1, description: 'Lineups, injuries, social', port: null },
+  { id: 'data-odds',    name: 'Bookmaker Odds',   tier: 1, description: 'Global odds feeds',         port: null },
+  // Tier 2: Specialized AI Agents
+  { id: 'ai-quant',     name: 'Quant Agent',      tier: 2, description: 'Projections & modeling',    port: 8000 },
+  { id: 'ai-sentiment', name: 'Sentiment Agent',  tier: 2, description: 'News impact analysis',      port: null },
+  { id: 'ai-line',      name: 'Line Agent',       tier: 2, description: 'Market tracking & CLV',     port: null },
+  // Tier 3: Decision Engine
+  { id: 'dec-portfolio', name: 'Portfolio Manager', tier: 3, description: 'Kelly Criterion sizing',  port: 8001 },
+  // Tier 4: Fulfillment
+  { id: 'ful-exec',     name: 'Execution Agent',  tier: 4, description: 'API integration & routing', port: null },
 ];
 
 app.get('/api/agents/health', async (req, res) => {
@@ -786,6 +780,167 @@ app.get('/api/agents/health', async (req, res) => {
     res.json(results);
   } catch (err) {
     res.status(500).json({ error: 'Failed to query agent health' });
+  }
+});
+
+// ── SSE Endpoint for Agent Analysis (Simulation) ────────────────────────────
+// Simulates the 4-Tier pipeline:
+//   Tier 2: Quant Agent → Sentiment Agent → Line Agent
+//   Tier 3: Portfolio Manager (Kelly Criterion)
+//   Tier 4: Execution Agent → Final Betting Slip
+// When the real LangGraph backend is ready, this will proxy to it instead.
+app.get('/api/analyze-prop', async (req, res) => {
+  const { player, line, odds, bankroll } = req.query as Record<string, string>;
+
+  if (!player || !line || !odds || !bankroll) {
+    return res.status(400).json({ error: 'Missing required params: player, line, odds, bankroll' });
+  }
+
+  const parsedLine = parseFloat(line);
+  const parsedOdds = parseInt(odds, 10);
+  const parsedBankroll = parseFloat(bankroll);
+
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+
+  let closed = false;
+  req.on('close', () => { closed = true; });
+
+  const sendEvent = (node: string, messages: string[], extra?: Record<string, any>) => {
+    if (closed) return;
+    const payload = {
+      node,
+      data: { messages, ...extra },
+      timestamp: Date.now(),
+    };
+    res.write(`data: ${JSON.stringify(payload)}\n\n`);
+  };
+
+  const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
+  try {
+    // ── Tier 2: Quant Agent (Projections) ──
+    await delay(600);
+    sendEvent('quant_agent', [
+      `Loading historical game logs for ${player}...`,
+    ]);
+
+    await delay(900);
+    sendEvent('quant_agent', [
+      `Computed L10 average: ${(parsedLine - 1.2 + Math.random() * 2.4).toFixed(1)} | Season avg: ${(parsedLine + 0.3 + Math.random() * 1.5).toFixed(1)}`,
+      `Usage rate in current role: ${(24 + Math.random() * 8).toFixed(1)}%`,
+    ]);
+
+    await delay(700);
+    const trueProb = 0.48 + Math.random() * 0.15;
+    sendEvent('quant_agent', [
+      `Bayesian model estimates true probability: ${(trueProb * 100).toFixed(1)}% OVER ${parsedLine}`,
+      `Monte Carlo simulation (10,000 trials): median outcome ${(parsedLine + (Math.random() * 4 - 2)).toFixed(1)}`,
+    ]);
+
+    // ── Tier 2: Sentiment Agent (News Impact) ──
+    await delay(800);
+    sendEvent('sentiment_agent', [
+      `Scanning beat reporter feeds and press conferences...`,
+    ]);
+
+    await delay(1000);
+    const hasInjuryNews = Math.random() > 0.6;
+    if (hasInjuryNews) {
+      sendEvent('sentiment_agent', [
+        `⚠ Injury report: Starting PG listed as questionable — usage redistribution likely`,
+        `Sentiment score: 0.${Math.floor(60 + Math.random() * 30)} (mildly positive for ${player})`,
+      ]);
+    } else {
+      sendEvent('sentiment_agent', [
+        `No material lineup changes detected. Full strength roster confirmed.`,
+        `Social sentiment neutral — no abnormal volume on ${player} props`,
+      ]);
+    }
+
+    // ── Tier 2: Line Agent (Market Tracking) ──
+    await delay(700);
+    sendEvent('line_agent', [
+      `Scanning odds across 5 sportsbooks...`,
+    ]);
+
+    await delay(800);
+    const clvDirection = Math.random() > 0.5 ? 'favorable' : 'unfavorable';
+    sendEvent('line_agent', [
+      `Opening line: ${parsedLine} → Current consensus: ${(parsedLine + (clvDirection === 'favorable' ? 0.5 : -0.5)).toFixed(1)}`,
+      `CLV indicator: ${clvDirection === 'favorable' ? '✓ Sharp money aligns with our position' : '⚠ Reverse steam detected — line moving against'}`,
+      `Pinnacle closing line differential: ${(Math.random() * 3 - 1).toFixed(1)} pts`,
+    ]);
+
+    // ── Tier 3: Portfolio Manager (Kelly Criterion) ──
+    await delay(600);
+    sendEvent('portfolio_manager', [
+      `Aggregating signals from Quant, Sentiment, and Line agents...`,
+    ]);
+
+    await delay(900);
+
+    // Calculate Kelly Criterion
+    const impliedProb = parsedOdds < 0
+      ? Math.abs(parsedOdds) / (Math.abs(parsedOdds) + 100)
+      : 100 / (parsedOdds + 100);
+    const edge = trueProb - impliedProb;
+    const decimalOdds = parsedOdds < 0
+      ? 1 + 100 / Math.abs(parsedOdds)
+      : 1 + parsedOdds / 100;
+    const kellyFraction = Math.max(0, (trueProb * decimalOdds - 1) / (decimalOdds - 1));
+    const halfKelly = kellyFraction / 2; // Conservative half-Kelly
+    const isBet = edge > 0.02; // Require at least 2% edge
+
+    sendEvent('portfolio_manager', [
+      `Implied probability from book: ${(impliedProb * 100).toFixed(1)}%`,
+      `True probability estimate: ${(trueProb * 100).toFixed(1)}%`,
+      `Edge: ${edge > 0 ? '+' : ''}${(edge * 100).toFixed(2)}%`,
+      `Full Kelly: ${(kellyFraction * 100).toFixed(2)}% → Half Kelly (applied): ${(halfKelly * 100).toFixed(2)}%`,
+    ]);
+
+    await delay(400);
+
+    // ── Tier 4: Execution Agent (Fulfillment) ──
+    if (isBet) {
+      const wagerAmount = Math.round(parsedBankroll * halfKelly * 100) / 100;
+      sendEvent('execution_agent', [
+        `✅ POSITIVE EDGE CONFIRMED — Generating betting slip`,
+        `Routing to sportsbook API for execution...`,
+      ], {
+        final_decision: {
+          action: 'BET',
+          fraction: halfKelly,
+          expected_value_pct: edge * 100,
+          wager_amount: wagerAmount,
+          confidence: trueProb,
+          reason: `${player} shows a +${(edge * 100).toFixed(1)}% edge over the book's implied probability. Half-Kelly sizing limits downside exposure while capturing the value.`,
+          player,
+          line: parsedLine,
+          odds: parsedOdds,
+        },
+      });
+    } else {
+      sendEvent('execution_agent', [
+        `🚫 INSUFFICIENT EDGE — No slip generated`,
+      ], {
+        final_decision: {
+          action: 'PASS',
+          fraction: 0,
+          expected_value_pct: edge * 100,
+          wager_amount: 0,
+          confidence: trueProb,
+          reason: `Edge of ${(edge * 100).toFixed(2)}% falls below the 2% minimum threshold. The risk-adjusted return does not justify a position. Wait for a more favorable line.`,
+          player,
+          line: parsedLine,
+          odds: parsedOdds,
+        },
+      });
+    }
+  } catch (err) {
+    logger.error({ err }, 'Error in analyze-prop SSE stream');
+    if (!closed) res.end();
   }
 });
 

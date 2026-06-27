@@ -69,11 +69,65 @@
   }
 }
 
+@layer components {
+  .cs-console {
+    @apply bg-cs-console border border-cs-console-border rounded-2xl font-mono text-sm overflow-hidden;
+    position: relative;
+  }
+  .cs-console::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: linear-gradient(
+      transparent 50%,
+      rgba(0, 0, 0, 0.03) 50%
+    );
+    background-size: 100% 4px;
+    pointer-events: none;
+    z-index: 1;
+  }
+  .cs-node-badge {
+    @apply inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-widest border;
+  }
+  .cs-node-badge--quant {
+    @apply bg-blue-500/10 text-blue-400 border-blue-500/20;
+  }
+  .cs-node-badge--news {
+    @apply bg-amber-500/10 text-amber-400 border-amber-500/20;
+  }
+  .cs-node-badge--line {
+    @apply bg-purple-500/10 text-purple-400 border-purple-500/20;
+  }
+  .cs-node-badge--risk {
+    @apply bg-emerald-500/10 text-emerald-400 border-emerald-500/20;
+  }
+  .cs-node-badge--exec {
+    @apply bg-cyan-500/10 text-cyan-400 border-cyan-500/20;
+  }
+  .cs-node-badge--sys {
+    @apply bg-gray-500/10 text-gray-500 border-gray-500/20;
+  }
+  .cs-btn-emerald {
+    @apply bg-cs-emerald hover:bg-cs-emerald-bright text-white font-semibold py-3 px-6 rounded-xl
+           transition-all duration-300 hover:shadow-glow-emerald active:scale-[0.98]
+           disabled:opacity-40 disabled:pointer-events-none;
+  }
+}
+
 @layer utilities {
   .text-gradient-red {
     @apply bg-clip-text text-transparent bg-gradient-to-r from-cs-red to-rose-400;
   }
+  .text-gradient-emerald {
+    @apply bg-clip-text text-transparent bg-gradient-to-r from-cs-emerald to-emerald-300;
+  }
   .border-gradient {
     border-image: linear-gradient(to right, transparent, rgba(220,38,38,0.3), transparent) 1;
+  }
+  .border-gradient-emerald {
+    border-image: linear-gradient(to right, transparent, rgba(16,185,129,0.3), transparent) 1;
   }
 }

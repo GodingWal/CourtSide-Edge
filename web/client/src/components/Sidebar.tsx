@@ -9,9 +9,11 @@ import {
   Settings,
   Menu,
   X,
+  Zap,
 } from "lucide-react";
 
 const navItems = [
+  { path: "/edge", label: "Edge AI", icon: Zap },
   { path: "/", label: "Market Divergence", icon: Activity },
   { path: "/sandbox", label: "Alpha Sandbox", icon: Cpu },
   { path: "/diagnostics", label: "Bankroll", icon: PieChart },
