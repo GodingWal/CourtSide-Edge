@@ -1,7 +1,6 @@
 import { useState, useCallback } from "react";
 import { Link, useLocation } from "react-router-dom";
 import {
-  Activity,
   Cpu,
   PieChart,
   Database,
@@ -13,15 +12,11 @@ import {
 } from "lucide-react";
 
 const navItems = [
-  { path: "/edge", label: "Edge AI", icon: Zap },
-  { path: "/", label: "Market Divergence", icon: Activity },
-  { path: "/sandbox", label: "Alpha Sandbox", icon: Cpu },
-  { path: "/diagnostics", label: "Bankroll", icon: PieChart },
-  { path: "/intelligence", label: "Intelligence", icon: Database },
-];
-
-const secondaryNavItems = [
-  { path: "/bets", label: "Bet Terminal", icon: Receipt },
+  { path: "/", label: "Agentic Terminal", icon: Zap },
+  { path: "/tier-1", label: "Data Ingestion", icon: Database },
+  { path: "/tier-2", label: "Intelligence", icon: Cpu },
+  { path: "/tier-3", label: "Risk Desk", icon: PieChart },
+  { path: "/tier-4", label: "Execution Log", icon: Receipt },
 ];
 
 export default function Sidebar() {
@@ -48,12 +43,12 @@ export default function Sidebar() {
         onClick={onNavigate}
       >
         {isActive && (
-          <span className="absolute -left-[14px] top-1/2 h-7 w-[3px] -translate-y-1/2 rounded-r-full bg-cs-red shadow-glow-red-sm" />
+          <span className="absolute -left-[14px] top-1/2 h-7 w-[3px] -translate-y-1/2 rounded-r-full bg-cs-neon-blue shadow-glow-blue-sm" />
         )}
         <div
           className={`flex h-11 w-11 items-center justify-center rounded-xl transition-all duration-200 ${
             isActive
-              ? "bg-cs-red/15 text-cs-red shadow-glow-red-sm"
+              ? "bg-cs-neon-blue-glow text-cs-neon-blue-bright shadow-glow-blue-sm"
               : "text-cs-muted hover:bg-cs-dark hover:text-white"
           }`}
         >
@@ -76,7 +71,7 @@ export default function Sidebar() {
         className="group mb-8 flex flex-col items-center gap-1.5"
         onClick={onNavigate}
       >
-        <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-gradient-to-br from-cs-red to-cs-red-bright shadow-glow-red-sm transition-shadow duration-300 group-hover:shadow-glow-red">
+        <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-gradient-to-br from-cs-neon-blue to-cs-neon-purple shadow-glow-blue-sm transition-shadow duration-300 group-hover:shadow-glow-purple">
           <span className="text-base font-black tracking-tight text-white">
             CE
           </span>
@@ -91,12 +86,6 @@ export default function Sidebar() {
       {/* Primary nav */}
       <nav className="flex flex-1 flex-col items-center gap-1">
         {navItems.map((item) => renderNavLink(item, onNavigate))}
-
-        {/* Separator */}
-        <div className="my-2 h-px w-8 bg-cs-border/30" />
-
-        {/* Secondary nav */}
-        {secondaryNavItems.map((item) => renderNavLink(item, onNavigate))}
       </nav>
 
       {/* Bottom section */}
@@ -104,10 +93,10 @@ export default function Sidebar() {
         {/* Live indicator */}
         <div className="flex flex-col items-center gap-1">
           <span className="relative flex h-2.5 w-2.5">
-            <span className="absolute inline-flex h-full w-full animate-pulse-slow rounded-full bg-cs-red opacity-75" />
-            <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-cs-red-bright shadow-glow-red-sm" />
+            <span className="absolute inline-flex h-full w-full animate-pulse-slow rounded-full bg-cs-emerald opacity-75" />
+            <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-cs-emerald-bright shadow-glow-emerald-sm" />
           </span>
-          <span className="text-[9px] font-bold uppercase tracking-widest text-cs-red">
+          <span className="text-[9px] font-bold uppercase tracking-widest text-cs-emerald">
             Live
           </span>
         </div>
@@ -118,7 +107,7 @@ export default function Sidebar() {
           title="Settings"
           className={`flex h-11 w-11 items-center justify-center rounded-xl transition-all duration-200 ${
             isSettingsActive
-              ? "bg-cs-red/15 text-cs-red shadow-glow-red-sm"
+              ? "bg-cs-neon-purple-glow text-cs-neon-purple shadow-glow-purple-sm"
               : "text-cs-muted hover:bg-cs-dark hover:text-white"
           }`}
           onClick={onNavigate}
