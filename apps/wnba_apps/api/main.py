@@ -224,6 +224,58 @@ def price(request: PriceRequest) -> PriceResponse:
     )
 
 
+@app.get("/api/archive")
+def archive() -> dict[str, object]:
+    """Live state of the market archive.
+
+    The most honest number on the site. Historical prop odds cannot be bought retroactively,
+    so this is the only measure of how close we are to being able to evaluate anything -- and
+    it will read "thin" for months, which is the truth rather than a defect to be styled away.
+    """
+    try:
+        from wnba_store.db import connect
+    except ImportError:  # pragma: no cover - store extras absent
+        return {"available": False, "reason": "store package unavailable"}
+
+    try:
+        with connect() as conn, conn.cursor() as cur:
+            cur.execute("""
+                SELECT source,
+                       count(*)                                        AS snapshots,
+                       count(DISTINCT player_id)                       AS players,
+                       count(DISTINCT prop_type)                       AS markets,
+                       count(*) FILTER (WHERE over_american_odds IS NOT NULL
+                                          AND under_american_odds IS NOT NULL) AS devigable,
+                       min(system_from)                                AS first_seen,
+                       max(system_from)                                AS last_seen
+                FROM wnba.prop_quotes GROUP BY source ORDER BY snapshots DESC
+            """)
+            by_source = [dict(r) for r in cur.fetchall()]
+            cur.execute("""
+                SELECT prop_type, count(*) AS snapshots, count(DISTINCT player_id) AS players
+                FROM wnba.prop_quotes GROUP BY prop_type ORDER BY snapshots DESC LIMIT 20
+            """)
+            by_market = [dict(r) for r in cur.fetchall()]
+            cur.execute("SELECT count(*) AS n FROM wnba.quarantine")
+            row = cur.fetchone()
+            quarantined = int(row["n"]) if row else 0
+    except Exception as exc:  # noqa: BLE001 - the page must render without a database
+        return {"available": False, "reason": str(exc)[:200]}
+
+    total = sum(int(s["snapshots"]) for s in by_source)
+    return {
+        "available": True,
+        "total_snapshots": total,
+        "quarantined_payloads": quarantined,
+        "by_source": by_source,
+        "by_market": by_market,
+        "note": (
+            "Record-only. These are archived market observations, not forecasts. "
+            "Evaluation needs roughly a season of this before any claim can be tested."
+        ),
+    }
+
+
 @app.get("/api/status")
 def status() -> dict[str, object]:
     """Honest build status. Every claim here is backed by a test that fails the build."""

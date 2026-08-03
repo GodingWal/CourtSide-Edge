@@ -102,6 +102,17 @@
   </div>
 
   <section>
+    <h2>Market archive <span class="tag" id="archive-tag">loading…</span></h2>
+    <p class="sub">
+      Live, record-only. Historical prop odds cannot be bought retroactively, so this archive
+      is the only thing that will ever let us evaluate a forecast — and it will read thin for
+      months. That is the truth, not a defect.
+    </p>
+    <div class="stats" id="archive-stats"></div>
+    <div class="scroll"><table id="archive-table"></table></div>
+  </section>
+
+  <section>
     <h2>Entry pricing</h2>
     <p class="sub">
       Correlated and independent answers side by side. The gap between them is the most
@@ -199,6 +210,33 @@ async function loadPayouts() {
 }
 $("tsource").onchange = loadPayouts;
 loadPayouts();
+
+api("/api/archive").then((a) => {
+  const tag = $("archive-tag");
+  if (!a.available) {
+    tag.textContent = "unavailable";
+    tag.classList.add("warn");
+    $("archive-stats").innerHTML = `<div class="stat"><div class="k">Archive</div><div class="v warn">offline</div></div>`;
+    $("archive-table").innerHTML = `<tbody><tr><td>${a.reason || "no database"}</td></tr></tbody>`;
+    return;
+  }
+  tag.textContent = "recording";
+  tag.classList.add("safe");
+  const src = a.by_source[0] || {};
+  const devig = src.devigable || 0, snaps = a.total_snapshots || 0;
+  $("archive-stats").innerHTML = `
+    <div class="stat"><div class="k">Snapshots</div><div class="v good">${snaps.toLocaleString()}</div></div>
+    <div class="stat"><div class="k">Devigable</div><div class="v">${devig.toLocaleString()}</div></div>
+    <div class="stat"><div class="k">Players</div><div class="v">${src.players ?? "–"}</div></div>
+    <div class="stat"><div class="k">Markets</div><div class="v">${src.markets ?? "–"}</div></div>
+    <div class="stat"><div class="k">Quarantined</div><div class="v ${a.quarantined_payloads ? "warn" : ""}">${a.quarantined_payloads}</div></div>
+    <div class="stat"><div class="k">Last seen</div><div class="v" style="font-size:14px">${String(src.last_seen || "").slice(0, 19).replace("T", " ")}</div></div>`;
+  const rows = (a.by_market || []).map((m) => `<tr>
+      <td>${m.prop_type}</td><td class="num">${Number(m.snapshots).toLocaleString()}</td>
+      <td class="num">${m.players}</td></tr>`).join("");
+  $("archive-table").innerHTML =
+    `<thead><tr><th>Market</th><th class="num">Snapshots</th><th class="num">Players</th></tr></thead><tbody>${rows}</tbody>`;
+}).catch((e) => { $("archive-tag").textContent = "error"; });
 
 api("/api/status").then((s) => {
   const inv = s.invariants.map((i) => `<tr><td>${i.name}</td><td class="num"><span class="pill built">enforced</span></td></tr>`).join("");
