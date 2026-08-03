@@ -46,6 +46,7 @@ def _simulate(
     *,
     projected_minutes: float | None = None,
     projected_minutes_std: float | None = None,
+    rate_multiplier: float = 1.0,
 ) -> list[int]:
     rng = random.Random(seed)
     recent = rows[-20:]
@@ -60,7 +61,7 @@ def _simulate(
     outcomes: list[int] = []
     for _ in range(10_000):
         sampled_minutes = max(0.0, min(45.0, rng.gauss(expected_minutes, minutes_std)))
-        sampled_rate = max(0.0, rng.choice(rates))
+        sampled_rate = max(0.0, rng.choice(rates) * rate_multiplier)
         expectation = sampled_minutes * sampled_rate
         # Poisson sampling preserves count support and naturally widens high-volume props.
         limit = math.exp(-expectation)
@@ -118,7 +119,12 @@ def run_baseline(*, now: datetime | None = None, seed: int = 20260803) -> Foreca
                            SELECT 1 FROM wnba.projected_roles r
                            WHERE r.player_id=coalesce(m.to_player_id,q.player_id)
                              AND r.game_id=q.game_id AND r.system_to IS NULL
-                             AND r.system_from>f.generated_at))
+                             AND r.system_from>f.generated_at)
+                       AND NOT EXISTS (
+                           SELECT 1 FROM wnba.teammate_role_effects e
+                           WHERE e.player_id=coalesce(m.to_player_id,q.player_id)
+                             AND e.game_id=q.game_id AND e.prop_type=q.prop_type
+                             AND e.system_to IS NULL AND e.system_from>f.generated_at))
                ORDER BY q.source,q.source_quote_id,q.system_from DESC""",
             (at,),
         )
@@ -161,15 +167,36 @@ def run_baseline(*, now: datetime | None = None, seed: int = 20260803) -> Foreca
                 (player_id, quote["game_id"]),
             )
             role = cur.fetchone()
+            cur.execute(
+                """SELECT coalesce(exp(sum(ln(rate_multiplier))),1.0) AS rate_multiplier,
+                          coalesce(sum(minutes_delta),0.0) AS minutes_delta,
+                          count(*) AS effects,min(confidence) AS confidence
+                   FROM wnba.teammate_role_effects
+                   WHERE player_id=%s AND game_id=%s AND prop_type=%s AND system_to IS NULL""",
+                (player_id, quote["game_id"], prop),
+            )
+            teammate_effect = cur.fetchone()
             local_seed = seed ^ int(str(quote["quote_id"]).replace("-", "")[:8], 16)
             role_minutes = None if role is None else float(str(role["expected_minutes"]))
             role_std = None if role is None else float(str(role["minutes_std"]))
+            effect_count = int(str(teammate_effect["effects"])) if teammate_effect else 0
+            rate_multiplier = (
+                1.0
+                if not teammate_effect
+                else max(0.75, min(1.35, float(str(teammate_effect["rate_multiplier"]))))
+            )
+            if role_minutes is not None and teammate_effect:
+                role_minutes = max(
+                    0.0,
+                    min(45.0, role_minutes + float(str(teammate_effect["minutes_delta"]))),
+                )
             sims = _simulate(
                 history,
                 columns,
                 local_seed,
                 projected_minutes=role_minutes,
                 projected_minutes_std=role_std,
+                rate_multiplier=rate_multiplier,
             )
             line = Decimal(str(quote["line"]))
             over = sum(Decimal(x) > line for x in sims) / len(sims)
@@ -213,6 +240,11 @@ def run_baseline(*, now: datetime | None = None, seed: int = 20260803) -> Foreca
                             "closing_lineup_probability": None
                             if role is None
                             else role["closing_lineup_probability"],
+                            "teammate_effect_count": effect_count,
+                            "teammate_rate_multiplier": rate_multiplier,
+                            "teammate_effect_confidence": None
+                            if not teammate_effect
+                            else teammate_effect["confidence"],
                         }
                     ),
                     [r["line_id"] for r in history],

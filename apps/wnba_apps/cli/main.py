@@ -14,6 +14,7 @@ import typer
 from rich.console import Console
 from rich.table import Table
 from wnba_services.feature_engine.roles import project_current_roles
+from wnba_services.feature_engine.teammate_effects import project_teammate_effects
 from wnba_services.forecasting.baseline import run_baseline
 from wnba_services.ingestion.archiver import run_archiver
 from wnba_services.ingestion.espn import backfill_espn, ingest_espn_date
@@ -41,6 +42,7 @@ learning_app = typer.Typer(
 )
 injuries_app = typer.Typer(help="Official bitemporal WNBA injury reports.", no_args_is_help=True)
 roles_app = typer.Typer(help="Projected availability, starts, and minutes.", no_args_is_help=True)
+effects_app = typer.Typer(help="Shrunk teammate-absence role effects.", no_args_is_help=True)
 app.add_typer(lines_app, name="lines")
 app.add_typer(db_app, name="db")
 app.add_typer(data_app, name="data")
@@ -50,6 +52,7 @@ app.add_typer(identity_app, name="identity")
 app.add_typer(learning_app, name="learning")
 app.add_typer(injuries_app, name="injuries")
 app.add_typer(roles_app, name="roles")
+app.add_typer(effects_app, name="effects")
 
 console = Console()
 
@@ -268,6 +271,16 @@ def roles_run() -> None:
     console.print(
         f"[green]role projection complete[/green] projected={result.projected} "
         f"unchanged={result.unchanged} skipped={result.skipped}"
+    )
+
+
+@effects_app.command("run")
+def effects_run() -> None:
+    """Refresh historical teammate-absence effects for current markets."""
+    result = project_teammate_effects()
+    console.print(
+        f"[green]teammate effects complete[/green] projected={result.projected} "
+        f"unchanged={result.unchanged} insufficient={result.insufficient}"
     )
 
 

@@ -329,7 +329,9 @@ def forecasts() -> dict[str, object]:
                           g.scheduled_tipoff,i.designation AS injury_designation,
                           i.detail AS injury_detail,r.availability_probability,
                           r.start_probability,r.closing_lineup_probability,
-                          r.minutes_std AS projected_minutes_std,r.model_version AS role_model
+                          r.minutes_std AS projected_minutes_std,r.model_version AS role_model,
+                          e.teammate_effect_count,e.rate_multiplier AS teammate_rate_multiplier,
+                          e.minutes_delta AS teammate_minutes_delta,e.effect_confidence
                    FROM wnba.stat_forecasts f
                    JOIN wnba.players p ON p.player_id=f.player_id
                    JOIN wnba.decision_episodes d ON d.model_run_id=f.model_run_id
@@ -348,6 +350,15 @@ def forecasts() -> dict[str, object]:
                      WHERE player_id=f.player_id AND game_id=f.game_id AND system_to IS NULL
                      ORDER BY system_from DESC LIMIT 1
                    ) r ON true
+                   LEFT JOIN LATERAL (
+                     SELECT count(*) AS teammate_effect_count,
+                            coalesce(exp(sum(ln(rate_multiplier))),1.0) AS rate_multiplier,
+                            coalesce(sum(minutes_delta),0.0) AS minutes_delta,
+                            min(confidence) AS effect_confidence
+                     FROM wnba.teammate_role_effects
+                     WHERE player_id=f.player_id AND game_id=f.game_id
+                       AND prop_type=f.prop_type AND system_to IS NULL
+                   ) e ON true
                    WHERE f.expires_at>now() AND coalesce(i.designation,'available')<>'out'
                    ORDER BY f.quote_id,f.generated_at DESC"""
             )
