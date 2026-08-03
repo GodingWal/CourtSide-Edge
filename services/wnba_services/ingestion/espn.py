@@ -91,9 +91,20 @@ def _register_game(
 ) -> tuple[UUID, dict[str, UUID]]:
     home_id = _register_team(conn, game.home, observed_at)
     away_id = _register_team(conn, game.away, observed_at)
-    game_id = _game_id(game.source_id)
     overtime_periods = max(0, game.period - 4) if game.status == "final" else 0
     with conn.cursor() as cur:
+        # A market feed may have enrolled this game before ESPN published the final. Reuse that
+        # canonical object instead of creating a parallel game that can never settle its quotes.
+        cur.execute(
+            """SELECT game_id FROM wnba.games
+               WHERE home_team_id=%s AND away_team_id=%s
+                 AND scheduled_tipoff BETWEEN %s - interval '10 minutes'
+                                          AND %s + interval '10 minutes'
+               ORDER BY abs(extract(epoch FROM scheduled_tipoff-%s)) LIMIT 1""",
+            (home_id, away_id, game.scheduled_tipoff, game.scheduled_tipoff, game.scheduled_tipoff),
+        )
+        existing = cur.fetchone()
+        game_id = UUID(str(existing["game_id"])) if existing else _game_id(game.source_id)
         cur.execute(
             """INSERT INTO wnba.games
                (game_id,season_year,scheduled_tipoff,home_team_id,away_team_id,status,

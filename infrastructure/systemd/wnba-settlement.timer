@@ -1,0 +1,10 @@
+[Unit]
+Description=Settle WNBA paper forecasts after nightly stats ingestion
+
+[Timer]
+OnCalendar=*-*-* 10:30:00 UTC
+RandomizedDelaySec=5m
+Persistent=true
+
+[Install]
+WantedBy=timers.target

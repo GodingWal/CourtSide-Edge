@@ -382,3 +382,60 @@ def operations() -> dict[str, object]:
         "latest_model_run": row.get("latest_model_run"),
         "analysis_only": True,
     }
+
+
+@app.get("/api/performance")
+def performance() -> dict[str, object]:
+    """Proper scores and calibration for settled paper episodes."""
+    try:
+        from wnba_store.db import connect
+
+        with connect() as conn, conn.cursor() as cur:
+            cur.execute(
+                """SELECT count(*) AS settled,
+                          count(*) FILTER (WHERE o.was_voided) AS voided,
+                          count(*) FILTER (WHERE o.was_push) AS pushed,
+                          count(*) FILTER (WHERE o.hit AND NOT o.was_voided
+                                            AND NOT o.was_push) AS hits,
+                          count(*) FILTER (WHERE NOT o.was_voided
+                                            AND NOT o.was_push) AS scored,
+                          avg(o.brier) AS mean_brier,avg(o.log_loss) AS mean_log_loss,
+                          avg(abs(o.actual_stat-d.projected_mean)) AS mean_absolute_error,
+                          avg(CASE WHEN o.closing_line IS NULL THEN NULL
+                               WHEN d.side='over' THEN o.closing_line-d.line
+                               ELSE d.line-o.closing_line END) AS mean_line_value
+                   FROM wnba.episode_outcomes o
+                   JOIN wnba.decision_episodes d ON d.episode_id=o.episode_id"""
+            )
+            summary = dict(cur.fetchone() or {})
+            cur.execute(
+                """SELECT floor(d.predicted_probability*10)/10 AS bucket,
+                          count(*) AS forecasts,avg(d.predicted_probability) AS predicted,
+                          avg(CASE WHEN o.hit THEN 1.0 ELSE 0.0 END) AS observed
+                   FROM wnba.episode_outcomes o
+                   JOIN wnba.decision_episodes d ON d.episode_id=o.episode_id
+                   WHERE NOT o.was_voided AND NOT o.was_push
+                   GROUP BY 1 ORDER BY 1"""
+            )
+            calibration = [dict(row) for row in cur.fetchall()]
+            cur.execute(
+                """SELECT d.prop_type,count(*) AS forecasts,
+                          avg(CASE WHEN o.hit THEN 1.0 ELSE 0.0 END) AS hit_rate,
+                          avg(o.brier) AS brier,
+                          avg(abs(o.actual_stat-d.projected_mean)) AS mae
+                   FROM wnba.episode_outcomes o
+                   JOIN wnba.decision_episodes d ON d.episode_id=o.episode_id
+                   WHERE NOT o.was_voided AND NOT o.was_push
+                   GROUP BY d.prop_type ORDER BY forecasts DESC"""
+            )
+            by_market = [dict(row) for row in cur.fetchall()]
+    except Exception as exc:
+        return {"available": False, "reason": str(exc)[:200]}
+    return {
+        "available": True,
+        "analysis_only": True,
+        "minimum_validation_sample": 500,
+        "summary": summary,
+        "calibration": calibration,
+        "by_market": by_market,
+    }

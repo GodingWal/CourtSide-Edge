@@ -1,0 +1,12 @@
+[Unit]
+Description=Settle and score WNBA paper forecasts
+After=wnba-stats.service docker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/wnba/repo
+EnvironmentFile=/opt/wnba/repo/.env
+Environment=PATH=/root/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+ExecStart=/root/.local/bin/uv run wnba learning settle
+TimeoutStartSec=15m
+Nice=5
