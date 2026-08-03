@@ -1,0 +1,13 @@
+[Unit]
+Description=Ingest yesterday's final WNBA box scores
+After=network-online.target docker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/wnba/repo
+EnvironmentFile=/opt/wnba/repo/.env
+Environment=PATH=/root/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+ExecStart=/bin/bash -lc 'uv run wnba stats ingest-date "$(TZ=America/New_York date -d yesterday +%%F)"'
+TimeoutStartSec=30m
+Nice=5
+
