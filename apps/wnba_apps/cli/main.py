@@ -22,6 +22,7 @@ from wnba_services.ingestion.espn import backfill_espn, ingest_espn_date
 from wnba_services.ingestion.identity import approve_unique_exact_names
 from wnba_services.ingestion.legacy import import_legacy_sqlite
 from wnba_services.ingestion.wnba_injuries import ingest_official_injuries
+from wnba_services.learning_loop.evaluation import evaluate_models
 from wnba_services.learning_loop.settlement import settle_paper_episodes
 from wnba_store.db import connect, migrate
 
@@ -250,9 +251,23 @@ def identity_approve_exact(
 def learning_settle() -> None:
     """Settle eligible paper episodes from canonical final box scores."""
     result = settle_paper_episodes()
+    evaluation = evaluate_models()
     console.print(
         f"[green]settlement complete[/green] settled={result.settled} "
-        f"voided={result.voided} pushed={result.pushed} unsupported={result.unsupported}"
+        f"voided={result.voided} pushed={result.pushed} unsupported={result.unsupported} "
+        f"evaluations={evaluation.evaluations} attributions={evaluation.attributions} "
+        f"drift_incidents={evaluation.drift_incidents}"
+    )
+
+
+@learning_app.command("evaluate")
+def learning_evaluate() -> None:
+    """Persist calibration, challenger comparisons, errors, and drift diagnostics."""
+    result = evaluate_models()
+    console.print(
+        f"[green]evaluation complete[/green] evaluations={result.evaluations} "
+        f"buckets={result.calibration_buckets} attributions={result.attributions} "
+        f"drift_incidents={result.drift_incidents}"
     )
 
 

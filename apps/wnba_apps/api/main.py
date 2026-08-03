@@ -508,6 +508,26 @@ def performance() -> dict[str, object]:
                    GROUP BY d.prop_type ORDER BY forecasts DESC"""
             )
             by_market = [dict(row) for row in cur.fetchall()]
+            cur.execute(
+                """SELECT DISTINCT ON (component_name) component_name,evaluated_at,sample_size,
+                          brier,log_loss,calibration_error,status
+                   FROM wnba.model_evaluations
+                   ORDER BY component_name,evaluated_at DESC"""
+            )
+            model_evaluations = [dict(row) for row in cur.fetchall()]
+            cur.execute(
+                """SELECT component_name,metric,observed_value,threshold,severity,
+                          automatic_response,opened_at
+                   FROM wnba.drift_incidents WHERE resolved_at IS NULL
+                   ORDER BY opened_at DESC LIMIT 25"""
+            )
+            drift_incidents = [dict(row) for row in cur.fetchall()]
+            cur.execute(
+                """SELECT primary_error,count(*) AS episodes,
+                          avg(CASE WHEN avoidable THEN 1.0 ELSE 0.0 END) AS avoidable_rate
+                   FROM wnba.error_attributions GROUP BY primary_error ORDER BY episodes DESC"""
+            )
+            error_attributions = [dict(row) for row in cur.fetchall()]
     except Exception as exc:
         return {"available": False, "reason": str(exc)[:200]}
     return {
@@ -517,4 +537,7 @@ def performance() -> dict[str, object]:
         "summary": summary,
         "calibration": calibration,
         "by_market": by_market,
+        "model_evaluations": model_evaluations,
+        "drift_incidents": drift_incidents,
+        "error_attributions": error_attributions,
     }
