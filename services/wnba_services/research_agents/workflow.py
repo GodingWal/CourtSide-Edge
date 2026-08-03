@@ -105,7 +105,8 @@ def run_projection_research(
     provider = client or DeepSeekResearchClient()
     with connect() as conn, conn.cursor() as cur:
         cur.execute(
-            """SELECT f.*,fs.features,q.source,q.observed_at,q.locks_at,d.model_disagreement,
+            """SELECT f.*,fs.features,q.source,q.system_from AS observed_at,q.locks_at,
+                      d.model_disagreement,
                       p.full_name
                FROM wnba.stat_forecasts f
                JOIN wnba.feature_snapshots fs ON fs.feature_snapshot_id=f.feature_snapshot_id
