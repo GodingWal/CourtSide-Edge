@@ -26,6 +26,7 @@ from wnba_services.ingestion.identity import approve_unique_exact_names
 from wnba_services.ingestion.legacy import import_legacy_sqlite
 from wnba_services.ingestion.wnba_injuries import ingest_official_injuries
 from wnba_services.learning_loop.evaluation import evaluate_models
+from wnba_services.learning_loop.proposals import generate_research_proposals
 from wnba_services.learning_loop.settlement import settle_paper_episodes
 from wnba_services.research_agents.workflow import run_projection_research
 from wnba_store.db import connect, migrate
@@ -298,6 +299,16 @@ def learning_evaluate() -> None:
         f"[green]evaluation complete[/green] evaluations={result.evaluations} "
         f"buckets={result.calibration_buckets} attributions={result.attributions} "
         f"drift_incidents={result.drift_incidents}"
+    )
+
+
+@learning_app.command("propose")
+def learning_propose() -> None:
+    """Generate human-reviewable experiments from repeated avoidable errors."""
+    result = generate_research_proposals()
+    console.print(
+        f"[green]proposal review complete[/green] proposed={result.proposed} "
+        f"categories_reviewed={result.categories_reviewed}"
     )
 
 

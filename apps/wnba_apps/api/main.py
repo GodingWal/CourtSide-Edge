@@ -15,7 +15,7 @@ from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, Literal
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, Response
@@ -129,6 +129,25 @@ class PriceResponse(BaseModel):
     verdict: Literal["recommend", "decline"]
     seed: int
     simulations: int
+
+
+class FeedbackRequest(BaseModel):
+    feedback_type: Literal[
+        "accepted",
+        "rejected_bad_data",
+        "rejected_minutes",
+        "rejected_matchup",
+        "rejected_price",
+        "rejected_uncertainty",
+        "missing_evidence",
+        "explanation_unclear",
+    ]
+    projection_useful: Annotated[float, Field(ge=0, le=1)]
+    evidence_relevant: Annotated[float, Field(ge=0, le=1)]
+    confidence_appropriate: Annotated[float, Field(ge=0, le=1)]
+    weakest_assumption: Annotated[str, Field(max_length=500)] | None = None
+    missing_context: Annotated[str, Field(max_length=1000)] | None = None
+    would_repeat: bool
 
 
 # --------------------------------------------------------------------------------------
@@ -358,7 +377,7 @@ def forecasts() -> dict[str, object]:
                           f.line,f.mean,f.median,f.stddev,f.probability_over,
                           f.probability_under,f.projected_minutes,f.sample_size,
                           f.data_quality_score,f.confidence,f.generated_at,f.expires_at,
-                          d.side,d.predicted_probability,d.model_disagreement,
+                          d.episode_id,d.side,d.predicted_probability,d.model_disagreement,
                           d.system_recommendation,q.source,
                           g.scheduled_tipoff,i.designation AS injury_designation,
                           i.detail AS injury_detail,r.availability_probability,
@@ -649,3 +668,70 @@ def projection_research(projection_id: UUID) -> dict[str, object]:
     except Exception as exc:
         return {"available": False, "reason": str(exc)[:200]}
     return {"available": True, "configured": True, "run": dict(run), "analyses": analyses}
+
+
+@app.post("/api/research/{projection_id}/run")
+def launch_projection_research(projection_id: UUID) -> dict[str, object]:
+    """Owner-triggered research only; no automatic API spending."""
+    from wnba_services.research_agents.workflow import run_projection_research
+
+    try:
+        result = run_projection_research(projection_id)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return {
+        "research_run_id": result.research_run_id,
+        "analyses": result.analyses,
+        "claims": result.claims,
+        "evidence": result.evidence,
+    }
+
+
+@app.post("/api/feedback/{episode_id}")
+def submit_feedback(episode_id: UUID, feedback: FeedbackRequest) -> dict[str, object]:
+    """Store structured owner feedback as a learning label."""
+    from wnba_store.db import connect
+
+    feedback_id = uuid4()
+    with connect() as conn, conn.cursor() as cur:
+        cur.execute("SELECT 1 FROM wnba.decision_episodes WHERE episode_id=%s", (episode_id,))
+        if cur.fetchone() is None:
+            raise HTTPException(status_code=404, detail="Unknown decision episode")
+        cur.execute(
+            """INSERT INTO wnba.analyst_feedback
+               (feedback_id,episode_id,analyst,submitted_at,feedback_type,projection_useful,
+                evidence_relevant,confidence_appropriate,weakest_assumption,missing_context,
+                would_repeat)
+               VALUES (%s,%s,'owner',%s,%s,%s,%s,%s,%s,%s,%s)""",
+            (
+                feedback_id,
+                episode_id,
+                datetime.now(UTC),
+                feedback.feedback_type,
+                feedback.projection_useful,
+                feedback.evidence_relevant,
+                feedback.confidence_appropriate,
+                feedback.weakest_assumption,
+                feedback.missing_context,
+                feedback.would_repeat,
+            ),
+        )
+        cur.execute(
+            """UPDATE wnba.decision_episodes SET analyst_decision=%s
+               WHERE episode_id=%s AND analyst_decision IS NULL""",
+            (feedback.feedback_type, episode_id),
+        )
+    return {"feedback_id": feedback_id, "stored": True}
+
+
+@app.get("/api/learning/proposals")
+def learning_proposals() -> dict[str, object]:
+    """Human-reviewable experiments generated from repeated errors."""
+    from wnba_store.db import connect
+
+    with connect() as conn, conn.cursor() as cur:
+        cur.execute("SELECT * FROM wnba.research_proposals ORDER BY proposed_at DESC LIMIT 100")
+        proposals = [dict(row) for row in cur.fetchall()]
+    return {"proposals": proposals, "automatic_approval": False}
