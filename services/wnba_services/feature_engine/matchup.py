@@ -22,6 +22,7 @@ MARKET_COLUMNS: dict[str, tuple[str, ...]] = {
     "rebounds_assists": ("rebounds_offensive", "rebounds_defensive", "assists"),
 }
 METHOD = "pace-defense-rest-0.1.0"
+STAT_COLUMNS = tuple(sorted({column for columns in MARKET_COLUMNS.values() for column in columns}))
 
 
 @dataclass(frozen=True)
@@ -110,9 +111,9 @@ def _load_team_games(rows: list[dict[str, Any]]) -> list[TeamGame]:
         game_meta[game_id] = row
         bucket = grouped.setdefault(
             (game_id, team_id),
-            {column: 0.0 for columns in MARKET_COLUMNS.values() for column in columns},
+            {column: 0.0 for column in STAT_COLUMNS},
         )
-        for column in bucket:
+        for column in STAT_COLUMNS:
             bucket[column] += float(str(row[column]))
         for column in ("field_goals_attempted", "free_throws_attempted", "turnovers"):
             bucket[column] = bucket.get(column, 0.0) + float(str(row[column]))

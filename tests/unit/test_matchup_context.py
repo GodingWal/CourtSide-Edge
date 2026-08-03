@@ -1,7 +1,7 @@
 from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
-from wnba_services.feature_engine.matchup import TeamGame, estimate_matchup
+from wnba_services.feature_engine.matchup import TeamGame, _load_team_games, estimate_matchup
 
 
 def team_games(team_id: UUID, opponent_id: UUID, pace: float, allowed: float) -> list[TeamGame]:
@@ -52,3 +52,30 @@ def test_matchup_requires_five_games_per_team() -> None:
         )
         is None
     )
+
+
+def test_loader_handles_multiple_players_without_synthetic_key_leak() -> None:
+    game_id, home_id, away_id = uuid4(), uuid4(), uuid4()
+    rows: list[dict[str, object]] = []
+    for team_id in (home_id, away_id):
+        for _ in range(2):
+            rows.append(
+                {
+                    "game_id": game_id,
+                    "team_id": team_id,
+                    "home_team_id": home_id,
+                    "away_team_id": away_id,
+                    "scheduled_tipoff": datetime(2026, 8, 1, tzinfo=UTC),
+                    "points": 10,
+                    "rebounds_offensive": 1,
+                    "rebounds_defensive": 3,
+                    "assists": 2,
+                    "three_pointers_made": 1,
+                    "field_goals_attempted": 8,
+                    "free_throws_attempted": 2,
+                    "turnovers": 1,
+                }
+            )
+    loaded = _load_team_games(rows)
+    assert len(loaded) == 2
+    assert all(game.totals["points"] == 20 for game in loaded)
