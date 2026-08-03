@@ -25,6 +25,7 @@ from wnba_domain.enums import EntryType, MarketKind, PropType, Side
 from wnba_domain.identity import GameId, PlayerId, SourceName, SourceRef
 
 __all__ = [
+    "CONTINUOUS_PROP_TYPES",
     "ConsensusLine",
     "PayoutRule",
     "PayoutTable",
@@ -33,6 +34,14 @@ __all__ = [
 ]
 
 MIN_AMERICAN_ODDS_MAGNITUDE = 100
+
+CONTINUOUS_PROP_TYPES: frozenset[PropType] = frozenset({PropType.FANTASY_POINTS})
+"""Markets whose outcome is not an integer.
+
+Everything else in this domain resolves to a countable event, which is why the forecast layer
+models those with an exact PMF over the non-negative integers. Fantasy points are a weighted
+sum and land anywhere, so they get neither the half-point line rule nor the discrete
+distribution."""
 
 
 class QuoteKey(FrozenModel):
@@ -83,27 +92,59 @@ class PropQuote(BitemporalRecord):
     @model_validator(mode="after")
     def _price_shape_matches_market_kind(self) -> Self:
         if self.market_kind is MarketKind.SPORTSBOOK_TWO_SIDED:
-            if self.over_american_odds is None or self.under_american_odds is None:
-                raise ValueError("a two-sided market requires both over and under prices")
-            for label, odds in (
+            # At least one side must be priced, but not necessarily both. Operators routinely
+            # offer a single direction on low lines -- "3-Pointers Made 0.5, higher -186" with
+            # no lower at all. Refusing to store those would silently shrink the archive, and
+            # an archive with holes cannot be refetched later at any price. They are recorded
+            # here and rejected at *pricing* time by `fair_probabilities`, which is where the
+            # missing side actually matters.
+            priced = [
                 ("over", self.over_american_odds),
                 ("under", self.under_american_odds),
-            ):
+            ]
+            if all(odds is None for _, odds in priced):
+                raise ValueError("a two-sided market must carry at least one price")
+            for label, odds in priced:
+                if odds is None:
+                    continue
                 if -MIN_AMERICAN_ODDS_MAGNITUDE < odds < MIN_AMERICAN_ODDS_MAGNITUDE:
                     raise ValueError(f"{label} odds {odds} is not valid American odds")
             if self.over_multiplier is not None or self.under_multiplier is not None:
                 raise ValueError("pick'em multipliers are meaningless on a two-sided market")
-        else:
-            if self.over_american_odds is not None or self.under_american_odds is not None:
-                raise ValueError("a pick'em market has no American prices")
+        elif self.over_american_odds is not None or self.under_american_odds is not None:
+            raise ValueError("a pick'em market has no American prices")
         return self
+
+    @property
+    def is_two_sided(self) -> bool:
+        """True only when both prices are present, i.e. when the vig can be removed.
+
+        Pricing code must gate on this rather than on ``market_kind``: a single-sided quote is
+        archivable but not devigable, and treating one as the other invents a fair probability
+        out of half a market.
+        """
+        return (
+            self.market_kind is MarketKind.SPORTSBOOK_TWO_SIDED
+            and self.over_american_odds is not None
+            and self.under_american_odds is not None
+        )
 
     @model_validator(mode="after")
     def _line_precision(self) -> Self:
-        # Real lines land on .5 or whole numbers. Anything else means a parsing bug upstream,
-        # and a silently wrong line is worse than a missing one.
-        if (self.line * 2) % 1 != 0:
-            raise ValueError(f"line {self.line} is not a half-point increment")
+        # Lines on countable stats land on .5 or whole numbers, so anything else signals a
+        # parsing bug -- and a silently wrong line is worse than a missing one.
+        #
+        # Continuous markets are the exception and must not be held to that rule. Fantasy
+        # points are genuinely quoted at 37.05 or 39.55; rejecting those as malformed would
+        # discard real rows from an archive that cannot be refetched later.
+        if self.prop_type in CONTINUOUS_PROP_TYPES:
+            if self.line != self.line.quantize(Decimal("0.01")):
+                raise ValueError(f"line {self.line} exceeds two decimal places")
+        elif (self.line * 2) % 1 != 0:
+            raise ValueError(
+                f"line {self.line} is not a half-point increment "
+                f"(market {self.prop_type.value} has integer outcomes)"
+            )
         return self
 
     def multiplier_for(self, side: Side) -> Decimal:
