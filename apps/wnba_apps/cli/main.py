@@ -9,6 +9,7 @@ import sys
 from datetime import date
 from pathlib import Path
 from typing import Annotated
+from uuid import UUID
 
 import typer
 from rich.console import Console
@@ -24,6 +25,7 @@ from wnba_services.ingestion.legacy import import_legacy_sqlite
 from wnba_services.ingestion.wnba_injuries import ingest_official_injuries
 from wnba_services.learning_loop.evaluation import evaluate_models
 from wnba_services.learning_loop.settlement import settle_paper_episodes
+from wnba_services.research_agents.workflow import run_projection_research
 from wnba_store.db import connect, migrate
 
 app = typer.Typer(
@@ -46,6 +48,7 @@ injuries_app = typer.Typer(help="Official bitemporal WNBA injury reports.", no_a
 roles_app = typer.Typer(help="Projected availability, starts, and minutes.", no_args_is_help=True)
 effects_app = typer.Typer(help="Shrunk teammate-absence role effects.", no_args_is_help=True)
 matchups_app = typer.Typer(help="Pace, defense, rest, and blowout context.", no_args_is_help=True)
+research_app = typer.Typer(help="Evidence-grounded DeepSeek research.", no_args_is_help=True)
 app.add_typer(lines_app, name="lines")
 app.add_typer(db_app, name="db")
 app.add_typer(data_app, name="data")
@@ -57,6 +60,7 @@ app.add_typer(injuries_app, name="injuries")
 app.add_typer(roles_app, name="roles")
 app.add_typer(effects_app, name="effects")
 app.add_typer(matchups_app, name="matchups")
+app.add_typer(research_app, name="research")
 
 console = Console()
 
@@ -268,6 +272,22 @@ def learning_evaluate() -> None:
         f"[green]evaluation complete[/green] evaluations={result.evaluations} "
         f"buckets={result.calibration_buckets} attributions={result.attributions} "
         f"drift_incidents={result.drift_incidents}"
+    )
+
+
+@research_app.command("run")
+def research_run(
+    projection_id: Annotated[str, typer.Argument(help="Forecast projection UUID.")],
+) -> None:
+    """Run cited availability, rotation, matchup, market, and skeptic analyses."""
+    try:
+        parsed_id = UUID(projection_id)
+    except ValueError as exc:
+        raise typer.BadParameter("expected a projection UUID") from exc
+    result = run_projection_research(parsed_id)
+    console.print(
+        f"[green]research complete[/green] run={result.research_run_id} "
+        f"analyses={result.analyses} claims={result.claims} evidence={result.evidence}"
     )
 
 
