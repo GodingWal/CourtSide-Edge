@@ -1,0 +1,28 @@
+[Unit]
+Description=Private CourtSide Edge analyst console
+After=network-online.target docker.service
+
+[Service]
+Type=simple
+User=wnba
+Group=wnba
+WorkingDirectory=/opt/wnba/repo
+EnvironmentFile=/opt/wnba/repo/.env
+Environment=UV_CACHE_DIR=/var/cache/wnba
+ExecStart=/opt/wnba/repo/.venv/bin/uvicorn wnba_apps.api.main:app --host 127.0.0.1 --port 8090
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+ReadWritePaths=/var/lib/wnba /var/cache/wnba
+
+[Install]
+WantedBy=multi-user.target

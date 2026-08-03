@@ -6,7 +6,6 @@ After=network-online.target docker.service wnba-archiver.service
 Type=oneshot
 WorkingDirectory=/opt/wnba/repo
 EnvironmentFile=/opt/wnba/repo/.env
-Environment=PATH=/root/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-ExecStart=/root/.local/bin/uv run wnba forecast run
+ExecStart=/opt/wnba/repo/.venv/bin/wnba forecast run
 TimeoutStartSec=15m
 Nice=5

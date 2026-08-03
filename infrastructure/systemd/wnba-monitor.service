@@ -1,0 +1,8 @@
+[Unit]
+Description=Verify CourtSide Edge API, database, timers, backup age and disk
+After=network-online.target docker.service
+
+[Service]
+Type=oneshot
+EnvironmentFile=/opt/wnba/repo/.env
+ExecStart=/bin/bash /opt/wnba/repo/infrastructure/monitor_health.sh

@@ -6,7 +6,6 @@ After=wnba-effects.service docker.service
 Type=oneshot
 WorkingDirectory=/opt/wnba/repo
 EnvironmentFile=/opt/wnba/repo/.env
-Environment=PATH=/root/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-ExecStart=/root/.local/bin/uv run wnba matchups run
+ExecStart=/opt/wnba/repo/.venv/bin/wnba matchups run
 TimeoutStartSec=15m
 Nice=5

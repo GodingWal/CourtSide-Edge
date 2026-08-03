@@ -737,3 +737,26 @@ def learning_proposals() -> dict[str, object]:
         cur.execute("SELECT * FROM wnba.research_proposals ORDER BY proposed_at DESC LIMIT 100")
         proposals = [dict(row) for row in cur.fetchall()]
     return {"proposals": proposals, "automatic_approval": False}
+
+
+@app.get("/api/readiness")
+def readiness() -> dict[str, object]:
+    """Latest fail-closed real-money gate evaluation."""
+    from wnba_store.db import connect
+
+    with connect() as conn, conn.cursor() as cur:
+        cur.execute(
+            """SELECT * FROM wnba.readiness_evaluations
+               ORDER BY evaluated_at DESC LIMIT 1"""
+        )
+        evaluation = cur.fetchone()
+        if evaluation is None:
+            return {"available": True, "evaluation": None, "gates": []}
+        cur.execute(
+            """SELECT gate_id,status,evidence_source,observed_value,threshold_value,detail
+               FROM wnba.readiness_gate_results WHERE readiness_evaluation_id=%s
+               ORDER BY gate_id""",
+            (evaluation["readiness_evaluation_id"],),
+        )
+        gates = [dict(row) for row in cur.fetchall()]
+    return {"available": True, "evaluation": dict(evaluation), "gates": gates}

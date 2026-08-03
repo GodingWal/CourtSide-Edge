@@ -4,7 +4,7 @@
 # is considered disaster recovery.
 set -euo pipefail
 
-BACKUP_DIR=${WNBA_BACKUP_DIR:-/root/backups/postgres}
+BACKUP_DIR=${WNBA_BACKUP_DIR:-/var/lib/wnba/backups}
 CONTAINER=${WNBA_POSTGRES_CONTAINER:-wnba-postgres}
 DATABASE=${WNBA_POSTGRES_DATABASE:-courtside}
 USER_NAME=${WNBA_POSTGRES_USER:-courtside}
@@ -28,6 +28,12 @@ sha256sum "$TARGET" > "$TARGET.sha256"
 # Verify inside the Postgres container so the host does not need client packages installed.
 # With no filename pg_restore reads the custom archive from standard input.
 docker exec -i "$CONTAINER" pg_restore --list < "$TARGET" >/dev/null
+
+if [[ -n "${WNBA_OFFSITE_BACKUP_COMMAND:-}" ]]; then
+    read -r -a offsite_command <<< "$WNBA_OFFSITE_BACKUP_COMMAND"
+    "${offsite_command[@]}" "$TARGET" "$TARGET.sha256"
+    touch "$BACKUP_DIR/.last-offsite-success"
+fi
 
 find "$BACKUP_DIR" -type f \( -name 'wnba-*.dump' -o -name 'wnba-*.dump.sha256' \) \
     -mtime "+$RETENTION_DAYS" -delete

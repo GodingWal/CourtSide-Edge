@@ -1,0 +1,22 @@
+[project]
+name = "wnba-video-intelligence"
+version = "0.1.0"
+description = "Experimental licensed-footage sensor for WNBA spatial and event features."
+requires-python = "==3.12.*"
+dependencies = [
+    "pydantic>=2.10",
+    "opencv-python-headless>=4.10",
+    "numpy>=2.0",
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+training = ["ultralytics>=8.3", "torch>=2.5", "torchvision>=0.20"]
+ocr = ["paddleocr>=2.9"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/wnba_video_intelligence"]

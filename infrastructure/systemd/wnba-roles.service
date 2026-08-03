@@ -6,7 +6,6 @@ After=wnba-injuries.service docker.service
 Type=oneshot
 WorkingDirectory=/opt/wnba/repo
 EnvironmentFile=/opt/wnba/repo/.env
-Environment=PATH=/root/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-ExecStart=/root/.local/bin/uv run wnba roles run
+ExecStart=/opt/wnba/repo/.venv/bin/wnba roles run
 TimeoutStartSec=10m
 Nice=5

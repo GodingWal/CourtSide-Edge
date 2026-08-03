@@ -27,6 +27,7 @@ from wnba_services.ingestion.legacy import import_legacy_sqlite
 from wnba_services.ingestion.wnba_injuries import ingest_official_injuries
 from wnba_services.learning_loop.evaluation import evaluate_models
 from wnba_services.learning_loop.proposals import generate_research_proposals
+from wnba_services.learning_loop.readiness import evaluate_readiness
 from wnba_services.learning_loop.settlement import settle_paper_episodes
 from wnba_services.research_agents.workflow import run_projection_research
 from wnba_store.db import connect, migrate
@@ -310,6 +311,18 @@ def learning_propose() -> None:
         f"[green]proposal review complete[/green] proposed={result.proposed} "
         f"categories_reviewed={result.categories_reviewed}"
     )
+
+
+@learning_app.command("readiness")
+def learning_readiness() -> None:
+    """Evaluate every real-money gate and fail closed on provisional evidence."""
+    result = evaluate_readiness()
+    console.print(
+        f"[green]readiness evaluated[/green] id={result.evaluation_id} "
+        f"overall_ready={result.overall_ready}"
+    )
+    for gate in result.gates:
+        console.print(f"  {gate.status:16} {gate.gate_id}: {gate.detail}")
 
 
 @research_app.command("run")

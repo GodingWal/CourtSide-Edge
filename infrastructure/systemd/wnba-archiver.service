@@ -1,11 +1,11 @@
 [Unit]
-Description=Ingest latest official WNBA injury report
+Description=Archive changed WNBA market states
 After=network-online.target docker.service
 
 [Service]
 Type=oneshot
 WorkingDirectory=/opt/wnba/repo
 EnvironmentFile=/opt/wnba/repo/.env
-ExecStart=/opt/wnba/repo/.venv/bin/wnba injuries poll
+ExecStart=/opt/wnba/repo/.venv/bin/wnba lines poll --quiet
 TimeoutStartSec=10m
 Nice=5

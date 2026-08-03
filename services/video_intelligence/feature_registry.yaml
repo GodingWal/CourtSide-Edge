@@ -1,0 +1,43 @@
+version: 1
+production_dependency: false
+features:
+  - name: court_coordinates
+    phase: 1
+    labels: [court_keypoints, frame_timestamp]
+    metric: median_projection_error_pixels
+    promotion_threshold: 8.0
+  - name: player_tracks
+    phase: 1
+    labels: [player_bbox, team, track_id]
+    metric: hota
+    promotion_threshold: 0.65
+  - name: ball_tracks
+    phase: 1
+    labels: [ball_bbox, visibility, track_id]
+    metric: hota
+    promotion_threshold: 0.45
+  - name: possession_and_touches
+    phase: 2
+    labels: [possessor_id, possession_start, possession_end]
+    metric: event_f1
+    promotion_threshold: 0.90
+  - name: shot_location_and_contest
+    phase: 2
+    labels: [shooter_id, release_frame, court_xy, nearest_defender_distance]
+    metric: location_mae_feet
+    promotion_threshold: 2.0
+  - name: rebound_positioning
+    phase: 3
+    labels: [shot_id, player_xy_at_release, player_xy_at_rim, rebounder_id]
+    metric: assignment_f1
+    promotion_threshold: 0.85
+  - name: defensive_matchup_time
+    phase: 3
+    labels: [offensive_player_id, defender_id, start_frame, end_frame]
+    metric: segment_iou
+    promotion_threshold: 0.75
+  - name: spacing_and_movement_load
+    phase: 3
+    labels: [player_track, possession_id, court_calibration]
+    metric: held_out_forecast_log_loss_lift
+    promotion_threshold: 0.0
