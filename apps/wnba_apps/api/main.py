@@ -990,8 +990,18 @@ def create_pick(draft: PickSlipDraft) -> dict[str, object]:
                (pick_slip_id,title,source,status,entry_type,platform,stake,potential_payout,
                 notes,is_paper,created_at,updated_at)
                VALUES (%s,%s,%s,'confirmed',%s,%s,%s,%s,%s,true,%s,%s)""",
-            (slip_id,draft.title,draft.source,draft.entry_type,draft.platform,draft.stake,
-             draft.potential_payout,draft.notes,now,now),
+            (
+                slip_id,
+                draft.title,
+                draft.source,
+                draft.entry_type,
+                draft.platform,
+                draft.stake,
+                draft.potential_payout,
+                draft.notes,
+                now,
+                now,
+            ),
         )
         for leg in draft.legs:
             cur.execute(
@@ -999,8 +1009,18 @@ def create_pick(draft: PickSlipDraft) -> dict[str, object]:
                    (pick_leg_id,pick_slip_id,projection_id,player_name,prop_type,side,line,
                     offered_odds,model_probability,extraction_confidence)
                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
-                (uuid4(),slip_id,leg.projection_id,leg.player_name,leg.prop_type,leg.side,
-                 leg.line,leg.offered_odds,leg.model_probability,leg.extraction_confidence),
+                (
+                    uuid4(),
+                    slip_id,
+                    leg.projection_id,
+                    leg.player_name,
+                    leg.prop_type,
+                    leg.side,
+                    leg.line,
+                    leg.offered_odds,
+                    leg.model_probability,
+                    leg.extraction_confidence,
+                ),
             )
     return {"pick_slip_id": slip_id, "stored": True, "is_paper": True}
 
@@ -1026,7 +1046,9 @@ def parse_pick_screenshot(request: PickScreenshotRequest) -> dict[str, object]:
     if not content.startswith(signatures[request.content_type]):
         raise HTTPException(status_code=422, detail="File content does not match its image type")
     upload_id = uuid4()
-    extension = {"image/png":"png","image/jpeg":"jpg","image/webp":"webp"}[request.content_type]
+    extension = {"image/png": "png", "image/jpeg": "jpg", "image/webp": "webp"}[
+        request.content_type
+    ]
     upload_dir = Path(os.getenv("WNBA_UPLOAD_DIR", "/var/lib/wnba/uploads"))
     upload_dir.mkdir(parents=True, exist_ok=True)
     image_path = upload_dir / f"{upload_id}.{extension}"
@@ -1034,7 +1056,10 @@ def parse_pick_screenshot(request: PickScreenshotRequest) -> dict[str, object]:
     try:
         completed = subprocess.run(
             ["tesseract", str(image_path), "stdout", "--psm", "6"],
-            check=True,capture_output=True,text=True,timeout=45,
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=45,
         )
         ocr_text = completed.stdout.strip()
         if len(ocr_text) < 3:
@@ -1048,13 +1073,25 @@ def parse_pick_screenshot(request: PickScreenshotRequest) -> dict[str, object]:
             """INSERT INTO wnba.pick_uploads
                (upload_id,original_filename,content_type,storage_path,content_sha256,
                 ocr_text,parse_status,error) VALUES (%s,%s,%s,%s,%s,%s,%s,%s)""",
-            (upload_id,request.filename,request.content_type,str(image_path),
-             hashlib.sha256(content).hexdigest(),ocr_text,status,error),
+            (
+                upload_id,
+                request.filename,
+                request.content_type,
+                str(image_path),
+                hashlib.sha256(content).hexdigest(),
+                ocr_text,
+                status,
+                error,
+            ),
         )
     if draft is None:
         raise HTTPException(status_code=422, detail=error or "Screenshot could not be parsed")
-    return {"upload_id": upload_id, "ocr_text": ocr_text, "draft": draft,
-            "requires_confirmation": True}
+    return {
+        "upload_id": upload_id,
+        "ocr_text": ocr_text,
+        "draft": draft,
+        "requires_confirmation": True,
+    }
 
 
 @app.get("/api/readiness")
