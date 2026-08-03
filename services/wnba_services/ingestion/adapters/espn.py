@@ -180,6 +180,11 @@ class EspnWnbaAdapter:
                     if row.get("didNotPlay") or not row.get("stats"):
                         continue
                     stats = row["stats"]
+                    # ESPN sometimes supplies a full placeholder array for a DNP while the
+                    # didNotPlay flag is false. Minutes is the authoritative signal here;
+                    # accepting "--" as zero would fabricate an appearance.
+                    if _stat(stats, positions, "minutes") in (None, "", "--"):
+                        continue
 
                     fgm, fga = _made_attempted(
                         _stat(stats, positions, "fieldGoalsMade-fieldGoalsAttempted"),
