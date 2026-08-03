@@ -1,10 +1,8 @@
 """Analyst console API.
 
-What this serves today is deliberately narrow. The market archive is real and live; the
-pricing section runs the real engines against hand-entered probabilities, because no
-forecasting model exists yet. The console says exactly that rather than filling the gap with
-plausible-looking placeholders -- a dashboard showing invented numbers is worse than an empty
-one, being a demonstration that the plumbing works mistaken for one that the model does.
+The console serves the live market archive and shadow baseline forecasts. Its advanced pricing
+lab runs the same correlation and payout engines against hand-entered probabilities, clearly
+separated from model output. Shadow forecasts remain paper-only until validation gates pass.
 
 The engines behind it are real: the same copula simulator and payout math the batch pipeline
 will use, with no separate "web" implementation to drift out of sync.
@@ -327,11 +325,14 @@ def forecasts() -> dict[str, object]:
                           f.line,f.mean,f.median,f.stddev,f.probability_over,
                           f.probability_under,f.projected_minutes,f.sample_size,
                           f.data_quality_score,f.confidence,f.generated_at,f.expires_at,
-                          d.side,d.predicted_probability,d.system_recommendation
+                          d.side,d.predicted_probability,d.system_recommendation,q.source,
+                          g.scheduled_tipoff
                    FROM wnba.stat_forecasts f
                    JOIN wnba.players p ON p.player_id=f.player_id
                    JOIN wnba.decision_episodes d ON d.model_run_id=f.model_run_id
                      AND d.quote_id=f.quote_id
+                   JOIN wnba.prop_quotes q ON q.quote_id=f.quote_id
+                   JOIN wnba.games g ON g.game_id=f.game_id
                    WHERE f.expires_at>now()
                    ORDER BY f.quote_id,f.generated_at DESC"""
             )
