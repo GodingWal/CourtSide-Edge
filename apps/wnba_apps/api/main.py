@@ -10,7 +10,12 @@ will use, with no separate "web" implementation to drift out of sync.
 
 from __future__ import annotations
 
+import base64
+import hashlib
 import hmac
+import json
+import os
+import subprocess
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from pathlib import Path
@@ -150,6 +155,92 @@ class FeedbackRequest(BaseModel):
     weakest_assumption: Annotated[str, Field(max_length=500)] | None = None
     missing_context: Annotated[str, Field(max_length=1000)] | None = None
     would_repeat: bool
+
+
+class PickLegDraft(BaseModel):
+    player_name: Annotated[str, Field(min_length=1, max_length=120)]
+    prop_type: Annotated[str, Field(min_length=1, max_length=80)]
+    side: Literal["over", "under"]
+    line: Annotated[float, Field(ge=0, le=200)]
+    offered_odds: Annotated[int, Field(ge=-5000, le=5000)] | None = None
+    projection_id: UUID | None = None
+    model_probability: Annotated[float, Field(ge=0, le=1)] | None = None
+    extraction_confidence: Annotated[float, Field(ge=0, le=1)] | None = None
+
+
+class PickSlipDraft(BaseModel):
+    title: Annotated[str, Field(max_length=200)] = ""
+    source: Literal["manual", "board", "ai_text", "screenshot"] = "manual"
+    entry_type: Literal["power", "flex", "sportsbook"] = "power"
+    platform: Annotated[str, Field(max_length=100)] = ""
+    stake: Annotated[float, Field(ge=0, le=1_000_000)] | None = None
+    potential_payout: Annotated[float, Field(ge=0, le=10_000_000)] | None = None
+    notes: Annotated[str, Field(max_length=2000)] = ""
+    legs: Annotated[list[PickLegDraft], Field(min_length=1, max_length=12)]
+
+
+class PickTextRequest(BaseModel):
+    text: Annotated[str, Field(min_length=3, max_length=5000)]
+
+
+class PickScreenshotRequest(BaseModel):
+    filename: Annotated[str, Field(min_length=1, max_length=200)]
+    content_type: Literal["image/png", "image/jpeg", "image/webp"]
+    data_base64: Annotated[str, Field(min_length=20, max_length=14_000_000)]
+
+
+def _parse_pick_text(text: str, source: str) -> PickSlipDraft:
+    """Use DeepSeek only to structure user-supplied text; the owner must confirm the draft."""
+    import httpx
+
+    api_key = os.getenv("DEEPSEEK_API_KEY", "")
+    if not api_key:
+        raise HTTPException(status_code=503, detail="DeepSeek is not configured")
+    shape = {
+        "title": "short string",
+        "source": source,
+        "entry_type": "power|flex|sportsbook",
+        "platform": "string",
+        "stake": None,
+        "potential_payout": None,
+        "notes": "string",
+        "legs": [
+            {
+                "player_name": "string",
+                "prop_type": "points",
+                "side": "over|under",
+                "line": 0.0,
+                "offered_odds": None,
+                "extraction_confidence": 0.0,
+            }
+        ],
+    }
+    payload = {
+        "model": os.getenv("DEEPSEEK_MODEL", "deepseek-v4-pro"),
+        "messages": [
+            {
+                "role": "system",
+                "content": (
+                    "Extract a sports pick slip from supplied text. Return JSON only. Never "
+                    "invent a missing player, line, side, platform, odds, stake, or payout. "
+                    "Use confidence below 0.7 for ambiguous OCR. This creates an unconfirmed "
+                    "paper draft, not a wager."
+                ),
+            },
+            {"role": "user", "content": json.dumps({"text": text, "json_shape": shape})},
+        ],
+        "response_format": {"type": "json_object"},
+        "max_tokens": 2500,
+        "stream": False,
+    }
+    base_url = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com").rstrip("/")
+    with httpx.Client(timeout=90, headers={"Authorization": f"Bearer {api_key}"}) as client:
+        response = client.post(f"{base_url}/chat/completions", json=payload)
+        response.raise_for_status()
+    envelope = response.json()
+    content = envelope["choices"][0]["message"]["content"]
+    draft = PickSlipDraft.model_validate_json(content)
+    return draft.model_copy(update={"source": source})
 
 
 # --------------------------------------------------------------------------------------
@@ -863,6 +954,107 @@ def operations_timeline() -> dict[str, object]:
         )
         incidents = [dict(row) for row in cur.fetchall()]
     return {"events": events, "data_quality_incidents": incidents}
+
+
+@app.get("/api/picks")
+def picks() -> dict[str, object]:
+    """Owner pick slips, kept distinct from system recommendations."""
+    from wnba_store.db import connect
+
+    with connect() as conn, conn.cursor() as cur:
+        cur.execute(
+            """SELECT s.*,coalesce(jsonb_agg(jsonb_build_object(
+                        'pick_leg_id',l.pick_leg_id,'projection_id',l.projection_id,
+                        'player_name',l.player_name,'prop_type',l.prop_type,'side',l.side,
+                        'line',l.line,'offered_odds',l.offered_odds,
+                        'model_probability',l.model_probability,'result',l.result,
+                        'extraction_confidence',l.extraction_confidence
+                      ) ORDER BY l.created_at) FILTER (WHERE l.pick_leg_id IS NOT NULL),'[]') legs
+               FROM wnba.pick_slips s LEFT JOIN wnba.pick_legs l USING (pick_slip_id)
+               GROUP BY s.pick_slip_id ORDER BY s.created_at DESC LIMIT 200"""
+        )
+        slips = [dict(row) for row in cur.fetchall()]
+    return {"picks": slips, "analysis_only": True, "automatic_wagering": False}
+
+
+@app.post("/api/picks")
+def create_pick(draft: PickSlipDraft) -> dict[str, object]:
+    """Save an owner-confirmed pick slip; all entries remain paper records."""
+    from wnba_store.db import connect
+
+    slip_id = uuid4()
+    now = datetime.now(UTC)
+    with connect() as conn, conn.cursor() as cur:
+        cur.execute(
+            """INSERT INTO wnba.pick_slips
+               (pick_slip_id,title,source,status,entry_type,platform,stake,potential_payout,
+                notes,is_paper,created_at,updated_at)
+               VALUES (%s,%s,%s,'confirmed',%s,%s,%s,%s,%s,true,%s,%s)""",
+            (slip_id,draft.title,draft.source,draft.entry_type,draft.platform,draft.stake,
+             draft.potential_payout,draft.notes,now,now),
+        )
+        for leg in draft.legs:
+            cur.execute(
+                """INSERT INTO wnba.pick_legs
+                   (pick_leg_id,pick_slip_id,projection_id,player_name,prop_type,side,line,
+                    offered_odds,model_probability,extraction_confidence)
+                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                (uuid4(),slip_id,leg.projection_id,leg.player_name,leg.prop_type,leg.side,
+                 leg.line,leg.offered_odds,leg.model_probability,leg.extraction_confidence),
+            )
+    return {"pick_slip_id": slip_id, "stored": True, "is_paper": True}
+
+
+@app.post("/api/picks/parse-text")
+def parse_pick_text(request: PickTextRequest) -> dict[str, object]:
+    draft = _parse_pick_text(request.text, "ai_text")
+    return {"draft": draft, "requires_confirmation": True}
+
+
+@app.post("/api/picks/parse-screenshot")
+def parse_pick_screenshot(request: PickScreenshotRequest) -> dict[str, object]:
+    """OCR an owner screenshot, then ask DeepSeek to structure—not approve—the extracted slip."""
+    from wnba_store.db import connect
+
+    try:
+        content = base64.b64decode(request.data_base64, validate=True)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="Invalid base64 image") from exc
+    if len(content) > 10_000_000:
+        raise HTTPException(status_code=413, detail="Screenshot exceeds the 10 MB limit")
+    signatures = {"image/png": b"\x89PNG", "image/jpeg": b"\xff\xd8\xff", "image/webp": b"RIFF"}
+    if not content.startswith(signatures[request.content_type]):
+        raise HTTPException(status_code=422, detail="File content does not match its image type")
+    upload_id = uuid4()
+    extension = {"image/png":"png","image/jpeg":"jpg","image/webp":"webp"}[request.content_type]
+    upload_dir = Path(os.getenv("WNBA_UPLOAD_DIR", "/var/lib/wnba/uploads"))
+    upload_dir.mkdir(parents=True, exist_ok=True)
+    image_path = upload_dir / f"{upload_id}.{extension}"
+    image_path.write_bytes(content)
+    try:
+        completed = subprocess.run(
+            ["tesseract", str(image_path), "stdout", "--psm", "6"],
+            check=True,capture_output=True,text=True,timeout=45,
+        )
+        ocr_text = completed.stdout.strip()
+        if len(ocr_text) < 3:
+            raise ValueError("OCR did not find enough text")
+        draft = _parse_pick_text(ocr_text, "screenshot")
+        status, error = "parsed", None
+    except (FileNotFoundError, subprocess.SubprocessError, ValueError) as exc:
+        ocr_text, draft, status, error = "", None, "failed", str(exc)[:500]
+    with connect() as conn, conn.cursor() as cur:
+        cur.execute(
+            """INSERT INTO wnba.pick_uploads
+               (upload_id,original_filename,content_type,storage_path,content_sha256,
+                ocr_text,parse_status,error) VALUES (%s,%s,%s,%s,%s,%s,%s,%s)""",
+            (upload_id,request.filename,request.content_type,str(image_path),
+             hashlib.sha256(content).hexdigest(),ocr_text,status,error),
+        )
+    if draft is None:
+        raise HTTPException(status_code=422, detail=error or "Screenshot could not be parsed")
+    return {"upload_id": upload_id, "ocr_text": ocr_text, "draft": draft,
+            "requires_confirmation": True}
 
 
 @app.get("/api/readiness")

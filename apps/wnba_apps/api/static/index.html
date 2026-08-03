@@ -13,11 +13,12 @@
     <div class="brand"><span class="brandmark">CE</span><span>CourtSide<br><b>Edge</b></span></div>
     <nav id="nav" aria-label="Analyst workspace">
       <button class="nav active" data-view="today" data-mobile="Today"><span>01</span>Today</button>
-      <button class="nav" data-view="markets" data-mobile="Markets"><span>02</span>Markets</button>
-      <button class="nav" data-view="research" data-mobile="Research"><span>03</span>Research</button>
-      <button class="nav" data-view="validation" data-mobile="Validate"><span>04</span>Validation</button>
-      <button class="nav" data-view="learning" data-mobile="Learn"><span>05</span>Learning</button>
-      <button class="nav" data-view="operations" data-mobile="Ops"><span>06</span>Operations</button>
+      <button class="nav" data-view="picks" data-mobile="Picks"><span>02</span>Picks</button>
+      <button class="nav" data-view="markets" data-mobile="Markets"><span>03</span>Markets</button>
+      <button class="nav" data-view="research" data-mobile="Research"><span>04</span>Research</button>
+      <button class="nav" data-view="validation" data-mobile="Validate"><span>05</span>Validation</button>
+      <button class="nav" data-view="learning" data-mobile="Learn"><span>06</span>Learning</button>
+      <button class="nav" data-view="operations" data-mobile="Ops"><span>07</span>Operations</button>
     </nav>
     <div class="sidefoot"><span class="pulse"></span><div><b id="connection">Connecting</b><small>Private owner console</small></div></div>
   </aside>
@@ -38,6 +39,15 @@
         </section>
         <aside class="stack narrow"><section class="card pad" id="todayReadiness"></section><section class="card pad" id="todayHealth"></section><section class="card pad process"></section></aside>
       </div>
+    </section>
+
+    <section class="view" id="view-picks">
+      <div class="sectionintro"><div><label>Owner pick workspace</label><h2>Picks & parlays</h2><p>Build a slip from model forecasts, describe it to DeepSeek, or upload a screenshot. AI-created legs remain drafts until you confirm them.</p></div><span class="pill warning">Paper record only</span></div>
+      <div class="pickgrid">
+        <section class="card pad"><div class="cardhead flush"><div><label>Build</label><h2>Parlay builder</h2></div><button class="button" id="clearPick">Clear</button></div><div id="pickLegs"></div><div class="formgrid pickmeta"><label>Title<input id="pickTitle" placeholder="Tonight's card"></label><label>Platform<input id="pickPlatform" placeholder="PrizePicks"></label><label>Entry<select id="pickEntry"><option value="power">Power</option><option value="flex">Flex</option><option value="sportsbook">Sportsbook</option></select></label><label>Stake<input id="pickStake" type="number" min="0" step="0.01" placeholder="Optional"></label></div><button class="primary wide" id="savePick">Confirm paper pick</button></section>
+        <section class="stack"><section class="card pad"><div class="cardhead flush"><div><label>Tell the AI</label><h2>Describe your picks</h2></div></div><textarea id="pickText" placeholder="Example: A'ja Wilson over 25.5 points and Caitlin Clark over 8.5 assists on PrizePicks, $20 power play."></textarea><button class="primary wide" id="parsePickText">Create draft with DeepSeek</button></section><section class="card pad"><div class="cardhead flush"><div><label>Import</label><h2>Upload pick screenshot</h2></div></div><label class="dropzone" for="pickScreenshot"><b>Choose or take a screenshot</b><span>PNG, JPEG, or WebP · up to 10 MB</span><input id="pickScreenshot" type="file" accept="image/png,image/jpeg,image/webp" capture="environment"></label><div id="uploadState" class="muted"></div></section></section>
+      </div>
+      <section class="card"><div class="cardhead"><div><label>History</label><h2>Saved pick slips</h2></div><span class="mono accent" id="pickCount">0</span></div><div id="pickHistory" class="slipgrid"></div></section>
     </section>
 
     <section class="view" id="view-markets">
