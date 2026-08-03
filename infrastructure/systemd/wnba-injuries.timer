@@ -1,0 +1,11 @@
+[Unit]
+Description=Poll official WNBA injury reports every 15 minutes
+
+[Timer]
+OnBootSec=3m
+OnUnitActiveSec=15m
+RandomizedDelaySec=1m
+Persistent=true
+
+[Install]
+WantedBy=timers.target

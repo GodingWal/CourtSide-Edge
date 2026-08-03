@@ -1,0 +1,12 @@
+[Unit]
+Description=Ingest latest official WNBA injury report
+After=network-online.target docker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/wnba/repo
+EnvironmentFile=/opt/wnba/repo/.env
+Environment=PATH=/root/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+ExecStart=/root/.local/bin/uv run wnba injuries poll
+TimeoutStartSec=10m
+Nice=5
