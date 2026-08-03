@@ -92,23 +92,31 @@ def opportunity_conversion_expectation(
     rate_multiplier: float,
 ) -> float:
     """Decompose shot volume from conversion when the box score supports it."""
-    minutes = math.fsum(float(str(row["minutes"])) for row in history)
+
+    def weighted_ratio(numerator: str, denominator: str, alpha: float) -> float:
+        weighted_numerator = weighted_denominator = 0.0
+        for age, row in enumerate(reversed(history)):
+            weight = (1.0 - alpha) ** age
+            weighted_numerator += weight * float(str(row[numerator]))
+            weighted_denominator += weight * float(str(row[denominator]))
+        return weighted_numerator / max(1.0, weighted_denominator)
+
     if columns == ("points",) and all("field_goals_attempted" in row for row in history):
-        attempts = math.fsum(float(str(row["field_goals_attempted"])) for row in history)
-        points = math.fsum(float(str(row["points"])) for row in history)
-        attempts_per_minute = attempts / max(1.0, minutes)
-        points_per_attempt = points / max(1.0, attempts)
+        attempts_per_minute = weighted_ratio("field_goals_attempted", "minutes", 0.25)
+        points_per_attempt = weighted_ratio("points", "field_goals_attempted", 0.10)
         return expected_minutes * attempts_per_minute * points_per_attempt * rate_multiplier
     if columns == ("three_pointers_made",) and all(
         "three_pointers_attempted" in row for row in history
     ):
-        attempts = math.fsum(float(str(row["three_pointers_attempted"])) for row in history)
-        made = math.fsum(float(str(row["three_pointers_made"])) for row in history)
-        attempts_per_minute = attempts / max(1.0, minutes)
-        conversion = made / max(1.0, attempts)
+        attempts_per_minute = weighted_ratio("three_pointers_attempted", "minutes", 0.25)
+        conversion = weighted_ratio("three_pointers_made", "three_pointers_attempted", 0.10)
         return expected_minutes * attempts_per_minute * conversion * rate_multiplier
-    total = math.fsum(math.fsum(float(str(row[column])) for column in columns) for row in history)
-    return expected_minutes * total / max(1.0, minutes) * rate_multiplier
+    state_numerator = state_minutes = 0.0
+    for age, row in enumerate(reversed(history)):
+        weight = 0.8**age
+        state_numerator += weight * math.fsum(float(str(row[column])) for column in columns)
+        state_minutes += weight * float(str(row["minutes"]))
+    return expected_minutes * state_numerator / max(1.0, state_minutes) * rate_multiplier
 
 
 def build_ensemble(

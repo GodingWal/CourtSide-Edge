@@ -32,3 +32,16 @@ def test_points_opportunity_conversion_separates_volume_and_efficiency() -> None
         expected_minutes=32.0,
         rate_multiplier=1.0,
     ) == pytest.approx(16.0)
+
+
+def test_opportunity_reacts_faster_than_conversion() -> None:
+    history = [{"minutes": 30.0, "points": 12, "field_goals_attempted": 10} for _ in range(9)] + [
+        {"minutes": 30.0, "points": 24, "field_goals_attempted": 20}
+    ]
+    expectation = opportunity_conversion_expectation(
+        history=history,
+        columns=("points",),
+        expected_minutes=30.0,
+        rate_multiplier=1.0,
+    )
+    assert expectation > 13.2
