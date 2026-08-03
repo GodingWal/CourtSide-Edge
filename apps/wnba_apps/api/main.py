@@ -331,7 +331,11 @@ def forecasts() -> dict[str, object]:
                           r.start_probability,r.closing_lineup_probability,
                           r.minutes_std AS projected_minutes_std,r.model_version AS role_model,
                           e.teammate_effect_count,e.rate_multiplier AS teammate_rate_multiplier,
-                          e.minutes_delta AS teammate_minutes_delta,e.effect_confidence
+                          e.minutes_delta AS teammate_minutes_delta,e.effect_confidence,
+                          c.expected_possessions,c.pace_multiplier,c.defense_multiplier,
+                          c.expected_margin,c.blowout_probability,c.team_rest_days,
+                          c.opponent_rest_days,c.confidence AS matchup_confidence,
+                          c.method_version AS matchup_model
                    FROM wnba.stat_forecasts f
                    JOIN wnba.players p ON p.player_id=f.player_id
                    JOIN wnba.decision_episodes d ON d.model_run_id=f.model_run_id
@@ -359,6 +363,14 @@ def forecasts() -> dict[str, object]:
                      WHERE player_id=f.player_id AND game_id=f.game_id
                        AND prop_type=f.prop_type AND system_to IS NULL
                    ) e ON true
+                   LEFT JOIN LATERAL (
+                     SELECT * FROM wnba.matchup_contexts
+                     WHERE game_id=f.game_id AND prop_type=f.prop_type AND system_to IS NULL
+                       AND team_id=(SELECT team_id FROM wnba.player_game_lines
+                         WHERE player_id=f.player_id AND system_to IS NULL
+                         ORDER BY ingested_at DESC LIMIT 1)
+                     ORDER BY system_from DESC LIMIT 1
+                   ) c ON true
                    WHERE f.expires_at>now() AND coalesce(i.designation,'available')<>'out'
                    ORDER BY f.quote_id,f.generated_at DESC"""
             )

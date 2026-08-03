@@ -124,7 +124,11 @@ def run_baseline(*, now: datetime | None = None, seed: int = 20260803) -> Foreca
                            SELECT 1 FROM wnba.teammate_role_effects e
                            WHERE e.player_id=coalesce(m.to_player_id,q.player_id)
                              AND e.game_id=q.game_id AND e.prop_type=q.prop_type
-                             AND e.system_to IS NULL AND e.system_from>f.generated_at))
+                             AND e.system_to IS NULL AND e.system_from>f.generated_at)
+                       AND NOT EXISTS (
+                           SELECT 1 FROM wnba.matchup_contexts c
+                           WHERE c.game_id=q.game_id AND c.prop_type=q.prop_type
+                             AND c.system_to IS NULL AND c.system_from>f.generated_at))
                ORDER BY q.source,q.source_quote_id,q.system_from DESC""",
             (at,),
         )
@@ -176,6 +180,16 @@ def run_baseline(*, now: datetime | None = None, seed: int = 20260803) -> Foreca
                 (player_id, quote["game_id"], prop),
             )
             teammate_effect = cur.fetchone()
+            team_id = history[-1]["team_id"]
+            cur.execute(
+                """SELECT expected_possessions,pace_multiplier,defense_multiplier,
+                          expected_margin,blowout_probability,team_rest_days,
+                          opponent_rest_days,confidence,method_version
+                   FROM wnba.matchup_contexts
+                   WHERE game_id=%s AND team_id=%s AND prop_type=%s AND system_to IS NULL""",
+                (quote["game_id"], team_id, prop),
+            )
+            matchup = cur.fetchone()
             local_seed = seed ^ int(str(quote["quote_id"]).replace("-", "")[:8], 16)
             role_minutes = None if role is None else float(str(role["expected_minutes"]))
             role_std = None if role is None else float(str(role["minutes_std"]))
@@ -190,13 +204,30 @@ def run_baseline(*, now: datetime | None = None, seed: int = 20260803) -> Foreca
                     0.0,
                     min(45.0, role_minutes + float(str(teammate_effect["minutes_delta"]))),
                 )
+            if role_minutes is not None and matchup:
+                role_minutes = max(
+                    0.0,
+                    role_minutes - 1.5 * float(str(matchup["blowout_probability"])),
+                )
+            matchup_multiplier = (
+                1.0
+                if not matchup
+                else max(
+                    0.8,
+                    min(
+                        1.25,
+                        float(str(matchup["pace_multiplier"]))
+                        * float(str(matchup["defense_multiplier"])),
+                    ),
+                )
+            )
             sims = _simulate(
                 history,
                 columns,
                 local_seed,
                 projected_minutes=role_minutes,
                 projected_minutes_std=role_std,
-                rate_multiplier=rate_multiplier,
+                rate_multiplier=rate_multiplier * matchup_multiplier,
             )
             line = Decimal(str(quote["line"]))
             over = sum(Decimal(x) > line for x in sims) / len(sims)
@@ -245,6 +276,22 @@ def run_baseline(*, now: datetime | None = None, seed: int = 20260803) -> Foreca
                             "teammate_effect_confidence": None
                             if not teammate_effect
                             else teammate_effect["confidence"],
+                            "matchup_model": None if not matchup else matchup["method_version"],
+                            "expected_possessions": None
+                            if not matchup
+                            else matchup["expected_possessions"],
+                            "pace_multiplier": None if not matchup else matchup["pace_multiplier"],
+                            "defense_multiplier": None
+                            if not matchup
+                            else matchup["defense_multiplier"],
+                            "expected_margin": None if not matchup else matchup["expected_margin"],
+                            "blowout_probability": None
+                            if not matchup
+                            else matchup["blowout_probability"],
+                            "team_rest_days": None if not matchup else matchup["team_rest_days"],
+                            "opponent_rest_days": None
+                            if not matchup
+                            else matchup["opponent_rest_days"],
                         }
                     ),
                     [r["line_id"] for r in history],

@@ -1,0 +1,11 @@
+[Unit]
+Description=Refresh WNBA matchup context every 30 minutes
+
+[Timer]
+OnBootSec=8m
+OnUnitActiveSec=30m
+RandomizedDelaySec=2m
+Persistent=true
+
+[Install]
+WantedBy=timers.target

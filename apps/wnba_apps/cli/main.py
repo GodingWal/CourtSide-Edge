@@ -13,6 +13,7 @@ from typing import Annotated
 import typer
 from rich.console import Console
 from rich.table import Table
+from wnba_services.feature_engine.matchup import project_matchup_contexts
 from wnba_services.feature_engine.roles import project_current_roles
 from wnba_services.feature_engine.teammate_effects import project_teammate_effects
 from wnba_services.forecasting.baseline import run_baseline
@@ -43,6 +44,7 @@ learning_app = typer.Typer(
 injuries_app = typer.Typer(help="Official bitemporal WNBA injury reports.", no_args_is_help=True)
 roles_app = typer.Typer(help="Projected availability, starts, and minutes.", no_args_is_help=True)
 effects_app = typer.Typer(help="Shrunk teammate-absence role effects.", no_args_is_help=True)
+matchups_app = typer.Typer(help="Pace, defense, rest, and blowout context.", no_args_is_help=True)
 app.add_typer(lines_app, name="lines")
 app.add_typer(db_app, name="db")
 app.add_typer(data_app, name="data")
@@ -53,6 +55,7 @@ app.add_typer(learning_app, name="learning")
 app.add_typer(injuries_app, name="injuries")
 app.add_typer(roles_app, name="roles")
 app.add_typer(effects_app, name="effects")
+app.add_typer(matchups_app, name="matchups")
 
 console = Console()
 
@@ -281,6 +284,16 @@ def effects_run() -> None:
     console.print(
         f"[green]teammate effects complete[/green] projected={result.projected} "
         f"unchanged={result.unchanged} insufficient={result.insufficient}"
+    )
+
+
+@matchups_app.command("run")
+def matchups_run() -> None:
+    """Refresh point-in-time game and opponent context for the current board."""
+    result = project_matchup_contexts()
+    console.print(
+        f"[green]matchup context complete[/green] projected={result.projected} "
+        f"unchanged={result.unchanged} skipped={result.skipped}"
     )
 
 
