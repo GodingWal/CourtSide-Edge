@@ -209,6 +209,10 @@ class UnderdogAdapter:
         if appearance is None:
             return None
 
+        player_id = appearance.get("player_id")
+        if player_id not in wnba_player_ids:
+            return None  # another sport; not our business
+
         source_game_id = str(appearance.get("match_id", ""))
         game_raw = games.get(source_game_id)
         if game_raw is None:
@@ -226,10 +230,6 @@ class UnderdogAdapter:
             away_abbreviation=teams[0],
             home_abbreviation=teams[1],
         )
-
-        player_id = appearance.get("player_id")
-        if player_id not in wnba_player_ids:
-            return None  # another sport; not our business
 
         player = players[player_id]
         display_stat = str(appearance_stat.get("display_stat", ""))
