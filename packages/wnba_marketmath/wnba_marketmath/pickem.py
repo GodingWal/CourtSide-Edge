@@ -6,12 +6,25 @@ applied to several legs at once.
 
 That has one consequence worth stating plainly: **entry EV depends on the joint distribution
 across legs, not on the individual legs.** Two 58% legs on the same game are not a 33.6%
-parlay, because if the game turns into a blowout both of them fail together. Correlation is not
-a refinement here -- it is where the entire edge lives, in both directions.
+parlay. A single latent game state -- pace, blowout, foul trouble -- moves them together.
 
-Every function takes the correct-count distribution as an input rather than computing it, so
-the correlated simulator in ``wnba_sim`` is the only thing that ever decides what "joint" means.
+Correlation is a **mean-preserving spread** on the number of correct legs: it leaves the
+expected count alone and moves mass from the middle to the tails. By Jensen, whether that helps
+is decided by the curvature of the payout in the correct-leg count:
+
+* **Convex payout -> correlation helps.** Every real pick'em table is strongly convex. A 5-leg
+  flex paying 0.4x / 2x / 10x for 3 / 4 / 5 correct has successive steps of 0.4, 1.6 and 8.0;
+  the tail mass correlation creates at k=5 dwarfs the middle it costs. Power plays are the
+  extreme case -- all payout sits on the top outcome. Deliberate same-game stacking is a
+  genuine edge on these products, not a beginner's error.
+* **Concave payout -> correlation hurts.** Flat, insurance-like ladders lose value when the
+  distribution is spread.
+
+So the sign is a property of the operator's payout table, not a universal fact, and it must be
+recomputed whenever those multipliers change. Nothing in this module computes its own joint
+distribution: only the correlated simulator in ``wnba_sim`` is entitled to model that structure.
 :func:`independent_correct_count_pmf` exists purely as the naive baseline to measure against.
+
 """
 
 from __future__ import annotations

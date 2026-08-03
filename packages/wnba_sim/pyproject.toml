@@ -3,7 +3,10 @@ name = "wnba-sim"
 version = "0.1.0"
 description = "Correlated joint Monte Carlo simulation of player stat lines."
 requires-python = "==3.12.*"
-dependencies = ["wnba-domain", "numpy>=2.1"]
+dependencies = [
+    "wnba-domain",
+    "numpy>=2.1",
+]
 
 [build-system]
 requires = ["hatchling"]
