@@ -225,7 +225,16 @@ def ingest_espn_date(
 
     observed_at = datetime.now(UTC)
     scoreboard = feed.fetch_scoreboard(game_date)
-    games = [game for game in feed.parse_scoreboard(scoreboard) if game.status == "final"]
+    # ESPN includes national-team exhibitions and All-Star events in the WNBA scoreboard.
+    # They do not belong in franchise player-prop training and often use pseudo-team codes
+    # such as PUERTORICO or WNBASTARS, so require both teams to have a verified home zone.
+    games = [
+        game
+        for game in feed.parse_scoreboard(scoreboard)
+        if game.status == "final"
+        and game.home.abbreviation in _TEAM_ZONES
+        and game.away.abbreviation in _TEAM_ZONES
+    ]
     written = 0
 
     with connect(database_url) as conn:
