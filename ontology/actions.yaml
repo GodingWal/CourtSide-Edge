@@ -1,0 +1,96 @@
+# The action layer.
+#
+# Palantir's genuinely useful idea: an action is an object, not a side effect. Every state
+# change worth arguing about later is recorded with actor, prior state, new state, reason and
+# evidence -- so "why was this source disabled in July?" has an answer.
+#
+# `automatable` is the asymmetric-autonomy invariant, and it is enforced by a validator on
+# OntologyAction rather than by convention. The system may automatically become more cautious.
+# Becoming more aggressive always requires a human. Automation multiplies competence, but it
+# multiplies stupidity with equal efficiency and considerably more speed.
+
+version: 1
+
+actions:
+  - name: approve_candidate
+    subject: EntryCandidate
+    automatable: false
+    expands_exposure: true
+    requires: [reason, actor]
+    description: Move a candidate to recommended. Human only, by construction.
+
+  - name: reject_candidate
+    subject: EntryCandidate
+    automatable: true
+    expands_exposure: false
+    requires: [reason]
+    description: Decline a candidate. Always permitted automatically.
+
+  - name: override_minutes
+    subject: ProjectedRole
+    automatable: false
+    expands_exposure: true
+    requires: [reason, evidence_ids]
+    description: >
+      Replace the model's minutes projection with a human one. Requires cited evidence, and the
+      override is scored later like any other forecast -- analysts are calibrated too.
+
+  - name: mark_source_stale
+    subject: SourceReliability
+    automatable: true
+    expands_exposure: false
+    requires: [reason]
+    description: Flag a source as no longer fresh enough to gate recommendations.
+
+  - name: disable_source
+    subject: SourceReliability
+    automatable: true
+    expands_exposure: false
+    requires: [reason]
+    description: Stop trusting a source entirely.
+
+  - name: freeze_game
+    subject: Game
+    automatable: true
+    expands_exposure: false
+    requires: [reason]
+    description: >
+      Stop producing recommendations for a game -- late lineup chaos, a source outage, tip
+      imminent.
+
+  - name: recompute_after_news
+    subject: Game
+    automatable: true
+    expands_exposure: false
+    requires: [reason]
+    description: Re-run projections following an availability or role change.
+
+  - name: promote_model
+    subject: ModelVersion
+    automatable: false
+    expands_exposure: true
+    requires: [reason, actor, experiment_id]
+    description: >
+      Champion/challenger transition. Requires the experiment that justified it, with its
+      primary metric declared before the run.
+
+  - name: rollback_model
+    subject: ModelVersion
+    automatable: true
+    expands_exposure: false
+    requires: [reason]
+    description: Return to the previous champion. Always permitted automatically.
+
+  - name: record_disagreement
+    subject: DecisionEpisode
+    automatable: false
+    expands_exposure: false
+    requires: [reason]
+    description: Record that an analyst disagreed, and why. Becomes a training label.
+
+  - name: settle_episode
+    subject: DecisionEpisode
+    automatable: true
+    expands_exposure: false
+    requires: [reason]
+    description: Attach the outcome and score. Appends; never mutates the episode.

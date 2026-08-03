@@ -1,0 +1,282 @@
+# The object layer of the WNBA prop ontology.
+#
+# This file is the human-readable contract. `packages/wnba_domain` is the executable one.
+# A test asserts they never drift apart: every object listed here must exist as a Pydantic
+# model, and every domain model must be declared here. Documentation that can silently
+# disagree with the code is worse than no documentation, because it is trusted.
+#
+# `temporal: bitemporal` means the model inherits BitemporalRecord and carries both time axes.
+# `temporal: immutable` means it is a write-once audit record.
+
+version: 1
+
+groups:
+  basketball:
+    description: >
+      The game itself. Reference entities, situational context, availability, role beliefs,
+      settled outcomes, and fine-grained events.
+    objects:
+      - name: Season
+        model: Season
+        temporal: immutable
+        description: One WNBA season and its schedule envelope.
+      - name: Team
+        model: Team
+        temporal: immutable
+        description: A franchise, with the home-arena time zone that drives travel features.
+      - name: Player
+        model: Player
+        temporal: immutable
+        description: An athlete under a canonical id.
+      - name: Game
+        model: Game
+        temporal: immutable
+        description: One scheduled contest. Regulation is 40 minutes, not 48.
+      - name: GameContext
+        model: GameContext
+        temporal: bitemporal
+        description: Rest, travel, congestion and prior-game load for one team in one game.
+      - name: InjuryStatusRecord
+        model: InjuryStatusRecord
+        temporal: bitemporal
+        description: >
+          One availability observation. Bitemporal is load-bearing: "questionable at 14:30,
+          out at 17:40" is the most common way a backtest quietly reads the future.
+      - name: RosterAssignment
+        model: RosterAssignment
+        temporal: bitemporal
+        description: Which team a player belongs to, over time.
+      - name: ProjectedRole
+        model: ProjectedRole
+        temporal: bitemporal
+        description: >
+          Our belief about a player's role. Carries start_probability and
+          closing_lineup_probability. There is deliberately no boolean starter field anywhere
+          in this ontology -- the WNBA does not submit lineups before tip, so it is not a fact
+          we could ingest.
+      - name: PlayerGameLine
+        model: PlayerGameLine
+        temporal: immutable
+        description: >
+          A settled box-score line; the ground truth every forecast is scored against. Its
+          `started` flag is an observed outcome and must never be read as an input for the
+          game it describes.
+      - name: Possession
+        model: Possession
+        temporal: immutable
+        description: One possession with its on-court lineups.
+      - name: Shot
+        model: Shot
+        temporal: immutable
+        description: One shot attempt. Video-derived defender fields are optional and flagged.
+      - name: DefensiveMatchup
+        model: DefensiveMatchup
+        temporal: none
+        description: Time one defender spent guarding one offensive player. Video-derived.
+
+  identity:
+    description: >
+      Canonical identity and cross-source alias resolution. Unresolved names block ingestion
+      rather than being fuzzy-matched into the training data.
+    objects:
+      - name: SourceRef
+        model: SourceRef
+        temporal: immutable
+        description: Provenance for one ingested fact, including a payload hash.
+      - name: PlayerAlias
+        model: PlayerAlias
+        temporal: bitemporal
+        description: Binding between one source's name for a player and our canonical id.
+      - name: TeamAlias
+        model: TeamAlias
+        temporal: bitemporal
+        description: The same, for teams.
+      - name: EntityResolutionFailure
+        model: EntityResolutionFailure
+        temporal: immutable
+        description: >
+          A name we could not bind. Not a warning to be tuned away -- each one is a hole in the
+          data through which a forecast can fall.
+
+  market:
+    description: >
+      Prices and payout structures. Free data means DFS pick'em, so value comes from a payout
+      table over correlated legs rather than from devigging two-sided prices.
+    objects:
+      - name: QuoteKey
+        model: QuoteKey
+        temporal: none
+        description: Natural key (player, game, prop type) joining quotes across sources.
+      - name: PropQuote
+        model: PropQuote
+        temporal: bitemporal
+        description: >
+          One archived observation of one line. The most time-critical object in the platform:
+          historical prop odds are paywalled everywhere, so this table is our only market
+          history and cannot be reconstructed after the fact at any price.
+      - name: PayoutRule
+        model: PayoutRule
+        temporal: none
+        description: Payout by number of correct legs, for one entry shape.
+      - name: PayoutTable
+        model: PayoutTable
+        temporal: none
+        description: A source's payout rules, effective from a point in time.
+      - name: ConsensusLine
+        model: ConsensusLine
+        temporal: none
+        description: >
+          Cross-source view of one market. Without two-sided prices, dispersion between sources
+          is the closest thing we have to a market-uncertainty signal.
+
+  forecast:
+    description: Distributions, model provenance, and gated projections.
+    objects:
+      - name: LineProbabilities
+        model: LineProbabilities
+        temporal: none
+        description: Over/push/under against a specific line. Push is computed, never assumed.
+      - name: DiscreteOutcomeDistribution
+        model: DiscreteOutcomeDistribution
+        temporal: none
+        description: Exact PMF over integer stat outcomes.
+      - name: ContinuousDistribution
+        model: ContinuousDistribution
+        temporal: none
+        description: Quantile-represented distribution, used for minutes.
+      - name: StatForecast
+        model: StatForecast
+        temporal: none
+        description: The distribution for one player, one game, one stat.
+      - name: ModelVersion
+        model: ModelVersion
+        temporal: immutable
+        description: A promotable artifact carrying champion/challenger stage.
+      - name: ModelRun
+        model: ModelRun
+        temporal: immutable
+        description: One execution, with the random seed that makes it reproducible.
+      - name: Projection
+        model: Projection
+        temporal: immutable
+        description: A forecast plus everything needed to gate, audit and later diagnose it.
+
+  decision:
+    description: >
+      Entries, the write-once episode record, and the scoring and attribution appended to it.
+    objects:
+      - name: EntryLeg
+        model: EntryLeg
+        temporal: none
+        description: One selection inside an entry, with its marginal win probability.
+      - name: EntryCandidate
+        model: EntryCandidate
+        temporal: none
+        description: A proposed entry priced against a payout rule and a joint distribution.
+      - name: DecisionEpisode
+        model: DecisionEpisode
+        temporal: immutable
+        description: >
+          Everything the system knew and believed at one decision moment. Write-once. Outcomes
+          are appended as separate records, never merged in.
+      - name: EpisodeOutcome
+        model: EpisodeOutcome
+        temporal: immutable
+        description: Settlement, appended after the game.
+      - name: ForecastScore
+        model: ForecastScore
+        temporal: immutable
+        description: Brier and log loss. The primary metric, ahead of profit.
+      - name: ErrorAttribution
+        model: ErrorAttribution
+        temporal: immutable
+        description: >
+          Why the forecast was wrong, or right and merely unlucky. Contributions must sum to 1,
+          forcing irreducible variance to be named rather than blamed on the model.
+      - name: AnalystFeedback
+        model: AnalystFeedback
+        temporal: immutable
+        description: Structured human judgement. Free text alone is not a training signal.
+
+  research:
+    description: >
+      PAT-style evidence, claims and hypotheses. Agents explain, challenge and propose; they
+      never write a number directly into a forecast.
+    objects:
+      - name: SourceDocument
+        model: SourceDocument
+        temporal: immutable
+        description: A retrieved artifact, hashed.
+      - name: Evidence
+        model: Evidence
+        temporal: immutable
+        description: A quotable fragment bound to what it supports.
+      - name: ResearchClaim
+        model: ResearchClaim
+        temporal: immutable
+        description: >
+          A cited, falsifiable, expiring assertion. A claim with no citations is not a weak
+          claim -- it is rejected.
+      - name: Hypothesis
+        model: Hypothesis
+        temporal: immutable
+        description: >
+          A causal statement with a required mechanism and named confounders, so the reasoning
+          is testable rather than hidden inside a feature column.
+      - name: AgentForecast
+        model: AgentForecast
+        temporal: immutable
+        description: >
+          One agent's answer before and after seeing its peers. Storing both rounds is what
+          makes anchoring detectable and turns disagreement into a measurable signal.
+      - name: ResearchProposal
+        model: ResearchProposal
+        temporal: immutable
+        description: A ranked improvement generated from measured failure, approved by a human.
+      - name: Experiment
+        model: Experiment
+        temporal: immutable
+        description: >
+          A champion-challenger comparison with its primary metric fixed in advance, so the
+          result cannot be reinterpreted into whichever metric happened to improve.
+
+  governance:
+    description: Audited actions, data quality, reliability, calibration and drift.
+    objects:
+      - name: OntologyAction
+        model: OntologyAction
+        temporal: immutable
+        description: >
+          A first-class state change with actor, prior state, new state, reason and evidence.
+          Rejects automated actions that would expand exposure.
+      - name: DataQualityIncident
+        model: DataQualityIncident
+        temporal: immutable
+        description: A validation failure, recorded rather than logged and forgotten.
+      - name: QuarantineRecord
+        model: QuarantineRecord
+        temporal: immutable
+        description: >
+          A rejected payload, preserved verbatim. What a source gets wrong is itself a signal.
+      - name: SourceReliability
+        model: SourceReliability
+        temporal: immutable
+        description: Rolling per-source quality, feeding evidence weighting and the DQ gate.
+      - name: CalibrationBucket
+        model: CalibrationBucket
+        temporal: none
+        description: One row of the calibration table.
+      - name: CalibrationSnapshot
+        model: CalibrationSnapshot
+        temporal: immutable
+        description: >
+          The table that quietly reveals a model saying 65% and hitting 59%. Until it is flat,
+          edge estimates are decoration.
+      - name: DriftIncident
+        model: DriftIncident
+        temporal: immutable
+        description: Detected drift and the automatic response taken.
+      - name: ModelPromotion
+        model: ModelPromotion
+        temporal: immutable
+        description: A champion/challenger transition. Always human-approved.

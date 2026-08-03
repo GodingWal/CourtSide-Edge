@@ -1,0 +1,114 @@
+# Policies: the gates and limits that stand between a model output and a recommendation.
+#
+# Every threshold here is a starting point chosen to be restrictive, not a tuned optimum.
+# They should be set by walk-forward testing once there is enough settled history to test
+# against -- and until then, erring toward "no recommendation" costs nothing but patience.
+
+version: 1
+
+invariants:
+  - id: bitemporality
+    statement: Every stored fact carries both valid and system time axes.
+    enforced_by: wnba_domain.base.BitemporalRecord
+    tested_by: tests/unit/test_domain_invariants.py
+
+  - id: no_look_ahead
+    statement: >
+      A forecast at time T may only use records with system_from <= T. All historical reads go
+      through wnba_store.temporal.as_of.
+    enforced_by: wnba_store.temporal
+    tested_by: tests/leakage/test_point_in_time.py
+
+  - id: starter_is_a_probability
+    statement: >
+      The WNBA does not require pre-tip lineup submission, so no boolean starter field may
+      exist outside observed post-game outcomes.
+    enforced_by: wnba_domain.basketball.ProjectedRole
+    tested_by: tests/unit/test_domain_invariants.py
+
+  - id: strict_validation
+    statement: Every boundary model is strict, forbids extra fields, and validates on assignment.
+    enforced_by: wnba_domain.base.StrictModel
+    tested_by: tests/unit/test_domain_invariants.py
+
+  - id: probability_before_profit
+    statement: >
+      Log loss and Brier are the primary metrics. A profit-only feedback loop rewards a lucky
+      51% and punishes an unlucky 75%.
+    enforced_by: wnba_domain.decision.ForecastScore
+    tested_by: tests/unit/test_domain_invariants.py
+
+  - id: asymmetric_autonomy
+    statement: Automation may restrict exposure. Only a human may expand it.
+    enforced_by: wnba_domain.governance.OntologyAction
+    tested_by: tests/unit/test_domain_invariants.py
+
+  - id: analysis_only
+    statement: >
+      No object in this domain places a wager, authenticates to a sportsbook, or moves money.
+      The absence is the enforcement.
+    enforced_by: wnba_domain
+    tested_by: tests/unit/test_domain_invariants.py
+
+recommendation_gates:
+  min_expected_value: 0.04
+  min_data_quality_score: 0.90
+  max_quote_age_seconds: 120
+  max_model_disagreement: 0.15
+  require_calibration_healthy: true
+  block_if_correlation_flips_sign: true
+  note: >
+    The last gate has no analogue in sportsbook betting. If an entry is +EV under one plausible
+    correlation and -EV under another, it is not an opportunity -- it is an unpriced position,
+    and the honest answer is to decline until correlation is estimated from settled episodes.
+
+exposure_limits:
+  kelly_multiplier: 0.10
+  max_fraction_per_position: 0.005
+  max_fraction_per_game: 0.02
+  max_fraction_per_day: 0.05
+  note: >
+    Full Kelly assumes the probabilities are correct. Priced off free data with no historical
+    odds to validate against, they are not yet. Caps are shared headroom, so correlated
+    positions on one game compete for a single budget.
+
+drift_escalation:
+  - level: 1
+    trigger: calibration error above tolerance
+    response: reduce_confidence
+  - level: 2
+    trigger: sustained calibration drift or feature drift
+    response: reduce_stake
+  - level: 3
+    trigger: market-specific degradation
+    response: disable_market
+  - level: 4
+    trigger: source outage or systemic drift
+    response: require_manual_review
+
+before_real_money:
+  description: >
+    All ten must hold. A profitable backtest is not evidence; it is a suspect awaiting
+    questioning.
+  criteria:
+    - at least 500 out-of-sample recommendations
+    - positive line value between forecast and lock
+    - positive performance after realistic pricing
+    - calibration within tolerance across buckets
+    - no single player or market responsible for most profit
+    - stable performance across several rolling windows
+    - no material look-ahead leakage
+    - correct handling of voids, scratches and late lineup changes
+    - complete model and data lineage for every episode
+    - drawdown within predetermined tolerance
+  additionally:
+    - payout tables verified against the live product, with a recorded verification date
+
+source_etiquette:
+  min_poll_interval_seconds: 60
+  single_client: true
+  honest_user_agent: true
+  backoff_on_429: true
+  note: >
+    The free line sources are undocumented endpoints. Poll politely, identify honestly, and
+    treat their terms as binding. The technical ability to fetch something is not a licence.

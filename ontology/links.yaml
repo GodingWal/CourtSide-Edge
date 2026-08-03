@@ -1,0 +1,215 @@
+# The link layer: how objects relate.
+#
+# Links are declared here and enforced at the database level by foreign keys. This file exists
+# so the shape of the graph can be read in one sitting, and so a reviewer can ask "what is
+# connected to a DecisionEpisode?" without grepping nine modules.
+
+version: 1
+
+links:
+  # --- basketball ------------------------------------------------------------------
+  - name: plays_for
+    from: Player
+    to: Team
+    via: RosterAssignment
+    cardinality: many_to_many_over_time
+
+  - name: scheduled_between
+    from: Game
+    to: Team
+    field: [home_team_id, away_team_id]
+    cardinality: many_to_two
+
+  - name: has_availability
+    from: Player
+    to: InjuryStatusRecord
+    cardinality: one_to_many
+    note: Ordered on the system axis; the latest *known* record is the belief, not the latest valid one.
+
+  - name: has_projected_role
+    from: Player
+    to: ProjectedRole
+    cardinality: one_to_many
+    note: Scoped to a game. Carries probabilities only -- never a starter boolean.
+
+  - name: produced_line
+    from: Game
+    to: PlayerGameLine
+    cardinality: one_to_many
+
+  - name: contains_possession
+    from: Game
+    to: Possession
+    cardinality: one_to_many
+
+  - name: contains_shot
+    from: Possession
+    to: Shot
+    cardinality: one_to_many
+
+  - name: assisted_by
+    from: Shot
+    to: Player
+    cardinality: many_to_one
+    note: Only valid on made shots, and never self-referential.
+
+  - name: defended_by
+    from: Player
+    to: Player
+    via: DefensiveMatchup
+    cardinality: many_to_many
+    note: Video-derived. Carries a confidence score and never gates a recommendation alone.
+
+  # --- identity --------------------------------------------------------------------
+  - name: resolves_to
+    from: PlayerAlias
+    to: Player
+    cardinality: many_to_one
+    note: An unresolved alias raises rather than guessing. See EntityResolutionFailure.
+
+  - name: sourced_from
+    from: SourceRef
+    to: SourceDocument
+    cardinality: many_to_one
+
+  # --- market ----------------------------------------------------------------------
+  - name: quotes_market
+    from: PropQuote
+    to: QuoteKey
+    cardinality: many_to_one
+    note: The join across sources and across time. One key, many archived observations.
+
+  - name: priced_by
+    from: EntryCandidate
+    to: PayoutRule
+    cardinality: many_to_one
+    note: >
+      Must be the rule in force when the entry was built. Evaluating an entry against a payout
+      table the operator has since changed is a silent, plausible-looking mis-price.
+
+  - name: aggregates
+    from: ConsensusLine
+    to: PropQuote
+    cardinality: one_to_many
+
+  # --- forecast --------------------------------------------------------------------
+  - name: forecasts_market
+    from: StatForecast
+    to: QuoteKey
+    cardinality: one_to_one
+
+  - name: generated_by
+    from: Projection
+    to: ModelRun
+    cardinality: many_to_one
+
+  - name: ran_version
+    from: ModelRun
+    to: ModelVersion
+    cardinality: many_to_one
+
+  - name: cites_claim
+    from: Projection
+    to: ResearchClaim
+    cardinality: many_to_many
+
+  # --- decision --------------------------------------------------------------------
+  - name: selects
+    from: EntryCandidate
+    to: EntryLeg
+    cardinality: one_to_many
+
+  - name: leg_references_quote
+    from: EntryLeg
+    to: PropQuote
+    cardinality: many_to_one
+
+  - name: based_on
+    from: DecisionEpisode
+    to: Projection
+    cardinality: many_to_one
+
+  - name: evaluated_against
+    from: DecisionEpisode
+    to: PropQuote
+    cardinality: many_to_one
+
+  - name: settled_by
+    from: DecisionEpisode
+    to: EpisodeOutcome
+    cardinality: one_to_one
+    note: Appended, never merged. The episode itself is write-once.
+
+  - name: scored_by
+    from: DecisionEpisode
+    to: ForecastScore
+    cardinality: one_to_one
+
+  - name: diagnosed_by
+    from: DecisionEpisode
+    to: ErrorAttribution
+    cardinality: one_to_many
+
+  - name: reviewed_by
+    from: DecisionEpisode
+    to: AnalystFeedback
+    cardinality: one_to_many
+
+  # --- research --------------------------------------------------------------------
+  - name: supported_by
+    from: ResearchClaim
+    to: Evidence
+    cardinality: one_to_many
+    note: Required, minimum one. An uncited claim is rejected at construction.
+
+  - name: extracted_from
+    from: Evidence
+    to: SourceDocument
+    cardinality: many_to_one
+
+  - name: tests_hypothesis
+    from: Experiment
+    to: Hypothesis
+    cardinality: many_to_one
+
+  - name: evidenced_by_episodes
+    from: Hypothesis
+    to: DecisionEpisode
+    cardinality: many_to_many
+    note: Split into supporting and contradicting sets, so the balance is visible.
+
+  - name: motivated_by
+    from: ResearchProposal
+    to: DecisionEpisode
+    cardinality: many_to_many
+    note: >
+      Required, minimum one. Development priorities follow measured failure, not whichever
+      feature looked entertaining on social media.
+
+  - name: answered_by
+    from: AgentForecast
+    to: ResearchClaim
+    cardinality: many_to_many
+
+  # --- governance ------------------------------------------------------------------
+  - name: acted_on
+    from: OntologyAction
+    to: any
+    cardinality: many_to_one
+    note: subject_id is polymorphic; the action_type determines the expected subject kind.
+
+  - name: quarantined_from
+    from: QuarantineRecord
+    to: SourceDocument
+    cardinality: many_to_one
+
+  - name: promotes
+    from: ModelPromotion
+    to: ModelVersion
+    cardinality: many_to_one
+
+  - name: justified_by
+    from: ModelPromotion
+    to: Experiment
+    cardinality: many_to_one
+    note: Required for promotion to champion. Software does not grade its own homework.
