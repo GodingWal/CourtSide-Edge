@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
@@ -193,12 +194,19 @@ def run_projection_research(
             f"line: {projection['line']}. "
         )
         try:
-            for role, question in AGENT_QUESTIONS.items():
-                analysis, _, response_hash = provider.analyze(
-                    role=role,
-                    question=question_context + question,
-                    evidence=evidence,
-                )
+            with ThreadPoolExecutor(max_workers=len(AGENT_QUESTIONS)) as executor:
+                futures = {
+                    role: executor.submit(
+                        provider.analyze,
+                        role=role,
+                        question=question_context + question,
+                        evidence=evidence,
+                    )
+                    for role, question in AGENT_QUESTIONS.items()
+                }
+                generated = {role: future.result() for role, future in futures.items()}
+            for role in AGENT_QUESTIONS:
+                analysis, _, response_hash = generated[role]
                 analysis_id = uuid4()
                 cited = sorted(
                     {
