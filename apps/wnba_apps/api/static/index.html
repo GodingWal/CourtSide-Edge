@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <meta name="theme-color" content="#07120e">
   <title>CourtSide Edge | Analyst Workstation</title>
   <link rel="stylesheet" href="/static/app.css">
@@ -12,12 +12,12 @@
   <aside class="sidebar">
     <div class="brand"><span class="brandmark">CE</span><span>CourtSide<br><b>Edge</b></span></div>
     <nav id="nav" aria-label="Analyst workspace">
-      <button class="nav active" data-view="today"><span>01</span>Today</button>
-      <button class="nav" data-view="markets"><span>02</span>Markets</button>
-      <button class="nav" data-view="research"><span>03</span>Research</button>
-      <button class="nav" data-view="validation"><span>04</span>Validation</button>
-      <button class="nav" data-view="learning"><span>05</span>Learning</button>
-      <button class="nav" data-view="operations"><span>06</span>Operations</button>
+      <button class="nav active" data-view="today" data-mobile="Today"><span>01</span>Today</button>
+      <button class="nav" data-view="markets" data-mobile="Markets"><span>02</span>Markets</button>
+      <button class="nav" data-view="research" data-mobile="Research"><span>03</span>Research</button>
+      <button class="nav" data-view="validation" data-mobile="Validate"><span>04</span>Validation</button>
+      <button class="nav" data-view="learning" data-mobile="Learn"><span>05</span>Learning</button>
+      <button class="nav" data-view="operations" data-mobile="Ops"><span>06</span>Operations</button>
     </nav>
     <div class="sidefoot"><span class="pulse"></span><div><b id="connection">Connecting</b><small>Private owner console</small></div></div>
   </aside>
@@ -33,8 +33,8 @@
       <div class="split">
         <section class="card grow">
           <div class="cardhead"><div><label>Live decisions</label><h2>Forecast board</h2></div><span class="mono accent" id="forecastCount">Loading</span></div>
-          <div class="filters"><input id="search" placeholder="Search player or market"><select id="marketFilter"><option value="all">All markets</option></select><select id="sideFilter"><option value="all">Both sides</option><option value="over">Over</option><option value="under">Under</option></select><select id="qualityFilter"><option value="all">All quality</option><option value="candidate">Candidates</option></select></div>
-          <div class="tablewrap"><table><thead><tr><th>Player / market</th><th>Source</th><th>Line</th><th>Model</th><th>Side</th><th>Probability</th><th>Quality</th><th></th></tr></thead><tbody id="forecastRows"><tr><td colspan="8" class="empty">Loading forecasts...</td></tr></tbody></table></div>
+          <div class="filters"><input id="search" placeholder="Search player or market" aria-label="Search player or market"><select id="marketFilter" aria-label="Filter by market"><option value="all">All markets</option></select><select id="sideFilter" aria-label="Filter by side"><option value="all">Both sides</option><option value="over">Over</option><option value="under">Under</option></select><select id="qualityFilter" aria-label="Filter by forecast quality"><option value="all">All quality</option><option value="candidate">Candidates</option></select></div>
+          <div class="tablewrap forecastwrap"><table class="forecasttable"><thead><tr><th>Player / market</th><th>Source</th><th>Line</th><th>Model</th><th>Side</th><th>Probability</th><th>Quality</th><th></th></tr></thead><tbody id="forecastRows"><tr><td colspan="8" class="empty">Loading forecasts...</td></tr></tbody></table></div>
         </section>
         <aside class="stack narrow"><section class="card pad" id="todayReadiness"></section><section class="card pad" id="todayHealth"></section><section class="card pad process"></section></aside>
       </div>
@@ -72,8 +72,8 @@
   </main>
 </div>
 
-<div class="drawer" id="drawer"><button class="backdrop" id="backdrop" aria-label="Close forecast audit"></button><aside><button class="close" id="close">×</button><div id="drawerBody"></div></aside></div>
-<div class="toast" id="toast"></div>
+<div class="drawer" id="drawer" role="dialog" aria-modal="true" aria-label="Forecast audit"><button class="backdrop" id="backdrop" aria-label="Close forecast audit"></button><aside tabindex="-1"><div class="sheetgrab" aria-hidden="true"></div><button class="close" id="close" aria-label="Close forecast audit">×</button><div id="drawerBody"></div></aside></div>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
 <script src="/static/app.js"></script>
 </body>
 </html>
