@@ -1,10 +1,10 @@
 """Analyst console API.
 
-What this serves today is deliberately narrow: the pricing and risk engines, exposed against
-hand-entered probabilities. There is no ingested WNBA data yet, so there are no projections and
-no recommendations, and the console says so rather than filling the gap with plausible-looking
-placeholders. A dashboard showing invented numbers is worse than an empty one -- it is a
-demonstration that the plumbing works, mistaken for a demonstration that the model does.
+What this serves today is deliberately narrow. The market archive is real and live; the
+pricing section runs the real engines against hand-entered probabilities, because no
+forecasting model exists yet. The console says exactly that rather than filling the gap with
+plausible-looking placeholders -- a dashboard showing invented numbers is worse than an empty
+one, being a demonstration that the plumbing works mistaken for one that the model does.
 
 The engines behind it are real: the same copula simulator and payout math the batch pipeline
 will use, with no separate "web" implementation to drift out of sync.
@@ -117,7 +117,8 @@ def health() -> dict[str, object]:
         "status": "ok",
         "phase": "0 -- foundation",
         "analysis_only": True,
-        "has_ingested_data": False,
+        "archiving_market_data": True,
+        "has_forecasting_models": False,
         "checked_at": datetime.now(UTC),
     }
 
@@ -258,11 +259,11 @@ def archive() -> dict[str, object]:
             by_market = [dict(r) for r in cur.fetchall()]
             cur.execute("SELECT count(*) AS n FROM wnba.quarantine")
             row = cur.fetchone()
-            quarantined = int(row["n"]) if row else 0
-    except Exception as exc:  # noqa: BLE001 - the page must render without a database
+            quarantined = int(str(row["n"])) if row else 0
+    except Exception as exc:
         return {"available": False, "reason": str(exc)[:200]}
 
-    total = sum(int(s["snapshots"]) for s in by_source)
+    total = sum(int(str(s["snapshots"])) for s in by_source)
     return {
         "available": True,
         "total_snapshots": total,
@@ -296,9 +297,9 @@ def status() -> dict[str, object]:
             {"name": "wnba_store.temporal (as_of reads)", "state": "built"},
             {"name": "wnba_marketmath (pricing, Kelly)", "state": "built"},
             {"name": "wnba_sim (correlated simulator)", "state": "built"},
-            {"name": "ontology YAML + drift test", "state": "pending"},
-            {"name": "Supabase bitemporal migrations", "state": "pending"},
-            {"name": "line archiver (record-only)", "state": "pending -- time critical"},
+            {"name": "ontology YAML + drift test", "state": "built"},
+            {"name": "Postgres bitemporal schema (VPS)", "state": "built"},
+            {"name": "line archiver (record-only)", "state": "built -- running every 15min"},
             {"name": "forecasting models", "state": "not started"},
             {"name": "research agents", "state": "not started"},
             {"name": "video intelligence", "state": "not started"},

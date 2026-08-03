@@ -156,7 +156,7 @@ class UnderdogAdapter:
         for line in payload.get("over_under_lines", []):
             try:
                 result = self._parse_line(line, players, appearances, wnba_player_ids, system_from)
-            except Exception as exc:  # noqa: BLE001 - a bad row must not stop the archive
+            except Exception as exc:
                 rejects.append(f"unparseable line {line.get('id', '?')}: {exc}")
                 continue
             if isinstance(result, str):
@@ -177,7 +177,7 @@ class UnderdogAdapter:
         over_under = line.get("over_under") or {}
         appearance_stat = over_under.get("appearance_stat") or {}
         appearance_id = appearance_stat.get("appearance_id")
-        appearance = appearances.get(appearance_id)
+        appearance = appearances.get(str(appearance_id)) if appearance_id else None
         if appearance is None:
             return None
 

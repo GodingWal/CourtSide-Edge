@@ -106,7 +106,7 @@ def migrate(
                 continue
 
             with conn.cursor() as cur:
-                cur.execute(sql)  # type: ignore[arg-type]
+                cur.execute(sql)
                 cur.execute(
                     "INSERT INTO wnba.schema_migrations (version, checksum) VALUES (%s, %s)",
                     (version, checksum),

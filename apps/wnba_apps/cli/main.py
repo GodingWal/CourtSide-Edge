@@ -11,9 +11,8 @@ from typing import Annotated
 import typer
 from rich.console import Console
 from rich.table import Table
-from wnba_store.db import connect, migrate
-
 from wnba_services.ingestion.archiver import run_archiver
+from wnba_store.db import connect, migrate
 
 app = typer.Typer(
     help="WNBA player-prop intelligence. Analysis only -- never places a wager.",
@@ -61,7 +60,7 @@ def db_status() -> None:
             "quarantine",
             "dq_incidents",
         ):
-            cur.execute(f"SELECT count(*) AS n FROM wnba.{name}")  # noqa: S608 - fixed list
+            cur.execute(f"SELECT count(*) AS n FROM wnba.{name}")
             row = cur.fetchone()
             table.add_row(name, f"{row['n']:,}" if row else "?")
         console.print(table)
