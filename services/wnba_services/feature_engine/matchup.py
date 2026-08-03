@@ -111,7 +111,7 @@ def _load_team_games(rows: list[dict[str, Any]]) -> list[TeamGame]:
         game_meta[game_id] = row
         bucket = grouped.setdefault(
             (game_id, team_id),
-            {column: 0.0 for column in STAT_COLUMNS},
+            dict.fromkeys(STAT_COLUMNS, 0.0),
         )
         for column in STAT_COLUMNS:
             bucket[column] += float(str(row[column]))
