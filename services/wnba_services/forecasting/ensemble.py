@@ -10,9 +10,10 @@ from typing import Any
 
 MAX_OUTCOME = 200
 COMPONENT_WEIGHTS = {
-    "empirical": 0.45,
-    "hierarchical": 0.30,
-    "player_state": 0.20,
+    "empirical": 0.35,
+    "hierarchical": 0.25,
+    "player_state": 0.15,
+    "opportunity_conversion": 0.20,
     "market_prior": 0.05,
 }
 
@@ -83,6 +84,33 @@ def _component(name: str, pmf: tuple[float, ...], line: Decimal) -> ComponentFor
     )
 
 
+def opportunity_conversion_expectation(
+    *,
+    history: list[dict[str, Any]],
+    columns: tuple[str, ...],
+    expected_minutes: float,
+    rate_multiplier: float,
+) -> float:
+    """Decompose shot volume from conversion when the box score supports it."""
+    minutes = math.fsum(float(str(row["minutes"])) for row in history)
+    if columns == ("points",) and all("field_goals_attempted" in row for row in history):
+        attempts = math.fsum(float(str(row["field_goals_attempted"])) for row in history)
+        points = math.fsum(float(str(row["points"])) for row in history)
+        attempts_per_minute = attempts / max(1.0, minutes)
+        points_per_attempt = points / max(1.0, attempts)
+        return expected_minutes * attempts_per_minute * points_per_attempt * rate_multiplier
+    if columns == ("three_pointers_made",) and all(
+        "three_pointers_attempted" in row for row in history
+    ):
+        attempts = math.fsum(float(str(row["three_pointers_attempted"])) for row in history)
+        made = math.fsum(float(str(row["three_pointers_made"])) for row in history)
+        attempts_per_minute = attempts / max(1.0, minutes)
+        conversion = made / max(1.0, attempts)
+        return expected_minutes * attempts_per_minute * conversion * rate_multiplier
+    total = math.fsum(math.fsum(float(str(row[column])) for column in columns) for row in history)
+    return expected_minutes * total / max(1.0, minutes) * rate_multiplier
+
+
 def build_ensemble(
     *,
     outcomes: list[int],
@@ -119,12 +147,22 @@ def build_ensemble(
         state_denominator += weight * row_minutes
     state_rate = state_numerator / max(1.0, state_denominator)
     player_state = _poisson_pmf(expected_minutes * state_rate * rate_multiplier, length)
+    opportunity_conversion = _poisson_pmf(
+        opportunity_conversion_expectation(
+            history=history,
+            columns=columns,
+            expected_minutes=expected_minutes,
+            rate_multiplier=rate_multiplier,
+        ),
+        length,
+    )
     market_prior = _poisson_pmf(max(0.1, float(line) + 0.5), length)
 
     components = (
         _component("empirical", empirical, line),
         _component("hierarchical", hierarchical, line),
         _component("player_state", player_state, line),
+        _component("opportunity_conversion", opportunity_conversion, line),
         _component("market_prior", market_prior, line),
     )
     blended = tuple(

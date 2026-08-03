@@ -25,7 +25,7 @@ SUPPORTED = {
     "points_assists": ("points", "assists"),
     "rebounds_assists": ("rebounds_offensive", "rebounds_defensive", "assists"),
 }
-MODEL_ID = uuid5(NAMESPACE_URL, "courtside-edge:auditable-ensemble:0.2.0")
+MODEL_ID = uuid5(NAMESPACE_URL, "courtside-edge:auditable-ensemble:0.3.0")
 
 
 @dataclass(frozen=True)
@@ -93,7 +93,7 @@ def run_baseline(*, now: datetime | None = None, seed: int = 20260803) -> Foreca
         cur.execute(
             """INSERT INTO wnba.model_versions
                (model_version_id,name,semver,target,stage,specification)
-               VALUES (%s,'auditable-ensemble','0.2.0','multi','challenger',%s)
+               VALUES (%s,'auditable-ensemble','0.3.0','multi','challenger',%s)
                ON CONFLICT DO NOTHING""",
             (
                 MODEL_ID,
@@ -106,6 +106,7 @@ def run_baseline(*, now: datetime | None = None, seed: int = 20260803) -> Foreca
                             "empirical",
                             "hierarchical",
                             "player_state",
+                            "opportunity_conversion",
                             "market_prior",
                         ],
                     }

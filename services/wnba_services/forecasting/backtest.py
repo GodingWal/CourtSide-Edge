@@ -13,6 +13,7 @@ from psycopg.types.json import Jsonb
 from wnba_domain.decision import brier_score, log_loss
 from wnba_store.db import connect
 
+from wnba_services.forecasting.ensemble import opportunity_conversion_expectation
 from wnba_services.learning_loop.settlement import STAT_COLUMNS, actual_stat
 
 SNAPSHOTS = {
@@ -22,7 +23,14 @@ SNAPSHOTS = {
     "thirty_minutes": timedelta(minutes=30),
     "ten_minutes": timedelta(minutes=10),
 }
-MODEL_NAMES = ("season_average", "last_five", "minutes_rate", "market_prior", "ensemble")
+MODEL_NAMES = (
+    "season_average",
+    "last_five",
+    "minutes_rate",
+    "opportunity_conversion",
+    "market_prior",
+    "ensemble",
+)
 
 
 @dataclass(frozen=True)
@@ -76,19 +84,27 @@ def _model_predictions(
     total_minutes = sum(minutes)
     minutes_rate = _weighted_mean(minutes[-10:]) * sum(season_values) / max(1.0, total_minutes)
     market_prior = float(line) + 0.5
+    opportunity_conversion = opportunity_conversion_expectation(
+        history=history,
+        columns=columns,
+        expected_minutes=_weighted_mean(minutes[-10:]),
+        rate_multiplier=1.0,
+    )
     component_means = {
         "season_average": season_mean,
         "last_five": last_five,
         "minutes_rate": minutes_rate,
+        "opportunity_conversion": opportunity_conversion,
         "market_prior": market_prior,
     }
     component_probabilities = {
         name: poisson_over_probability(mean, line) for name, mean in component_means.items()
     }
     weights = {
-        "season_average": 0.30,
-        "last_five": 0.20,
-        "minutes_rate": 0.45,
+        "season_average": 0.20,
+        "last_five": 0.15,
+        "minutes_rate": 0.40,
+        "opportunity_conversion": 0.20,
         "market_prior": 0.05,
     }
     ensemble_mean = math.fsum(weights[name] * component_means[name] for name in weights)

@@ -20,7 +20,7 @@ def test_ensemble_is_normalized_and_exposes_disagreement() -> None:
     )
     assert sum(result.pmf) == pytest.approx(1.0)
     assert result.over + result.push + result.under == pytest.approx(1.0)
-    assert len(result.components) == 4
+    assert len(result.components) == 5
     assert result.disagreement >= 0.0
 
 
