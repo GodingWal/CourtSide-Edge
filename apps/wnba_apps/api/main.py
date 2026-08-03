@@ -332,7 +332,7 @@ def status() -> dict[str, object]:
     """Honest build status. Every claim here is backed by a test that fails the build."""
     return {
         "analysis_only": True,
-        "phase": "2 -- shadow forecasting",
+        "phase": "3 -- private shadow analysis",
         "invariants": [
             {"name": "Bitemporality on every stored fact", "enforced": True},
             {"name": "No look-ahead (point-in-time reads)", "enforced": True},
