@@ -1,18 +1,14 @@
 [project]
-name = "wnba-video-intelligence"
+name = "wnba-video"
 version = "0.1.0"
-description = "Experimental licensed-footage sensor for WNBA spatial and event features."
-requires-python = "==3.12.*"
-dependencies = [
-    "pydantic>=2.10",
-    "opencv-python-headless>=4.10",
-    "numpy>=2.0",
-    "pyyaml>=6.0",
-]
+description = "Isolated computer-vision sandbox. Never a production dependency."
+requires-python = ">=3.12"
+dependencies = ["pyyaml>=6.0", "pydantic>=2.10"]
 
+# Heavy vision stack is opt-in. Installing torch and ultralytics must never be a prerequisite
+# for running the forecasting platform or its tests.
 [project.optional-dependencies]
-training = ["ultralytics>=8.3", "torch>=2.5", "torchvision>=0.20"]
-ocr = ["paddleocr>=2.9"]
+vision = ["ultralytics>=8.3", "opencv-python>=4.10", "numpy>=2.1"]
 
 [build-system]
 requires = ["hatchling"]

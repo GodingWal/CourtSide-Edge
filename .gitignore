@@ -44,3 +44,7 @@ node_modules/
 # OS
 Thumbs.db
 .DS_Store
+
+# Video sandbox: upstream clone, weights and footage are never committed
+services/video_intelligence/upstream/
+services/video_intelligence/**/labels/

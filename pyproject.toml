@@ -88,6 +88,8 @@ ignore = ["N818"]
 # ---------------------------------------------------------------------------
 [tool.mypy]
 python_version = "3.12"
+# The video sandbox lives outside the workspace but is still type-checked.
+mypy_path = "services/video_intelligence/src"
 strict = true
 warn_unreachable = true
 disallow_any_generics = true
