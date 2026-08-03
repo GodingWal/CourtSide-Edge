@@ -41,6 +41,7 @@ from wnba_services.ingestion.http import PoliteClient
 
 __all__ = [
     "UNDERDOG_URL",
+    "ParsedGame",
     "ParsedLine",
     "UnderdogAdapter",
     "map_stat_to_prop_type",
@@ -74,10 +75,27 @@ def map_stat_to_prop_type(display_stat: str) -> PropType | None:
     return _STAT_MAP.get(display_stat.strip())
 
 
+class ParsedGame:
+    __slots__ = ("away_abbreviation", "home_abbreviation", "scheduled_at", "source_game_id")
+
+    def __init__(
+        self,
+        *,
+        source_game_id: str,
+        scheduled_at: datetime,
+        away_abbreviation: str,
+        home_abbreviation: str,
+    ) -> None:
+        self.source_game_id = source_game_id
+        self.scheduled_at = scheduled_at
+        self.away_abbreviation = away_abbreviation
+        self.home_abbreviation = home_abbreviation
+
+
 class ParsedLine:
     """One parsed quote plus the source identity needed to resolve the player."""
 
-    __slots__ = ("quote", "source_player_id", "source_player_name", "team")
+    __slots__ = ("game", "quote", "source_player_id", "source_player_name", "team")
 
     def __init__(
         self,
@@ -85,11 +103,13 @@ class ParsedLine:
         source_player_id: str,
         source_player_name: str,
         team: str | None,
+        game: ParsedGame,
     ) -> None:
         self.quote = quote
         self.source_player_id = source_player_id
         self.source_player_name = source_player_name
         self.team = team
+        self.game = game
 
 
 def _to_decimal(value: object) -> Decimal | None:
@@ -148,6 +168,11 @@ class UnderdogAdapter:
 
         players = {p["id"]: p for p in payload.get("players", []) if isinstance(p, dict)}
         appearances = {a["id"]: a for a in payload.get("appearances", []) if isinstance(a, dict)}
+        games = {
+            str(game["id"]): game
+            for game in [*payload.get("games", []), *payload.get("solo_games", [])]
+            if isinstance(game, dict) and game.get("id") is not None
+        }
         wnba_player_ids = {
             pid for pid, p in players.items() if str(p.get("sport_id", "")).upper() == "WNBA"
         }
@@ -155,7 +180,9 @@ class UnderdogAdapter:
         parsed: list[ParsedLine] = []
         for line in payload.get("over_under_lines", []):
             try:
-                result = self._parse_line(line, players, appearances, wnba_player_ids, system_from)
+                result = self._parse_line(
+                    line, players, appearances, games, wnba_player_ids, system_from
+                )
             except Exception as exc:
                 rejects.append(f"unparseable line {line.get('id', '?')}: {exc}")
                 continue
@@ -171,6 +198,7 @@ class UnderdogAdapter:
         line: dict[str, Any],
         players: dict[str, Any],
         appearances: dict[str, Any],
+        games: dict[str, Any],
         wnba_player_ids: set[str],
         system_from: datetime,
     ) -> ParsedLine | str | None:
@@ -180,6 +208,24 @@ class UnderdogAdapter:
         appearance = appearances.get(str(appearance_id)) if appearance_id else None
         if appearance is None:
             return None
+
+        source_game_id = str(appearance.get("match_id", ""))
+        game_raw = games.get(source_game_id)
+        if game_raw is None:
+            return f"line {line.get('id')}: appearance has no resolvable game"
+        scheduled_at = _parse_timestamp(
+            game_raw.get("scheduled_at") or (game_raw.get("scoreboard") or {}).get("scheduled_at")
+        )
+        title = str(game_raw.get("abbreviated_title") or game_raw.get("title") or "")
+        teams = [part.strip().upper() for part in title.split("@", maxsplit=1)]
+        if scheduled_at is None or len(teams) != 2 or not all(teams):
+            return f"line {line.get('id')}: game metadata is incomplete"
+        parsed_game = ParsedGame(
+            source_game_id=source_game_id,
+            scheduled_at=scheduled_at,
+            away_abbreviation=teams[0],
+            home_abbreviation=teams[1],
+        )
 
         player_id = appearance.get("player_id")
         if player_id not in wnba_player_ids:
@@ -221,13 +267,14 @@ class UnderdogAdapter:
             source_quote_id=source_quote_id,
             # Placeholder; the archiver replaces this with the resolved canonical id.
             player_id=uuid5(NAMESPACE_URL, f"underdog:player:{player_id}"),
-            game_id=uuid5(NAMESPACE_URL, f"underdog:game:{appearance.get('match_id', 'unknown')}"),
+            game_id=uuid5(NAMESPACE_URL, f"underdog:game:{source_game_id}"),
             prop_type=prop_type,
             line=stat_value,
             market_kind=MarketKind.SPORTSBOOK_TWO_SIDED,
             over_american_odds=prices["higher"],
             under_american_odds=prices["lower"],
             is_available=str(line.get("status", "")).lower() == "active",
+            locks_at=scheduled_at,
             source_ref=SourceRef(
                 source=SourceName.UNDERDOG,
                 source_entity_id=source_quote_id,
@@ -246,6 +293,7 @@ class UnderdogAdapter:
             source_player_id=str(player_id),
             source_player_name=name,
             team=appearance.get("team_id") or player.get("team_id"),
+            game=parsed_game,
         )
 
     def iter_quotes(self) -> Iterator[ParsedLine]:

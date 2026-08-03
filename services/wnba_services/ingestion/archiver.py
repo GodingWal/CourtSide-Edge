@@ -14,10 +14,17 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from uuid import UUID
 
 from wnba_domain.identity import SourceName
 from wnba_store.db import connect
-from wnba_store.repositories import quarantine_payload, record_quotes, register_player
+from wnba_store.repositories import (
+    enrich_quote_game_ids,
+    quarantine_payload,
+    record_quotes,
+    register_market_game,
+    register_player,
+)
 
 from wnba_services.ingestion.adapters.underdog import UnderdogAdapter
 from wnba_services.ingestion.http import BotDefenceError, SourceUnavailableError
@@ -110,13 +117,40 @@ def run_archiver(database_url: str | None = None) -> ArchiveResult:
                 )
         result.players_seen = len(canonical)
 
+        games: dict[str, UUID] = {}
+        for item in parsed:
+            if item.game.source_game_id not in games:
+                games[item.game.source_game_id] = register_market_game(
+                    conn,
+                    source=SourceName.UNDERDOG,
+                    source_game_id=item.game.source_game_id,
+                    scheduled_at=item.game.scheduled_at,
+                    away_abbreviation=item.game.away_abbreviation,
+                    home_abbreviation=item.game.home_abbreviation,
+                    observed_at=started,
+                )
+
         quotes = [
             item.quote.model_copy(
-                update={"player_id": canonical[item.source_player_id], "game_id": None}
+                update={
+                    "player_id": canonical[item.source_player_id],
+                    "game_id": games[item.game.source_game_id],
+                }
             )
             for item in parsed
         ]
         result.inserted = record_quotes(conn, quotes)
+        enrich_quote_game_ids(
+            conn,
+            [
+                (
+                    games[item.game.source_game_id],
+                    item.game.scheduled_at,
+                    item.quote.source_quote_id,
+                )
+                for item in parsed
+            ],
+        )
 
         if rejects:
             quarantine_payload(

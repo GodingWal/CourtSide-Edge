@@ -19,11 +19,134 @@ from wnba_domain.identity import SourceName
 from wnba_domain.market import PropQuote
 
 __all__ = [
+    "enrich_quote_game_ids",
     "normalize_name",
     "quarantine_payload",
     "record_quotes",
+    "register_market_game",
     "register_player",
 ]
+
+_TEAM_ZONE_BY_ABBREVIATION: dict[str, str] = {
+    "ATL": "America/New_York",
+    "CHI": "America/Chicago",
+    "CON": "America/New_York",
+    "DAL": "America/Chicago",
+    "GS": "America/Los_Angeles",
+    "GSV": "America/Los_Angeles",
+    "IND": "America/Indiana/Indianapolis",
+    "LA": "America/Los_Angeles",
+    "LAS": "America/Los_Angeles",
+    "LAX": "America/Los_Angeles",
+    "LV": "America/Los_Angeles",
+    "LVA": "America/Los_Angeles",
+    "MIN": "America/Chicago",
+    "NY": "America/New_York",
+    "NYL": "America/New_York",
+    "PHX": "America/Phoenix",
+    "POR": "America/Los_Angeles",
+    "SEA": "America/Los_Angeles",
+    "TOR": "America/Toronto",
+    "WAS": "America/New_York",
+    "WSH": "America/New_York",
+    "CLE": "America/New_York",
+}
+
+
+def _register_market_team(
+    conn: psycopg.Connection[Any], *, source: SourceName, abbreviation: str, observed_at: datetime
+) -> UUID:
+    code = abbreviation.upper()
+    zone = _TEAM_ZONE_BY_ABBREVIATION.get(code)
+    if zone is None:
+        raise ValueError(f"unknown market team abbreviation {code!r}")
+    with conn.cursor() as cur:
+        cur.execute("SELECT team_id FROM wnba.teams WHERE abbreviation=%s", (code,))
+        existing = cur.fetchone()
+        team_id = (
+            UUID(str(existing["team_id"]))
+            if existing
+            else uuid5(NAMESPACE_URL, f"{source.value}:team:{code}")
+        )
+        if existing is None:
+            cur.execute(
+                """INSERT INTO wnba.teams (team_id,abbreviation,full_name,market,time_zone)
+                   VALUES (%s,%s,%s,%s,%s)""",
+                (team_id, code, code, code, zone),
+            )
+        cur.execute(
+            """INSERT INTO wnba.team_aliases
+               (alias_id,team_id,source,source_team_id,source_display_name,
+                valid_from,system_from)
+               VALUES (%s,%s,%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING""",
+            (uuid4(), team_id, source.value, code, code, observed_at, observed_at),
+        )
+    return team_id
+
+
+def register_market_game(
+    conn: psycopg.Connection[Any],
+    *,
+    source: SourceName,
+    source_game_id: str,
+    scheduled_at: datetime,
+    away_abbreviation: str,
+    home_abbreviation: str,
+    observed_at: datetime,
+) -> UUID:
+    """Bind a market game to an existing schedule row, or enroll it before ESPN sees it."""
+    home_id = _register_market_team(
+        conn, source=source, abbreviation=home_abbreviation, observed_at=observed_at
+    )
+    away_id = _register_market_team(
+        conn, source=source, abbreviation=away_abbreviation, observed_at=observed_at
+    )
+    with conn.cursor() as cur:
+        cur.execute(
+            """SELECT game_id FROM wnba.games
+               WHERE home_team_id=%s AND away_team_id=%s
+                 AND scheduled_tipoff BETWEEN %s - interval '10 minutes'
+                                          AND %s + interval '10 minutes'
+               ORDER BY abs(extract(epoch FROM scheduled_tipoff-%s)) LIMIT 1""",
+            (home_id, away_id, scheduled_at, scheduled_at, scheduled_at),
+        )
+        existing = cur.fetchone()
+        game_id = (
+            UUID(str(existing["game_id"]))
+            if existing
+            else uuid5(NAMESPACE_URL, f"{source.value}:game:{source_game_id}")
+        )
+        if existing is None:
+            cur.execute(
+                """INSERT INTO wnba.games
+                   (game_id,season_year,scheduled_tipoff,home_team_id,away_team_id,status)
+                   VALUES (%s,%s,%s,%s,%s,'scheduled') ON CONFLICT DO NOTHING""",
+                (game_id, scheduled_at.year, scheduled_at, home_id, away_id),
+            )
+        cur.execute(
+            """INSERT INTO wnba.game_aliases
+               (alias_id,game_id,source,source_game_id,system_from)
+               VALUES (%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING""",
+            (uuid4(), game_id, source.value, source_game_id, observed_at),
+        )
+    return game_id
+
+
+def enrich_quote_game_ids(
+    conn: psycopg.Connection[Any], mappings: list[tuple[UUID, datetime, str]]
+) -> int:
+    """Fill identity metadata on older rows without changing their observed market state."""
+    changed = 0
+    with conn.cursor() as cur:
+        for game_id, locks_at, source_quote_id in mappings:
+            cur.execute(
+                """UPDATE wnba.prop_quotes SET game_id=%s, locks_at=%s
+                   WHERE source='underdog' AND source_quote_id=%s
+                     AND (game_id IS NULL OR locks_at IS NULL)""",
+                (game_id, locks_at, source_quote_id),
+            )
+            changed += max(0, cur.rowcount)
+    return changed
 
 
 def normalize_name(name: str) -> str:
