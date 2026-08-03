@@ -2,8 +2,9 @@
 
 Updated: 2026-08-03
 
-The platform is in **Phase 1: data foundation**. Market ingestion is live, but there is no
-forecasting model, recommendation engine, research agent, or automated wager execution.
+The platform is in **Phase 3: private shadow analysis**. Live and rescued historical markets,
+five-component forecasts, rolling-origin replay, paper settlement and the learning memory are
+operational. Automated wager execution remains permanently out of scope.
 
 ## Current state
 
@@ -15,9 +16,12 @@ forecasting model, recommendation engine, research agent, or automated wager exe
 | Correlated entry pricing | Complete as a library | Copula simulation and payout tests |
 | VPS web console | Live | `https://courtside-edge.com` |
 | PostgreSQL backup | Nightly local backup | Restore-list and checksum verification; 14-day retention |
-| Historical statistical data | Rescued, not normalized | Legacy SQLite has 16,118 player box-score rows |
-| Forecasts and recommendations | Not started | Zero decision episodes |
-| PAT-style research | Domain contracts only | No retrieval or agent workflow |
+| Historical statistical data | Canonical | More than 16,000 player lines with ESPN lineage |
+| Historical market data | Partially normalized | 4,571 quotes mapped to 46 games; ambiguous rows retained |
+| Forecasts and recommendations | Shadow/live | Five components and immutable paper episodes |
+| Walk-forward evaluation | Operational | Five pre-tip snapshots and benchmark comparisons |
+| PAT-style research | Awaiting API key | Five DeepSeek roles with cited expiring claims |
+| Learning loop | Operational | Calibration, drift, attribution, feedback and proposals |
 | Video intelligence | Not started | Experimental track remains isolated |
 
 ## Critical path
@@ -101,4 +105,3 @@ value. Profit alone is not a gate.
 - Complete the paper-performance gates above.
 - Keep execution manual. Automated book login, wagering and bankroll transfer remain out of
   scope even after model validation.
-

@@ -165,7 +165,7 @@ def console() -> HTMLResponse:
 def health() -> dict[str, object]:
     return {
         "status": "ok",
-        "phase": "2 -- shadow forecasting",
+        "phase": "3 -- private shadow analysis",
         "analysis_only": True,
         "archiving_market_data": True,
         "has_forecasting_models": True,
@@ -350,8 +350,10 @@ def status() -> dict[str, object]:
             {"name": "ontology YAML + drift test", "state": "built"},
             {"name": "Postgres bitemporal schema (VPS)", "state": "built"},
             {"name": "line archiver (record-only)", "state": "built -- running every 15min"},
-            {"name": "baseline forecasting", "state": "built -- challenger/shadow only"},
-            {"name": "research agents", "state": "not started"},
+            {"name": "five-component forecasting", "state": "built -- challenger/shadow"},
+            {"name": "point-in-time backtesting", "state": "built -- 5 replay snapshots"},
+            {"name": "research agents", "state": "built -- DeepSeek key required"},
+            {"name": "learning loop", "state": "built -- collecting outcomes"},
             {"name": "video intelligence", "state": "not started"},
         ],
         "blocking_real_money": [
