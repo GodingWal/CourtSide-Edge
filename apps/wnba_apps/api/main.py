@@ -19,6 +19,7 @@ from uuid import UUID, uuid4
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, Response
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from wnba_domain.enums import EntryType
 from wnba_domain.market import PayoutRule, PayoutTable
@@ -48,6 +49,7 @@ app = FastAPI(
     description="Analysis only. This system never places a wager or moves money.",
     version="0.1.0",
 )
+app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 
 @app.middleware("http")
@@ -737,6 +739,130 @@ def learning_proposals() -> dict[str, object]:
         cur.execute("SELECT * FROM wnba.research_proposals ORDER BY proposed_at DESC LIMIT 100")
         proposals = [dict(row) for row in cur.fetchall()]
     return {"proposals": proposals, "automatic_approval": False}
+
+
+@app.get("/api/learning")
+def learning() -> dict[str, object]:
+    """One read-only view of the closed learning loop and its human review queue."""
+    from wnba_store.db import connect
+
+    with connect() as conn, conn.cursor() as cur:
+        cur.execute("SELECT * FROM wnba.research_proposals ORDER BY proposed_at DESC LIMIT 100")
+        proposals = [dict(row) for row in cur.fetchall()]
+        cur.execute("SELECT * FROM wnba.hypotheses ORDER BY created_at DESC LIMIT 100")
+        hypotheses = [dict(row) for row in cur.fetchall()]
+        cur.execute(
+            """SELECT e.*,champion.name AS champion_name,challenger.name AS challenger_name
+               FROM wnba.experiments e
+               JOIN wnba.model_versions champion
+                 ON champion.model_version_id=e.champion_model_version_id
+               JOIN wnba.model_versions challenger
+                 ON challenger.model_version_id=e.challenger_model_version_id
+               ORDER BY e.started_at DESC LIMIT 100"""
+        )
+        experiments = [dict(row) for row in cur.fetchall()]
+        cur.execute(
+            """SELECT agent_role,domain,sample_size,calibration,evidence_accuracy,
+                      credibility,calculated_at
+               FROM wnba.agent_credibility ORDER BY calculated_at DESC LIMIT 100"""
+        )
+        credibility = [dict(row) for row in cur.fetchall()]
+        cur.execute(
+            """SELECT feedback_type,count(*) AS labels,avg(projection_useful) AS usefulness,
+                      avg(evidence_relevant) AS evidence_relevance
+               FROM wnba.analyst_feedback GROUP BY feedback_type ORDER BY labels DESC"""
+        )
+        feedback = [dict(row) for row in cur.fetchall()]
+    return {
+        "automatic_approval": False,
+        "proposals": proposals,
+        "hypotheses": hypotheses,
+        "experiments": experiments,
+        "agent_credibility": credibility,
+        "feedback": feedback,
+    }
+
+
+@app.get("/api/validation")
+def validation() -> dict[str, object]:
+    """Historical replay diagnostics by week, market, probability bucket, and snapshot."""
+    from wnba_store.db import connect
+
+    with connect() as conn, conn.cursor() as cur:
+        cur.execute(
+            """SELECT backtest_run_id FROM wnba.backtest_runs WHERE status='complete'
+               ORDER BY completed_at DESC LIMIT 1"""
+        )
+        run = cur.fetchone()
+        if run is None:
+            return {"available": True, "weekly": [], "markets": [], "calibration": []}
+        run_id = run["backtest_run_id"]
+        cur.execute(
+            """SELECT date_trunc('week',forecast_as_of) AS week,count(*) AS forecasts,
+                      avg(brier) AS brier,avg(log_loss) AS log_loss,
+                      avg(abs(actual_stat-projected_mean)) AS mae
+               FROM wnba.backtest_results
+               WHERE backtest_run_id=%s AND model_name='ensemble'
+               GROUP BY 1 ORDER BY 1""",
+            (run_id,),
+        )
+        weekly = [dict(row) for row in cur.fetchall()]
+        cur.execute(
+            """SELECT prop_type,count(*) AS forecasts,avg(brier) AS brier,
+                      avg(log_loss) AS log_loss,
+                      avg(abs(actual_stat-projected_mean)) AS mae
+               FROM wnba.backtest_results
+               WHERE backtest_run_id=%s AND model_name='ensemble'
+               GROUP BY prop_type ORDER BY forecasts DESC""",
+            (run_id,),
+        )
+        markets = [dict(row) for row in cur.fetchall()]
+        cur.execute(
+            """SELECT floor(predicted_probability*10)/10 AS bucket,count(*) AS forecasts,
+                      avg(predicted_probability) AS predicted,
+                      avg(CASE WHEN hit THEN 1.0 ELSE 0.0 END) AS observed
+               FROM wnba.backtest_results
+               WHERE backtest_run_id=%s AND model_name='ensemble'
+               GROUP BY 1 ORDER BY 1""",
+            (run_id,),
+        )
+        calibration = [dict(row) for row in cur.fetchall()]
+    return {
+        "available": True,
+        "backtest_run_id": run_id,
+        "weekly": weekly,
+        "markets": markets,
+        "calibration": calibration,
+    }
+
+
+@app.get("/api/operations/timeline")
+def operations_timeline() -> dict[str, object]:
+    """Recent database-backed pipeline events; infrastructure monitoring remains separate."""
+    from wnba_store.db import connect
+
+    with connect() as conn, conn.cursor() as cur:
+        cur.execute(
+            """SELECT event_type,status,occurred_at,detail FROM (
+                 SELECT 'forecast'::text AS event_type,status,completed_at AS occurred_at,
+                        detail FROM wnba.model_runs
+                 UNION ALL
+                 SELECT 'statistics ingestion', 'complete', completed_at,
+                        source::text || ' / ' || feed || ' / ' || rows_written || ' rows'
+                 FROM wnba.ingested_dates
+                 UNION ALL
+                 SELECT 'research',status,coalesce(completed_at,started_at),
+                        provider || ' / ' || model FROM wnba.research_runs
+               ) events ORDER BY occurred_at DESC LIMIT 50"""
+        )
+        events = [dict(row) for row in cur.fetchall()]
+        cur.execute(
+            """SELECT incident_id,code,level,severity,source,detail,blocks_recommendations,
+                      detected_at,resolved_at FROM wnba.dq_incidents
+               ORDER BY detected_at DESC LIMIT 50"""
+        )
+        incidents = [dict(row) for row in cur.fetchall()]
+    return {"events": events, "data_quality_incidents": incidents}
 
 
 @app.get("/api/readiness")
