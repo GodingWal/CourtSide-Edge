@@ -51,11 +51,12 @@ class ArchiveResult:
 
 
 def run_archiver(database_url: str | None = None) -> ArchiveResult:
-    """Poll Underdog once and append every WNBA quote to the archive.
+    """Poll Underdog once and append every changed WNBA quote to the archive.
 
     Failure is contained on purpose. A source outage, a schema change or a bot-defence wall
     must not take down the process -- it records the reason and returns, so the next scheduled
-    run tries again.
+    run tries again. Unchanged source states are ignored by the database uniqueness rule;
+    the source's ``updated_at`` timestamp, not our polling cadence, defines a market change.
     """
     started = datetime.now(UTC)
     result = ArchiveResult(source=SourceName.UNDERDOG, started_at=started)

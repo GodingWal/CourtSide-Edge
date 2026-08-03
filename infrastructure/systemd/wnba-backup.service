@@ -1,0 +1,11 @@
+[Unit]
+Description=Back up the WNBA PostgreSQL schema
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/opt/wnba/repo/infrastructure/backup_postgres.sh
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7

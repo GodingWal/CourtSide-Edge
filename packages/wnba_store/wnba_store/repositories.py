@@ -102,9 +102,10 @@ def record_quotes(
 ) -> int:
     """Append quote snapshots. Returns the number actually inserted.
 
-    ``ON CONFLICT DO NOTHING`` against the (source, player, prop_type, system_from) unique
-    index makes re-polling idempotent: an unchanged board re-read within the same instant
-    cannot inflate the archive with duplicate snapshots.
+    ``ON CONFLICT DO NOTHING`` is backed by two database constraints. One protects a single
+    observation instant; the other identifies the source state using its quote id, source
+    update time, line, prices and availability. Therefore an unchanged board re-polled later
+    does not masquerade as line movement, while a real source update remains append-only.
     """
     if not quotes:
         return 0
