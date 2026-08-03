@@ -13,6 +13,8 @@ from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 from psycopg.types.json import Jsonb
 from wnba_store.db import connect
 
+from wnba_services.forecasting.ensemble import build_ensemble
+
 SUPPORTED = {
     "points": ("points",),
     "rebounds": ("rebounds_offensive", "rebounds_defensive"),
@@ -23,7 +25,7 @@ SUPPORTED = {
     "points_assists": ("points", "assists"),
     "rebounds_assists": ("rebounds_offensive", "rebounds_defensive", "assists"),
 }
-MODEL_ID = uuid5(NAMESPACE_URL, "courtside-edge:empirical-minutes-rate:0.1.0")
+MODEL_ID = uuid5(NAMESPACE_URL, "courtside-edge:auditable-ensemble:0.2.0")
 
 
 @dataclass(frozen=True)
@@ -86,13 +88,29 @@ def run_baseline(*, now: datetime | None = None, seed: int = 20260803) -> Foreca
     started = datetime.now(UTC)
     run_id = uuid4()
     forecasts = episodes = skipped = 0
+    league_rates: dict[str, float] = {}
     with connect() as conn, conn.cursor() as cur:
         cur.execute(
             """INSERT INTO wnba.model_versions
                (model_version_id,name,semver,target,stage,specification)
-               VALUES (%s,'empirical-minutes-rate','0.1.0','multi','challenger',%s)
+               VALUES (%s,'auditable-ensemble','0.2.0','multi','challenger',%s)
                ON CONFLICT DO NOTHING""",
-            (MODEL_ID, Jsonb({"history_games": 20, "simulations": 10_000, "analysis_only": True})),
+            (
+                MODEL_ID,
+                Jsonb(
+                    {
+                        "history_games": 20,
+                        "simulations": 10_000,
+                        "analysis_only": True,
+                        "components": [
+                            "empirical",
+                            "hierarchical",
+                            "player_state",
+                            "market_prior",
+                        ],
+                    }
+                ),
+            ),
         )
         cur.execute(
             """INSERT INTO wnba.model_runs
@@ -109,7 +127,9 @@ def run_baseline(*, now: datetime | None = None, seed: int = 20260803) -> Foreca
                WHERE q.is_available AND q.game_id IS NOT NULL AND q.locks_at>%s
                  AND NOT EXISTS (
                      SELECT 1 FROM wnba.stat_forecasts f
+                     JOIN wnba.model_runs mr ON mr.model_run_id=f.model_run_id
                      WHERE f.quote_id=q.quote_id AND f.expires_at=q.locks_at
+                       AND mr.model_version_id=%s
                        AND NOT EXISTS (
                            SELECT 1 FROM wnba.injury_status i
                            WHERE i.player_id=coalesce(m.to_player_id,q.player_id)
@@ -130,7 +150,7 @@ def run_baseline(*, now: datetime | None = None, seed: int = 20260803) -> Foreca
                            WHERE c.game_id=q.game_id AND c.prop_type=q.prop_type
                              AND c.system_to IS NULL AND c.system_from>f.generated_at))
                ORDER BY q.source,q.source_quote_id,q.system_from DESC""",
-            (at,),
+            (at, MODEL_ID),
         )
         quotes = cur.fetchall()
         for quote in quotes:
@@ -221,27 +241,53 @@ def run_baseline(*, now: datetime | None = None, seed: int = 20260803) -> Foreca
                     ),
                 )
             )
+            projected_minutes = role_minutes or _weighted_mean(
+                [float(str(r["minutes"])) for r in history]
+            )
+            combined_multiplier = rate_multiplier * matchup_multiplier
             sims = _simulate(
                 history,
                 columns,
                 local_seed,
                 projected_minutes=role_minutes,
                 projected_minutes_std=role_std,
-                rate_multiplier=rate_multiplier * matchup_multiplier,
+                rate_multiplier=combined_multiplier,
             )
             line = Decimal(str(quote["line"]))
-            over = sum(Decimal(x) > line for x in sims) / len(sims)
-            push = sum(Decimal(x) == line for x in sims) / len(sims)
-            under = 1.0 - over - push
-            mean = sum(sims) / len(sims)
-            ordered = sorted(sims)
-            projected_minutes = role_minutes or _weighted_mean(
-                [float(str(r["minutes"])) for r in history]
+            if prop not in league_rates:
+                stat_expression = " + ".join(f"l.{column}" for column in columns)
+                cur.execute(
+                    f"""SELECT coalesce(sum({stat_expression}),0) AS total_stat,
+                               coalesce(sum(l.minutes),0) AS total_minutes
+                        FROM wnba.player_game_lines l
+                        JOIN wnba.games g ON g.game_id=l.game_id
+                        WHERE l.system_to IS NULL AND g.status='final'
+                          AND g.scheduled_tipoff<%s AND l.minutes>0""",
+                    (quote["locks_at"],),
+                )
+                league = cur.fetchone()
+                if league is None:
+                    raise RuntimeError("League-rate aggregate returned no row")
+                league_rates[prop] = float(str(league["total_stat"])) / max(
+                    1.0, float(str(league["total_minutes"]))
+                )
+            ensemble = build_ensemble(
+                outcomes=sims,
+                history=history,
+                columns=columns,
+                expected_minutes=projected_minutes,
+                rate_multiplier=combined_multiplier,
+                league_rate_per_minute=league_rates[prop],
+                line=line,
             )
+            over, push, under = ensemble.over, ensemble.push, ensemble.under
+            mean = ensemble.mean
             quality = min(1.0, 0.7 + len(history) / 100)
             confidence = min(
                 0.75,
-                quality * (1.0 - min(0.5, _std([float(x) for x in sims]) / max(1.0, mean) / 2)),
+                quality
+                * (1.0 - min(0.5, ensemble.stddev / max(1.0, mean) / 2))
+                * (1.0 - min(0.5, ensemble.disagreement * 2)),
             )
             if designation in {"questionable", "doubtful", "unknown"}:
                 confidence *= 0.7
@@ -297,7 +343,11 @@ def run_baseline(*, now: datetime | None = None, seed: int = 20260803) -> Foreca
                     [r["line_id"] for r in history],
                 ),
             )
-            distribution = {str(k): sims.count(k) / len(sims) for k in set(sims)}
+            distribution = {
+                str(value): probability
+                for value, probability in enumerate(ensemble.pmf)
+                if probability > 0
+            }
             cur.execute(
                 """INSERT INTO wnba.stat_forecasts
                    (projection_id,model_run_id,feature_snapshot_id,quote_id,player_id,game_id,
@@ -315,8 +365,8 @@ def run_baseline(*, now: datetime | None = None, seed: int = 20260803) -> Foreca
                     prop,
                     line,
                     mean,
-                    ordered[len(ordered) // 2],
-                    _std([float(x) for x in sims]),
+                    ensemble.median,
+                    ensemble.stddev,
                     over,
                     push,
                     under,
@@ -329,8 +379,37 @@ def run_baseline(*, now: datetime | None = None, seed: int = 20260803) -> Foreca
                     quote["locks_at"],
                 ),
             )
+            for component in ensemble.components:
+                cur.execute(
+                    """INSERT INTO wnba.forecast_components
+                       (component_id,projection_id,component_name,component_version,weight,
+                        mean,probability_over,probability_push,probability_under,distribution)
+                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                    (
+                        uuid4(),
+                        projection_id,
+                        component.name,
+                        component.version,
+                        component.weight,
+                        component.mean,
+                        component.over,
+                        component.push,
+                        component.under,
+                        Jsonb(
+                            {
+                                str(value): probability
+                                for value, probability in enumerate(component.pmf)
+                                if probability > 0
+                            }
+                        ),
+                    ),
+                )
             side, probability = ("over", over) if over >= under else ("under", under)
-            status = "candidate" if probability >= 0.58 and quality >= 0.85 else "declined_no_edge"
+            status = (
+                "candidate"
+                if probability >= 0.58 and quality >= 0.85 and ensemble.disagreement <= 0.12
+                else "declined_no_edge"
+            )
             if designation in {"questionable", "doubtful", "unknown"}:
                 status = "blocked_by_skeptic"
             cur.execute(
@@ -339,7 +418,7 @@ def run_baseline(*, now: datetime | None = None, seed: int = 20260803) -> Foreca
                     quote_id,multiplier,projected_mean,projected_median,predicted_probability,
                     projected_minutes,confidence,data_quality_score,model_disagreement,
                     model_version_ids,model_run_id,feature_snapshot_id,system_recommendation,is_paper)
-                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,1,%s,%s,%s,%s,%s,%s,0,%s,%s,%s,%s,true)""",
+                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,1,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,true)""",
                 (
                     uuid4(),
                     at,
@@ -351,11 +430,12 @@ def run_baseline(*, now: datetime | None = None, seed: int = 20260803) -> Foreca
                     quote["source"],
                     quote["quote_id"],
                     mean,
-                    ordered[len(ordered) // 2],
+                    ensemble.median,
                     probability,
                     projected_minutes,
                     confidence,
                     quality,
+                    ensemble.disagreement,
                     [MODEL_ID],
                     run_id,
                     feature_id,

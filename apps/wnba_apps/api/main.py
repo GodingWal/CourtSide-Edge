@@ -325,7 +325,8 @@ def forecasts() -> dict[str, object]:
                           f.line,f.mean,f.median,f.stddev,f.probability_over,
                           f.probability_under,f.projected_minutes,f.sample_size,
                           f.data_quality_score,f.confidence,f.generated_at,f.expires_at,
-                          d.side,d.predicted_probability,d.system_recommendation,q.source,
+                          d.side,d.predicted_probability,d.model_disagreement,
+                          d.system_recommendation,q.source,
                           g.scheduled_tipoff,i.designation AS injury_designation,
                           i.detail AS injury_detail,r.availability_probability,
                           r.start_probability,r.closing_lineup_probability,
@@ -335,7 +336,7 @@ def forecasts() -> dict[str, object]:
                           c.expected_possessions,c.pace_multiplier,c.defense_multiplier,
                           c.expected_margin,c.blowout_probability,c.team_rest_days,
                           c.opponent_rest_days,c.confidence AS matchup_confidence,
-                          c.method_version AS matchup_model
+                          c.method_version AS matchup_model,fc.components
                    FROM wnba.stat_forecasts f
                    JOIN wnba.players p ON p.player_id=f.player_id
                    JOIN wnba.decision_episodes d ON d.model_run_id=f.model_run_id
@@ -371,6 +372,15 @@ def forecasts() -> dict[str, object]:
                          ORDER BY ingested_at DESC LIMIT 1)
                      ORDER BY system_from DESC LIMIT 1
                    ) c ON true
+                   LEFT JOIN LATERAL (
+                     SELECT jsonb_agg(jsonb_build_object(
+                       'name',component_name,'version',component_version,'weight',weight,
+                       'mean',mean,'probability_over',probability_over,
+                       'probability_push',probability_push,'probability_under',probability_under
+                     ) ORDER BY weight DESC) AS components
+                     FROM wnba.forecast_components
+                     WHERE projection_id=f.projection_id
+                   ) fc ON true
                    WHERE f.expires_at>now() AND coalesce(i.designation,'available')<>'out'
                    ORDER BY f.quote_id,f.generated_at DESC"""
             )
