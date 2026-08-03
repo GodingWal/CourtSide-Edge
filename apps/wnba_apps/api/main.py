@@ -10,12 +10,15 @@ will use, with no separate "web" implementation to drift out of sync.
 
 from __future__ import annotations
 
+import hmac
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, Literal
+from uuid import UUID
 
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import HTMLResponse
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 from pydantic import BaseModel, Field
 from wnba_domain.enums import EntryType
 from wnba_domain.market import PayoutRule, PayoutTable
@@ -32,6 +35,8 @@ from wnba_marketmath import (
 )
 from wnba_sim import correct_count_pmf, effective_leg_correlation
 
+from wnba_apps.api.auth import configured_owner, decode_basic_authorization, verify_password
+
 STATIC_DIR = Path(__file__).parent / "static"
 
 # Tables are unverified defaults; this is when they were last bundled, not when they were
@@ -43,6 +48,34 @@ app = FastAPI(
     description="Analysis only. This system never places a wager or moves money.",
     version="0.1.0",
 )
+
+
+@app.middleware("http")
+async def private_owner_auth(
+    request: Request, call_next: Callable[[Request], Awaitable[Response]]
+) -> Response:
+    """Protect the console when owner credentials are configured on the VPS."""
+    owner = configured_owner()
+    if owner is None or request.url.path in {"/api/health", "/api/auth/status"}:
+        return await call_next(request)
+    supplied = decode_basic_authorization(request.headers.get("authorization"))
+    authenticated = (
+        supplied is not None
+        and hmac.compare_digest(supplied[0], owner[0])
+        and verify_password(supplied[1], owner[1])
+    )
+    if not authenticated:
+        return JSONResponse(
+            status_code=401,
+            content={"detail": "Owner authentication required"},
+            headers={"WWW-Authenticate": 'Basic realm="CourtSide Edge", charset="UTF-8"'},
+        )
+    return await call_next(request)
+
+
+@app.get("/api/auth/status")
+def auth_status() -> dict[str, object]:
+    return {"private": configured_owner() is not None, "mode": "single_owner"}
 
 
 def _table_for(source: str) -> PayoutTable:
@@ -541,3 +574,78 @@ def performance() -> dict[str, object]:
         "drift_incidents": drift_incidents,
         "error_attributions": error_attributions,
     }
+
+
+@app.get("/api/backtests/latest")
+def latest_backtest() -> dict[str, object]:
+    """Latest completed point-in-time benchmark comparison."""
+    try:
+        from wnba_store.db import connect
+
+        with connect() as conn, conn.cursor() as cur:
+            cur.execute(
+                """SELECT * FROM wnba.backtest_runs WHERE status='complete'
+                   ORDER BY completed_at DESC LIMIT 1"""
+            )
+            run = cur.fetchone()
+            if run is None:
+                return {"available": True, "run": None, "models": [], "by_snapshot": []}
+            cur.execute(
+                """SELECT model_name,count(*) AS forecasts,avg(brier) AS brier,
+                          avg(log_loss) AS log_loss,
+                          avg(abs(actual_stat-projected_mean)) AS mean_absolute_error
+                   FROM wnba.backtest_results WHERE backtest_run_id=%s
+                   GROUP BY model_name ORDER BY brier""",
+                (run["backtest_run_id"],),
+            )
+            models = [dict(row) for row in cur.fetchall()]
+            cur.execute(
+                """SELECT snapshot_label,model_name,count(*) AS forecasts,avg(brier) AS brier,
+                          avg(log_loss) AS log_loss
+                   FROM wnba.backtest_results WHERE backtest_run_id=%s
+                   GROUP BY snapshot_label,model_name ORDER BY snapshot_label,brier""",
+                (run["backtest_run_id"],),
+            )
+            by_snapshot = [dict(row) for row in cur.fetchall()]
+    except Exception as exc:
+        return {"available": False, "reason": str(exc)[:200]}
+    return {
+        "available": True,
+        "point_in_time": True,
+        "run": dict(run),
+        "models": models,
+        "by_snapshot": by_snapshot,
+    }
+
+
+@app.get("/api/research/{projection_id}")
+def projection_research(projection_id: UUID) -> dict[str, object]:
+    """Cited research state for one immutable projection."""
+    try:
+        from wnba_store.db import connect
+
+        with connect() as conn, conn.cursor() as cur:
+            cur.execute(
+                """SELECT * FROM wnba.research_runs WHERE projection_id=%s
+                   ORDER BY started_at DESC LIMIT 1""",
+                (projection_id,),
+            )
+            run = cur.fetchone()
+            if run is None:
+                return {"available": True, "configured": False, "run": None, "analyses": []}
+            cur.execute(
+                """SELECT a.*,
+                          coalesce(jsonb_agg(jsonb_build_object(
+                            'claim_id',c.claim_id,'predicate',c.predicate,'value',c.value,
+                            'confidence',c.confidence,'evidence_ids',c.evidence_ids,
+                            'expires_at',c.expires_at,'status',c.status
+                          )) FILTER (WHERE c.claim_id IS NOT NULL),'[]') AS claims
+                   FROM wnba.agent_analyses a
+                   LEFT JOIN wnba.research_claims c ON c.analysis_id=a.analysis_id
+                   WHERE a.research_run_id=%s GROUP BY a.analysis_id ORDER BY a.created_at""",
+                (run["research_run_id"],),
+            )
+            analyses = [dict(row) for row in cur.fetchall()]
+    except Exception as exc:
+        return {"available": False, "reason": str(exc)[:200]}
+    return {"available": True, "configured": True, "run": dict(run), "analyses": analyses}
