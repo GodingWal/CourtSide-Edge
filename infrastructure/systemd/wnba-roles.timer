@@ -1,0 +1,11 @@
+[Unit]
+Description=Refresh WNBA role projections every 15 minutes
+
+[Timer]
+OnBootSec=4m
+OnUnitActiveSec=15m
+RandomizedDelaySec=1m
+Persistent=true
+
+[Install]
+WantedBy=timers.target

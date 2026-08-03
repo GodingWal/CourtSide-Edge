@@ -39,11 +39,19 @@ def _weighted_mean(values: list[float]) -> float:
     return sum(v * w for v, w in zip(values, weights, strict=True)) / sum(weights)
 
 
-def _simulate(rows: list[dict[str, Any]], columns: tuple[str, ...], seed: int) -> list[int]:
+def _simulate(
+    rows: list[dict[str, Any]],
+    columns: tuple[str, ...],
+    seed: int,
+    *,
+    projected_minutes: float | None = None,
+    projected_minutes_std: float | None = None,
+) -> list[int]:
     rng = random.Random(seed)
     recent = rows[-20:]
     minutes = [float(r["minutes"]) for r in recent if float(r["minutes"]) > 0]
-    expected_minutes = _weighted_mean(minutes)
+    expected_minutes = projected_minutes or _weighted_mean(minutes)
+    minutes_std = projected_minutes_std or max(2.0, _std(minutes))
     rates = [
         sum(float(r[c]) for c in columns) / float(r["minutes"])
         for r in recent
@@ -51,7 +59,7 @@ def _simulate(rows: list[dict[str, Any]], columns: tuple[str, ...], seed: int) -
     ]
     outcomes: list[int] = []
     for _ in range(10_000):
-        sampled_minutes = max(0.0, min(45.0, rng.gauss(expected_minutes, max(2.0, _std(minutes)))))
+        sampled_minutes = max(0.0, min(45.0, rng.gauss(expected_minutes, minutes_std)))
         sampled_rate = max(0.0, rng.choice(rates))
         expectation = sampled_minutes * sampled_rate
         # Poisson sampling preserves count support and naturally widens high-volume props.
@@ -105,7 +113,12 @@ def run_baseline(*, now: datetime | None = None, seed: int = 20260803) -> Foreca
                            SELECT 1 FROM wnba.injury_status i
                            WHERE i.player_id=coalesce(m.to_player_id,q.player_id)
                              AND i.game_id=q.game_id AND i.system_to IS NULL
-                             AND i.system_from>f.generated_at))
+                             AND i.system_from>f.generated_at)
+                       AND NOT EXISTS (
+                           SELECT 1 FROM wnba.projected_roles r
+                           WHERE r.player_id=coalesce(m.to_player_id,q.player_id)
+                             AND r.game_id=q.game_id AND r.system_to IS NULL
+                             AND r.system_from>f.generated_at))
                ORDER BY q.source,q.source_quote_id,q.system_from DESC""",
             (at,),
         )
@@ -139,15 +152,34 @@ def run_baseline(*, now: datetime | None = None, seed: int = 20260803) -> Foreca
             if designation == "out":
                 skipped += 1
                 continue
+            cur.execute(
+                """SELECT availability_probability,start_probability,
+                          closing_lineup_probability,expected_minutes,minutes_std,
+                          minutes_restriction_probability,model_version
+                   FROM wnba.projected_roles
+                   WHERE player_id=%s AND game_id=%s AND system_to IS NULL""",
+                (player_id, quote["game_id"]),
+            )
+            role = cur.fetchone()
             local_seed = seed ^ int(str(quote["quote_id"]).replace("-", "")[:8], 16)
-            sims = _simulate(history, columns, local_seed)
+            role_minutes = None if role is None else float(str(role["expected_minutes"]))
+            role_std = None if role is None else float(str(role["minutes_std"]))
+            sims = _simulate(
+                history,
+                columns,
+                local_seed,
+                projected_minutes=role_minutes,
+                projected_minutes_std=role_std,
+            )
             line = Decimal(str(quote["line"]))
             over = sum(Decimal(x) > line for x in sims) / len(sims)
             push = sum(Decimal(x) == line for x in sims) / len(sims)
             under = 1.0 - over - push
             mean = sum(sims) / len(sims)
             ordered = sorted(sims)
-            projected_minutes = _weighted_mean([float(str(r["minutes"])) for r in history])
+            projected_minutes = role_minutes or _weighted_mean(
+                [float(str(r["minutes"])) for r in history]
+            )
             quality = min(1.0, 0.7 + len(history) / 100)
             confidence = min(
                 0.75,
@@ -174,6 +206,13 @@ def run_baseline(*, now: datetime | None = None, seed: int = 20260803) -> Foreca
                             "columns": columns,
                             "injury_designation": designation,
                             "injury_detail": None if injury is None else injury["detail"],
+                            "role_model": None if role is None else role["model_version"],
+                            "start_probability": None
+                            if role is None
+                            else role["start_probability"],
+                            "closing_lineup_probability": None
+                            if role is None
+                            else role["closing_lineup_probability"],
                         }
                     ),
                     [r["line_id"] for r in history],
