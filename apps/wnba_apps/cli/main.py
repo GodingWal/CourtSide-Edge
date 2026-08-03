@@ -6,12 +6,14 @@ The primary interface for Phase 0/1. Deliberately boring: poll, migrate, report.
 from __future__ import annotations
 
 import sys
+from pathlib import Path
 from typing import Annotated
 
 import typer
 from rich.console import Console
 from rich.table import Table
 from wnba_services.ingestion.archiver import run_archiver
+from wnba_services.ingestion.legacy import import_legacy_sqlite
 from wnba_store.db import connect, migrate
 
 app = typer.Typer(
@@ -21,8 +23,10 @@ app = typer.Typer(
 )
 lines_app = typer.Typer(help="Market line archive.", no_args_is_help=True)
 db_app = typer.Typer(help="Database schema.", no_args_is_help=True)
+data_app = typer.Typer(help="Historical and reference data.", no_args_is_help=True)
 app.add_typer(lines_app, name="lines")
 app.add_typer(db_app, name="db")
+app.add_typer(data_app, name="data")
 
 console = Console()
 
@@ -64,6 +68,22 @@ def db_status() -> None:
             row = cur.fetchone()
             table.add_row(name, f"{row['n']:,}" if row else "?")
         console.print(table)
+
+
+@data_app.command("import-legacy")
+def data_import_legacy(
+    sqlite_path: Annotated[
+        Path,
+        typer.Argument(exists=True, file_okay=True, dir_okay=False, readable=True),
+    ],
+) -> None:
+    """Preserve the rescued CourtSide Edge SQLite data in immutable staging tables."""
+    result = import_legacy_sqlite(sqlite_path)
+    console.print(
+        f"[green]legacy import complete[/green] id={result.import_id} "
+        f"players={result.player_rows:,} teams={result.team_rows:,} "
+        f"quotes={result.quote_rows:,} sha256={result.source_sha256[:12]}…"
+    )
 
 
 @lines_app.command("poll")
