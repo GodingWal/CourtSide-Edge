@@ -346,3 +346,38 @@ def forecasts() -> dict[str, object]:
         "validated_for_real_money": False,
         "forecasts": rows,
     }
+
+
+@app.get("/api/operations")
+def operations() -> dict[str, object]:
+    """Freshness/readiness checks used by operators and external uptime monitoring."""
+    try:
+        from wnba_store.db import connect
+
+        with connect() as conn, conn.cursor() as cur:
+            cur.execute(
+                """SELECT
+                     (SELECT max(system_from) FROM wnba.prop_quotes) AS latest_quote,
+                     (SELECT max(completed_at) FROM wnba.ingested_dates) AS latest_stats_ingest,
+                     (SELECT max(completed_at) FROM wnba.model_runs
+                       WHERE status='complete') AS latest_model_run,
+                     (SELECT count(*) FROM wnba.dq_incidents
+                       WHERE blocks_recommendations AND resolved_at IS NULL) AS blockers"""
+            )
+            row = dict(cur.fetchone() or {})
+    except Exception as exc:
+        return {"status": "unhealthy", "database": False, "reason": str(exc)[:200]}
+    now = datetime.now(UTC)
+    quote = row.get("latest_quote")
+    quote_stale = not isinstance(quote, datetime) or (now - quote).total_seconds() > 3600
+    blockers = int(str(row.get("blockers", 0)))
+    return {
+        "status": "degraded" if quote_stale or blockers else "ok",
+        "database": True,
+        "market_archive_stale": quote_stale,
+        "blocking_data_quality_incidents": blockers,
+        "latest_quote": quote,
+        "latest_stats_ingest": row.get("latest_stats_ingest"),
+        "latest_model_run": row.get("latest_model_run"),
+        "analysis_only": True,
+    }

@@ -98,6 +98,9 @@ def run_baseline(*, now: datetime | None = None, seed: int = 20260803) -> Foreca
                LEFT JOIN wnba.player_merges m
                  ON m.from_player_id=q.player_id AND m.system_to IS NULL
                WHERE q.is_available AND q.game_id IS NOT NULL AND q.locks_at>%s
+                 AND NOT EXISTS (
+                     SELECT 1 FROM wnba.stat_forecasts f
+                     WHERE f.quote_id=q.quote_id AND f.expires_at=q.locks_at)
                ORDER BY q.source,q.source_quote_id,q.system_from DESC""",
             (at,),
         )

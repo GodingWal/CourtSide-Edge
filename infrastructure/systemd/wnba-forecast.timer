@@ -1,0 +1,11 @@
+[Unit]
+Description=Refresh paper-only WNBA forecasts every 30 minutes
+
+[Timer]
+OnBootSec=5m
+OnUnitActiveSec=30m
+RandomizedDelaySec=2m
+Persistent=true
+
+[Install]
+WantedBy=timers.target
