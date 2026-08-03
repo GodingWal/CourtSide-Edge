@@ -48,6 +48,14 @@ def choose_game(
     return best.game_id, min(1.0, best.overlap / resolved_players)
 
 
+def legacy_american_odds(value: object) -> int | None:
+    """Return only values that unambiguously satisfy American-odds encoding."""
+    if value is None:
+        return None
+    parsed = int(str(value))
+    return parsed if abs(parsed) >= 100 else None
+
+
 def normalize_historical_markets() -> HistoricalMarketBatch:
     """Map legacy events by unique exact player identity and box-score overlap."""
     resolved = ambiguous = unresolved = quotes = unresolved_players = 0
@@ -141,8 +149,10 @@ def normalize_historical_markets() -> HistoricalMarketBatch:
                 """INSERT INTO wnba.historical_prop_quotes
                    (historical_quote_id,legacy_source_row_id,source_event_id,game_id,player_id,
                     bookmaker,prop_type,line,over_american_odds,under_american_odds,observed_at,
-                    scheduled_tipoff,mapping_confidence)
-                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                    scheduled_tipoff,mapping_confidence,raw_over_price,raw_under_price,
+                    price_encoding)
+                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
+                           'lossy_decimal_integer')
                    ON CONFLICT (legacy_source_row_id) DO NOTHING""",
                 (
                     uuid4(),
@@ -153,11 +163,13 @@ def normalize_historical_markets() -> HistoricalMarketBatch:
                     row["bookmaker"],
                     prop_type,
                     row["line"],
-                    row["over_price"],
-                    row["under_price"],
+                    legacy_american_odds(row["over_price"]),
+                    legacy_american_odds(row["under_price"]),
                     row["observed_at"],
                     row["scheduled_tipoff"],
                     row["confidence"],
+                    row["over_price"],
+                    row["under_price"],
                 ),
             )
             quotes += max(0, cur.rowcount)

@@ -1,7 +1,11 @@
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
-from wnba_services.ingestion.historical_markets import GameCandidate, choose_game
+from wnba_services.ingestion.historical_markets import (
+    GameCandidate,
+    choose_game,
+    legacy_american_odds,
+)
 
 
 def test_choose_game_requires_unique_multi_player_overlap() -> None:
@@ -27,3 +31,9 @@ def test_choose_game_rejects_tied_or_single_player_mapping() -> None:
         )[0]
         is None
     )
+
+
+def test_lossy_legacy_decimal_prices_are_not_invented_as_american_odds() -> None:
+    assert legacy_american_odds(2) is None
+    assert legacy_american_odds(None) is None
+    assert legacy_american_odds(-110) == -110
