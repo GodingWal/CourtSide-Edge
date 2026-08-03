@@ -18,6 +18,7 @@ from wnba_services.ingestion.archiver import run_archiver
 from wnba_services.ingestion.espn import backfill_espn, ingest_espn_date
 from wnba_services.ingestion.identity import approve_unique_exact_names
 from wnba_services.ingestion.legacy import import_legacy_sqlite
+from wnba_services.ingestion.wnba_injuries import ingest_official_injuries
 from wnba_services.learning_loop.settlement import settle_paper_episodes
 from wnba_store.db import connect, migrate
 
@@ -37,6 +38,7 @@ identity_app = typer.Typer(help="Audited cross-source identity review.", no_args
 learning_app = typer.Typer(
     help="Paper settlement, scoring, and learning loop.", no_args_is_help=True
 )
+injuries_app = typer.Typer(help="Official bitemporal WNBA injury reports.", no_args_is_help=True)
 app.add_typer(lines_app, name="lines")
 app.add_typer(db_app, name="db")
 app.add_typer(data_app, name="data")
@@ -44,6 +46,7 @@ app.add_typer(stats_app, name="stats")
 app.add_typer(forecast_app, name="forecast")
 app.add_typer(identity_app, name="identity")
 app.add_typer(learning_app, name="learning")
+app.add_typer(injuries_app, name="injuries")
 
 console = Console()
 
@@ -241,6 +244,17 @@ def learning_settle() -> None:
     console.print(
         f"[green]settlement complete[/green] settled={result.settled} "
         f"voided={result.voided} pushed={result.pushed} unsupported={result.unsupported}"
+    )
+
+
+@injuries_app.command("poll")
+def injuries_poll() -> None:
+    """Fetch and ingest the latest official WNBA injury-report PDF."""
+    result = ingest_official_injuries()
+    console.print(
+        f"[green]official injuries ingested[/green] parsed={result.parsed} "
+        f"inserted={result.inserted} unchanged={result.unchanged} "
+        f"unresolved={result.unresolved}"
     )
 
 

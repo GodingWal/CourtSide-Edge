@@ -100,7 +100,12 @@ def run_baseline(*, now: datetime | None = None, seed: int = 20260803) -> Foreca
                WHERE q.is_available AND q.game_id IS NOT NULL AND q.locks_at>%s
                  AND NOT EXISTS (
                      SELECT 1 FROM wnba.stat_forecasts f
-                     WHERE f.quote_id=q.quote_id AND f.expires_at=q.locks_at)
+                     WHERE f.quote_id=q.quote_id AND f.expires_at=q.locks_at
+                       AND NOT EXISTS (
+                           SELECT 1 FROM wnba.injury_status i
+                           WHERE i.player_id=coalesce(m.to_player_id,q.player_id)
+                             AND i.game_id=q.game_id AND i.system_to IS NULL
+                             AND i.system_from>f.generated_at))
                ORDER BY q.source,q.source_quote_id,q.system_from DESC""",
             (at,),
         )
@@ -123,6 +128,17 @@ def run_baseline(*, now: datetime | None = None, seed: int = 20260803) -> Foreca
             if len(history) < 10:
                 skipped += 1
                 continue
+            cur.execute(
+                """SELECT designation,detail FROM wnba.injury_status
+                   WHERE player_id=%s AND game_id=%s AND system_to IS NULL
+                   ORDER BY system_from DESC LIMIT 1""",
+                (player_id, quote["game_id"]),
+            )
+            injury = cur.fetchone()
+            designation = "available" if injury is None else str(injury["designation"])
+            if designation == "out":
+                skipped += 1
+                continue
             local_seed = seed ^ int(str(quote["quote_id"]).replace("-", "")[:8], 16)
             sims = _simulate(history, columns, local_seed)
             line = Decimal(str(quote["line"]))
@@ -137,6 +153,10 @@ def run_baseline(*, now: datetime | None = None, seed: int = 20260803) -> Foreca
                 0.75,
                 quality * (1.0 - min(0.5, _std([float(x) for x in sims]) / max(1.0, mean) / 2)),
             )
+            if designation in {"questionable", "doubtful", "unknown"}:
+                confidence *= 0.7
+            elif designation == "probable":
+                confidence *= 0.9
             feature_id, projection_id = uuid4(), uuid4()
             cur.execute(
                 """INSERT INTO wnba.feature_snapshots
@@ -152,6 +172,8 @@ def run_baseline(*, now: datetime | None = None, seed: int = 20260803) -> Foreca
                             "history_games": len(history),
                             "expected_minutes": projected_minutes,
                             "columns": columns,
+                            "injury_designation": designation,
+                            "injury_detail": None if injury is None else injury["detail"],
                         }
                     ),
                     [r["line_id"] for r in history],
@@ -191,6 +213,8 @@ def run_baseline(*, now: datetime | None = None, seed: int = 20260803) -> Foreca
             )
             side, probability = ("over", over) if over >= under else ("under", under)
             status = "candidate" if probability >= 0.58 and quality >= 0.85 else "declined_no_edge"
+            if designation in {"questionable", "doubtful", "unknown"}:
+                status = "blocked_by_skeptic"
             cur.execute(
                 """INSERT INTO wnba.decision_episodes
                    (episode_id,forecast_timestamp,player_id,game_id,prop_type,side,line,source,

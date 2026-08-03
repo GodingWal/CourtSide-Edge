@@ -326,14 +326,20 @@ def forecasts() -> dict[str, object]:
                           f.probability_under,f.projected_minutes,f.sample_size,
                           f.data_quality_score,f.confidence,f.generated_at,f.expires_at,
                           d.side,d.predicted_probability,d.system_recommendation,q.source,
-                          g.scheduled_tipoff
+                          g.scheduled_tipoff,i.designation AS injury_designation,
+                          i.detail AS injury_detail
                    FROM wnba.stat_forecasts f
                    JOIN wnba.players p ON p.player_id=f.player_id
                    JOIN wnba.decision_episodes d ON d.model_run_id=f.model_run_id
                      AND d.quote_id=f.quote_id
                    JOIN wnba.prop_quotes q ON q.quote_id=f.quote_id
                    JOIN wnba.games g ON g.game_id=f.game_id
-                   WHERE f.expires_at>now()
+                   LEFT JOIN LATERAL (
+                     SELECT designation,detail FROM wnba.injury_status
+                     WHERE player_id=f.player_id AND game_id=f.game_id AND system_to IS NULL
+                     ORDER BY system_from DESC LIMIT 1
+                   ) i ON true
+                   WHERE f.expires_at>now() AND coalesce(i.designation,'available')<>'out'
                    ORDER BY f.quote_id,f.generated_at DESC"""
             )
             rows = [dict(row) for row in cur.fetchall()]
@@ -346,6 +352,37 @@ def forecasts() -> dict[str, object]:
         "model_stage": "challenger",
         "validated_for_real_money": False,
         "forecasts": rows,
+    }
+
+
+@app.get("/api/injuries")
+def injuries() -> dict[str, object]:
+    """Current official availability designations for games on the market board."""
+    try:
+        from wnba_store.db import connect
+
+        with connect() as conn, conn.cursor() as cur:
+            cur.execute(
+                """SELECT p.full_name,i.designation,i.detail,i.system_from,i.source_ref,
+                          g.scheduled_tipoff,a.abbreviation AS away,h.abbreviation AS home
+                   FROM wnba.injury_status i
+                   JOIN wnba.players p ON p.player_id=i.player_id
+                   JOIN wnba.games g ON g.game_id=i.game_id
+                   JOIN wnba.teams a ON a.team_id=g.away_team_id
+                   JOIN wnba.teams h ON h.team_id=g.home_team_id
+                   WHERE i.system_to IS NULL AND g.scheduled_tipoff>now()-interval '6 hours'
+                   ORDER BY g.scheduled_tipoff,p.full_name"""
+            )
+            rows = [dict(row) for row in cur.fetchall()]
+            cur.execute("SELECT max(retrieved_at) AS latest FROM wnba.official_injury_reports")
+            latest = cur.fetchone()
+    except Exception as exc:
+        return {"available": False, "reason": str(exc)[:200], "injuries": []}
+    return {
+        "available": True,
+        "source": "WNBA official injury report",
+        "latest_report": None if latest is None else latest["latest"],
+        "injuries": rows,
     }
 
 

@@ -129,3 +129,20 @@ class PoliteClient:
         raise SourceUnavailableError(
             f"{self.source} unavailable after {self.max_attempts} attempts: {last_error}"
         )
+
+    def get_bytes(self, url: str, *, accept: str = "application/octet-stream") -> bytes:
+        """Fetch a binary public document once; callers own document-level idempotency."""
+        self._wait_for_slot()
+        try:
+            with httpx.Client(timeout=self.timeout_seconds, follow_redirects=True) as client:
+                response = client.get(
+                    url, headers={"User-Agent": self.user_agent, "Accept": accept}
+                )
+        except httpx.HTTPError as exc:
+            raise SourceUnavailableError(f"{self.source} transport error: {exc}") from exc
+        self._last_request_at = time.monotonic()
+        if response.status_code != 200:
+            raise SourceUnavailableError(f"{self.source} returned http {response.status_code}")
+        if any(marker.encode() in response.content.lower() for marker in _BOT_DEFENCE_MARKERS):
+            raise BotDefenceError(f"{self.source} served a bot-detection challenge")
+        return response.content
