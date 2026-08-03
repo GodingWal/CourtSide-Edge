@@ -35,6 +35,13 @@ app.add_typer(stats_app, name="stats")
 console = Console()
 
 
+def _iso_date(value: str) -> date:
+    try:
+        return date.fromisoformat(value)
+    except ValueError as exc:
+        raise typer.BadParameter("expected YYYY-MM-DD") from exc
+
+
 @db_app.command("migrate")
 def db_migrate(
     dry_run: Annotated[
@@ -92,11 +99,11 @@ def data_import_legacy(
 
 @stats_app.command("ingest-date")
 def stats_ingest_date(
-    game_date: Annotated[date, typer.Argument(formats=["%Y-%m-%d"])],
+    game_date: Annotated[str, typer.Argument(help="WNBA calendar date (YYYY-MM-DD).")],
     force: Annotated[bool, typer.Option(help="Re-fetch and append official corrections.")] = False,
 ) -> None:
     """Ingest complete ESPN final box scores for one WNBA calendar date."""
-    result = ingest_espn_date(game_date, force=force)
+    result = ingest_espn_date(_iso_date(game_date), force=force)
     state = "skipped" if result.skipped else "complete"
     console.print(
         f"[green]{state}[/green] date={result.game_date} games={result.games} "
@@ -106,12 +113,12 @@ def stats_ingest_date(
 
 @stats_app.command("backfill")
 def stats_backfill(
-    start: Annotated[date, typer.Option(formats=["%Y-%m-%d"])],
-    end: Annotated[date, typer.Option(formats=["%Y-%m-%d"])],
+    start: Annotated[str, typer.Option(help="First date, YYYY-MM-DD.")],
+    end: Annotated[str, typer.Option(help="Last date, YYYY-MM-DD.")],
     force: Annotated[bool, typer.Option(help="Re-fetch dates already marked complete.")] = False,
 ) -> None:
     """Backfill ESPN final box scores, resumably and with polite request pacing."""
-    results = backfill_espn(start, end, force=force)
+    results = backfill_espn(_iso_date(start), _iso_date(end), force=force)
     games = sum(result.games for result in results)
     rows = sum(result.player_lines for result in results)
     skipped = sum(result.skipped for result in results)
