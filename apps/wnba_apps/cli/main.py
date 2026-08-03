@@ -20,6 +20,7 @@ from wnba_services.feature_engine.teammate_effects import project_teammate_effec
 from wnba_services.forecasting.baseline import run_baseline
 from wnba_services.ingestion.archiver import run_archiver
 from wnba_services.ingestion.espn import backfill_espn, ingest_espn_date
+from wnba_services.ingestion.historical_markets import normalize_historical_markets
 from wnba_services.ingestion.identity import approve_unique_exact_names
 from wnba_services.ingestion.legacy import import_legacy_sqlite
 from wnba_services.ingestion.wnba_injuries import ingest_official_injuries
@@ -124,6 +125,18 @@ def data_import_legacy(
         f"[green]legacy import complete[/green] id={result.import_id} "
         f"players={result.player_rows:,} teams={result.team_rows:,} "
         f"quotes={result.quote_rows:,} sha256={result.source_sha256[:12]}…"
+    )
+
+
+@data_app.command("normalize-historical-markets")
+def data_normalize_historical_markets() -> None:
+    """Conservatively map rescued sportsbook quotes to canonical players and games."""
+    result = normalize_historical_markets()
+    console.print(
+        f"[green]historical market normalization complete[/green] "
+        f"events_resolved={result.events_resolved} ambiguous={result.events_ambiguous} "
+        f"unresolved={result.events_unresolved} quotes={result.quotes_normalized} "
+        f"unresolved_players={result.players_unresolved}"
     )
 
 
