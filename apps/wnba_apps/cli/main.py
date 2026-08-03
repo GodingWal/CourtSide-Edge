@@ -17,6 +17,7 @@ from rich.table import Table
 from wnba_services.feature_engine.matchup import project_matchup_contexts
 from wnba_services.feature_engine.roles import project_current_roles
 from wnba_services.feature_engine.teammate_effects import project_teammate_effects
+from wnba_services.forecasting.backtest import run_walk_forward_backtest
 from wnba_services.forecasting.baseline import run_baseline
 from wnba_services.ingestion.archiver import run_archiver
 from wnba_services.ingestion.espn import backfill_espn, ingest_espn_date
@@ -41,6 +42,7 @@ stats_app = typer.Typer(help="Canonical WNBA schedule and box scores.", no_args_
 forecast_app = typer.Typer(
     help="Versioned, paper-only probability forecasts.", no_args_is_help=True
 )
+backtest_app = typer.Typer(help="Point-in-time rolling-origin evaluation.", no_args_is_help=True)
 identity_app = typer.Typer(help="Audited cross-source identity review.", no_args_is_help=True)
 learning_app = typer.Typer(
     help="Paper settlement, scoring, and learning loop.", no_args_is_help=True
@@ -55,6 +57,7 @@ app.add_typer(db_app, name="db")
 app.add_typer(data_app, name="data")
 app.add_typer(stats_app, name="stats")
 app.add_typer(forecast_app, name="forecast")
+app.add_typer(backtest_app, name="backtest")
 app.add_typer(identity_app, name="identity")
 app.add_typer(learning_app, name="learning")
 app.add_typer(injuries_app, name="injuries")
@@ -249,6 +252,16 @@ def forecast_run() -> None:
     console.print(
         f"[green]forecast complete[/green] run={result.model_run_id} "
         f"forecasts={result.forecasts} paper_episodes={result.episodes} skipped={result.skipped}"
+    )
+
+
+@backtest_app.command("run")
+def backtest_run() -> None:
+    """Replay timestamped historical lines without look-ahead leakage."""
+    result = run_walk_forward_backtest()
+    console.print(
+        f"[green]backtest complete[/green] run={result.backtest_run_id} "
+        f"markets={result.markets} results={result.results} skipped={result.skipped}"
     )
 
 
