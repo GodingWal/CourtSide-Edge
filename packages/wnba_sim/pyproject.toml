@@ -1,0 +1,17 @@
+[project]
+name = "wnba-sim"
+version = "0.1.0"
+description = "Correlated joint Monte Carlo simulation of player stat lines."
+requires-python = "==3.12.*"
+dependencies = ["wnba-domain", "numpy>=2.1"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["wnba_sim"]
+
+[tool.uv.sources]
+wnba-domain = { workspace = true }
+wnba-obs = { workspace = true }

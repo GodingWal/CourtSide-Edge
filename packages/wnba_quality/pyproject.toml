@@ -1,0 +1,17 @@
+[project]
+name = "wnba-quality"
+version = "0.1.0"
+description = "Six-level validation, quarantine and data-quality scoring."
+requires-python = "==3.12.*"
+dependencies = ["wnba-domain", "wnba-obs"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["wnba_quality"]
+
+[tool.uv.sources]
+wnba-domain = { workspace = true }
+wnba-obs = { workspace = true }

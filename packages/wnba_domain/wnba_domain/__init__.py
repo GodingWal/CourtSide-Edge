@@ -1,0 +1,223 @@
+"""The canonical WNBA player-prop ontology, expressed as strict Pydantic models.
+
+This package is the contract every other package speaks. It has exactly one runtime dependency
+(pydantic) and imports nothing from the rest of the platform, so the meaning of a ``PropQuote``
+can never quietly depend on how it happens to be stored or fetched.
+
+Seven invariants are enforced here, or by the tests that guard here:
+
+1. Bitemporality on every stored fact -- :class:`BitemporalRecord`.
+2. No look-ahead -- :meth:`BitemporalRecord.is_known_at` is the predicate feature builders
+   must respect.
+3. Starter status is a probability, never a boolean -- :attr:`ProjectedRole.start_probability`.
+4. Strict validation everywhere -- :class:`StrictModel`.
+5. Probability first, profit second -- :class:`ForecastScore`, :class:`CalibrationSnapshot`.
+6. Asymmetric autonomy -- :class:`OntologyAction` rejects automated expansion of exposure.
+7. Analysis only -- there is deliberately no wager-placement object in this domain.
+"""
+
+from __future__ import annotations
+
+from wnba_domain.base import (
+    BitemporalRecord,
+    Count,
+    FrozenModel,
+    NonNegativeRate,
+    Probability,
+    StrictModel,
+    TemporalError,
+    utc_now,
+)
+from wnba_domain.basketball import (
+    OVERTIME_MINUTES,
+    REGULATION_MINUTES,
+    TEAM_MINUTES_PER_REGULATION,
+    DefensiveMatchup,
+    Game,
+    GameContext,
+    InjuryStatusRecord,
+    Player,
+    PlayerGameLine,
+    Possession,
+    ProjectedRole,
+    RosterAssignment,
+    Season,
+    Shot,
+    Team,
+    team_minutes_for,
+)
+from wnba_domain.decision import (
+    AnalystFeedback,
+    DecisionEpisode,
+    EntryCandidate,
+    EntryLeg,
+    EpisodeOutcome,
+    ErrorAttribution,
+    ForecastScore,
+    brier_score,
+    log_loss,
+)
+from wnba_domain.enums import (
+    ActionType,
+    AgentRole,
+    ClaimStatus,
+    DriftResponse,
+    EntryType,
+    ErrorCategory,
+    ErrorCode,
+    FeedbackType,
+    GameStatus,
+    HypothesisStatus,
+    InjuryDesignation,
+    MarketKind,
+    ModelStage,
+    Position,
+    PropType,
+    RecommendationStatus,
+    Severity,
+    Side,
+    ValidationLevel,
+    Venue,
+)
+from wnba_domain.forecast import (
+    ContinuousDistribution,
+    DiscreteOutcomeDistribution,
+    LineProbabilities,
+    ModelRun,
+    ModelVersion,
+    Projection,
+    StatForecast,
+)
+from wnba_domain.governance import (
+    CalibrationBucket,
+    CalibrationSnapshot,
+    DataQualityIncident,
+    DriftIncident,
+    ModelPromotion,
+    OntologyAction,
+    QuarantineRecord,
+    SourceReliability,
+)
+from wnba_domain.identity import (
+    EntityResolutionFailure,
+    GameId,
+    PlayerAlias,
+    PlayerId,
+    SourceName,
+    SourceRef,
+    TeamAlias,
+    TeamId,
+    UnresolvedAliasError,
+)
+from wnba_domain.market import (
+    ConsensusLine,
+    PayoutRule,
+    PayoutTable,
+    PropQuote,
+    QuoteKey,
+)
+from wnba_domain.research import (
+    AgentForecast,
+    Evidence,
+    Experiment,
+    Hypothesis,
+    ResearchClaim,
+    ResearchProposal,
+    SourceDocument,
+    UncitedClaimError,
+)
+
+__all__ = [
+    "OVERTIME_MINUTES",
+    "REGULATION_MINUTES",
+    "TEAM_MINUTES_PER_REGULATION",
+    "ActionType",
+    "AgentForecast",
+    "AgentRole",
+    "AnalystFeedback",
+    "BitemporalRecord",
+    "CalibrationBucket",
+    "CalibrationSnapshot",
+    "ClaimStatus",
+    "ConsensusLine",
+    "ContinuousDistribution",
+    "Count",
+    "DataQualityIncident",
+    "DecisionEpisode",
+    "DefensiveMatchup",
+    "DiscreteOutcomeDistribution",
+    "DriftIncident",
+    "DriftResponse",
+    "EntityResolutionFailure",
+    "EntryCandidate",
+    "EntryLeg",
+    "EntryType",
+    "EpisodeOutcome",
+    "ErrorAttribution",
+    "ErrorCategory",
+    "ErrorCode",
+    "Evidence",
+    "Experiment",
+    "FeedbackType",
+    "ForecastScore",
+    "FrozenModel",
+    "Game",
+    "GameContext",
+    "GameId",
+    "GameStatus",
+    "Hypothesis",
+    "HypothesisStatus",
+    "InjuryDesignation",
+    "InjuryStatusRecord",
+    "LineProbabilities",
+    "MarketKind",
+    "ModelPromotion",
+    "ModelRun",
+    "ModelStage",
+    "ModelVersion",
+    "NonNegativeRate",
+    "OntologyAction",
+    "PayoutRule",
+    "PayoutTable",
+    "Player",
+    "PlayerAlias",
+    "PlayerGameLine",
+    "PlayerId",
+    "Position",
+    "Possession",
+    "Probability",
+    "ProjectedRole",
+    "Projection",
+    "PropQuote",
+    "PropType",
+    "QuarantineRecord",
+    "QuoteKey",
+    "RecommendationStatus",
+    "ResearchClaim",
+    "ResearchProposal",
+    "RosterAssignment",
+    "Season",
+    "Severity",
+    "Shot",
+    "Side",
+    "SourceDocument",
+    "SourceName",
+    "SourceRef",
+    "SourceReliability",
+    "StatForecast",
+    "StrictModel",
+    "Team",
+    "TeamAlias",
+    "TeamId",
+    "TemporalError",
+    "UncitedClaimError",
+    "UnresolvedAliasError",
+    "ValidationLevel",
+    "Venue",
+    "brier_score",
+    "log_loss",
+    "team_minutes_for",
+    "utc_now",
+]
+
+__version__ = "0.1.0"

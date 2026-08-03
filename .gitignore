@@ -1,0 +1,46 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Secrets -- never commit
+.env
+.env.*
+!.env.example
+
+# Data lake: bulk parquet is reproducible from source, never versioned
+data/
+!data/.gitkeep
+lake/
+*.duckdb
+*.duckdb.wal
+
+# Models / experiment artifacts
+models/**/*.pt
+models/**/*.pkl
+models/**/*.onnx
+mlruns/
+
+# Computer-vision track: weights, footage, cached detections.
+# Footage is licensed material and must never enter the repository.
+services/video_intelligence/models/
+services/video_intelligence/input_videos/
+services/video_intelligence/output_videos/
+services/video_intelligence/stubs/
+*.mp4
+*.avi
+*.mkv
+
+# Node (analyst_web, Phase 5)
+node_modules/
+.next/
+
+# OS
+Thumbs.db
+.DS_Store
