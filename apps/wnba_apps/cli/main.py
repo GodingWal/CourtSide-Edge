@@ -6,6 +6,7 @@ The primary interface for Phase 0/1. Deliberately boring: poll, migrate, report.
 from __future__ import annotations
 
 import sys
+from datetime import date
 from pathlib import Path
 from typing import Annotated
 
@@ -13,6 +14,7 @@ import typer
 from rich.console import Console
 from rich.table import Table
 from wnba_services.ingestion.archiver import run_archiver
+from wnba_services.ingestion.espn import backfill_espn, ingest_espn_date
 from wnba_services.ingestion.legacy import import_legacy_sqlite
 from wnba_store.db import connect, migrate
 
@@ -24,9 +26,11 @@ app = typer.Typer(
 lines_app = typer.Typer(help="Market line archive.", no_args_is_help=True)
 db_app = typer.Typer(help="Database schema.", no_args_is_help=True)
 data_app = typer.Typer(help="Historical and reference data.", no_args_is_help=True)
+stats_app = typer.Typer(help="Canonical WNBA schedule and box scores.", no_args_is_help=True)
 app.add_typer(lines_app, name="lines")
 app.add_typer(db_app, name="db")
 app.add_typer(data_app, name="data")
+app.add_typer(stats_app, name="stats")
 
 console = Console()
 
@@ -83,6 +87,37 @@ def data_import_legacy(
         f"[green]legacy import complete[/green] id={result.import_id} "
         f"players={result.player_rows:,} teams={result.team_rows:,} "
         f"quotes={result.quote_rows:,} sha256={result.source_sha256[:12]}…"
+    )
+
+
+@stats_app.command("ingest-date")
+def stats_ingest_date(
+    game_date: Annotated[date, typer.Argument(formats=["%Y-%m-%d"])],
+    force: Annotated[bool, typer.Option(help="Re-fetch and append official corrections.")] = False,
+) -> None:
+    """Ingest complete ESPN final box scores for one WNBA calendar date."""
+    result = ingest_espn_date(game_date, force=force)
+    state = "skipped" if result.skipped else "complete"
+    console.print(
+        f"[green]{state}[/green] date={result.game_date} games={result.games} "
+        f"player_lines={result.player_lines}"
+    )
+
+
+@stats_app.command("backfill")
+def stats_backfill(
+    start: Annotated[date, typer.Option(formats=["%Y-%m-%d"])],
+    end: Annotated[date, typer.Option(formats=["%Y-%m-%d"])],
+    force: Annotated[bool, typer.Option(help="Re-fetch dates already marked complete.")] = False,
+) -> None:
+    """Backfill ESPN final box scores, resumably and with polite request pacing."""
+    results = backfill_espn(start, end, force=force)
+    games = sum(result.games for result in results)
+    rows = sum(result.player_lines for result in results)
+    skipped = sum(result.skipped for result in results)
+    console.print(
+        f"[green]backfill complete[/green] dates={len(results)} skipped={skipped} "
+        f"games={games} player_lines={rows}"
     )
 
 
