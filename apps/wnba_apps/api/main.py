@@ -115,10 +115,10 @@ def console() -> HTMLResponse:
 def health() -> dict[str, object]:
     return {
         "status": "ok",
-        "phase": "1 -- data foundation",
+        "phase": "2 -- shadow forecasting",
         "analysis_only": True,
         "archiving_market_data": True,
-        "has_forecasting_models": False,
+        "has_forecasting_models": True,
         "checked_at": datetime.now(UTC),
     }
 
@@ -282,7 +282,7 @@ def status() -> dict[str, object]:
     """Honest build status. Every claim here is backed by a test that fails the build."""
     return {
         "analysis_only": True,
-        "phase": "1 -- data foundation",
+        "phase": "2 -- shadow forecasting",
         "invariants": [
             {"name": "Bitemporality on every stored fact", "enforced": True},
             {"name": "No look-ahead (point-in-time reads)", "enforced": True},
@@ -300,7 +300,7 @@ def status() -> dict[str, object]:
             {"name": "ontology YAML + drift test", "state": "built"},
             {"name": "Postgres bitemporal schema (VPS)", "state": "built"},
             {"name": "line archiver (record-only)", "state": "built -- running every 15min"},
-            {"name": "forecasting models", "state": "not started"},
+            {"name": "baseline forecasting", "state": "built -- challenger/shadow only"},
             {"name": "research agents", "state": "not started"},
             {"name": "video intelligence", "state": "not started"},
         ],
@@ -312,4 +312,37 @@ def status() -> dict[str, object]:
             "stability across rolling windows",
             "verified payout tables",
         ],
+    }
+
+
+@app.get("/api/forecasts")
+def forecasts() -> dict[str, object]:
+    """Latest shadow forecasts. They are paper decisions, never wagering instructions."""
+    try:
+        from wnba_store.db import connect
+
+        with connect() as conn, conn.cursor() as cur:
+            cur.execute(
+                """SELECT DISTINCT ON (f.quote_id) f.projection_id,p.full_name,f.prop_type,
+                          f.line,f.mean,f.median,f.stddev,f.probability_over,
+                          f.probability_under,f.projected_minutes,f.sample_size,
+                          f.data_quality_score,f.confidence,f.generated_at,f.expires_at,
+                          d.side,d.predicted_probability,d.system_recommendation
+                   FROM wnba.stat_forecasts f
+                   JOIN wnba.players p ON p.player_id=f.player_id
+                   JOIN wnba.decision_episodes d ON d.model_run_id=f.model_run_id
+                     AND d.quote_id=f.quote_id
+                   WHERE f.expires_at>now()
+                   ORDER BY f.quote_id,f.generated_at DESC"""
+            )
+            rows = [dict(row) for row in cur.fetchall()]
+    except Exception as exc:
+        return {"available": False, "reason": str(exc)[:200], "forecasts": []}
+    rows.sort(key=lambda row: float(str(row["predicted_probability"])), reverse=True)
+    return {
+        "available": True,
+        "analysis_only": True,
+        "model_stage": "challenger",
+        "validated_for_real_money": False,
+        "forecasts": rows,
     }

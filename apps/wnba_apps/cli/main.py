@@ -13,8 +13,10 @@ from typing import Annotated
 import typer
 from rich.console import Console
 from rich.table import Table
+from wnba_services.forecasting.baseline import run_baseline
 from wnba_services.ingestion.archiver import run_archiver
 from wnba_services.ingestion.espn import backfill_espn, ingest_espn_date
+from wnba_services.ingestion.identity import approve_unique_exact_names
 from wnba_services.ingestion.legacy import import_legacy_sqlite
 from wnba_store.db import connect, migrate
 
@@ -27,10 +29,16 @@ lines_app = typer.Typer(help="Market line archive.", no_args_is_help=True)
 db_app = typer.Typer(help="Database schema.", no_args_is_help=True)
 data_app = typer.Typer(help="Historical and reference data.", no_args_is_help=True)
 stats_app = typer.Typer(help="Canonical WNBA schedule and box scores.", no_args_is_help=True)
+forecast_app = typer.Typer(
+    help="Versioned, paper-only probability forecasts.", no_args_is_help=True
+)
+identity_app = typer.Typer(help="Audited cross-source identity review.", no_args_is_help=True)
 app.add_typer(lines_app, name="lines")
 app.add_typer(db_app, name="db")
 app.add_typer(data_app, name="data")
 app.add_typer(stats_app, name="stats")
+app.add_typer(forecast_app, name="forecast")
+app.add_typer(identity_app, name="identity")
 
 console = Console()
 
@@ -197,6 +205,28 @@ def lines_coverage() -> None:
             str(r["last_seen"])[:19],
         )
     console.print(table)
+
+
+@forecast_app.command("run")
+def forecast_run() -> None:
+    """Run the transparent baseline challenger against the current board."""
+    result = run_baseline()
+    console.print(
+        f"[green]forecast complete[/green] run={result.model_run_id} "
+        f"forecasts={result.forecasts} paper_episodes={result.episodes} skipped={result.skipped}"
+    )
+
+
+@identity_app.command("approve-exact")
+def identity_approve_exact(
+    verified_by: Annotated[str, typer.Option(help="Named reviewer recorded in the audit trail.")],
+) -> None:
+    """Approve only unique exact normalized-name pairs; fuzzy matches remain blocked."""
+    result = approve_unique_exact_names(verified_by=verified_by)
+    console.print(
+        f"[green]identity review complete[/green] approved={result.approved} "
+        f"ambiguous_blocked={result.ambiguous}"
+    )
 
 
 if __name__ == "__main__":

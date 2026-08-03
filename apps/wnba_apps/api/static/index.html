@@ -89,15 +89,15 @@
 <header>
   <h1>WNBA Prop Intelligence</h1>
   <span class="tag safe">Analysis only</span>
-  <span class="tag warn">Phase 1 — data foundation</span>
+  <span class="tag warn">Phase 2 — shadow forecasting</span>
   <span class="tag" id="health">connecting…</span>
 </header>
 
 <main>
   <div class="banner">
-    <b>Nothing here is a pick.</b> The archive below is real and recording, but there are no
-    forecasting models yet — so no projections and no recommendations exist. The pricing
-    section runs the real engines against <em>hand-entered</em> probabilities, not model output.
+    <b>Analysis only.</b> Forecasts below come from a transparent empirical baseline running in
+    shadow mode. They create paper decisions for calibration and review; they are not validated
+    for real-money use and this platform cannot place wagers.
     Payout tables are unverified defaults; check them against the live product before trusting
     any number.
   </div>
@@ -111,6 +111,13 @@
     </p>
     <div class="stats" id="archive-stats"></div>
     <div class="scroll"><table id="archive-table"></table></div>
+  </section>
+
+  <section>
+    <h2>Shadow forecasts <span class="tag warn">baseline challenger</span></h2>
+    <p class="muted">Probability distributions from canonical ESPN history and the live market
+      board. A minimum of 10 prior games is required. Empty is safer than fabricated certainty.</p>
+    <div class="scroll"><table id="forecast-table"><tbody><tr><td>loading…</td></tr></tbody></table></div>
   </section>
 
   <section>
@@ -238,6 +245,12 @@ api("/api/archive").then((a) => {
   $("archive-table").innerHTML =
     `<thead><tr><th>Market</th><th class="num">Snapshots</th><th class="num">Players</th></tr></thead><tbody>${rows}</tbody>`;
 }).catch((e) => { $("archive-tag").textContent = "error"; });
+
+api("/api/forecasts").then((f) => {
+  const rows = f.forecasts || [];
+  $("forecast-table").innerHTML = `<thead><tr><th>Player</th><th>Market</th><th>Line</th><th>Mean</th><th>Side</th><th>Probability</th><th>Minutes</th><th>Sample</th><th>Status</th></tr></thead><tbody>` +
+    (rows.length ? rows.map(x => `<tr><td>${x.full_name}</td><td>${x.prop_type.replaceAll('_',' ')}</td><td>${x.line}</td><td>${Number(x.mean).toFixed(1)}</td><td>${x.side}</td><td>${(100*Number(x.predicted_probability)).toFixed(1)}%</td><td>${Number(x.projected_minutes).toFixed(1)}</td><td>${x.sample_size}</td><td>${x.system_recommendation} · paper</td></tr>`).join("") : `<tr><td colspan="9">No eligible live forecasts. The board may be closed or identities may still require review.</td></tr>`) + `</tbody>`;
+}).catch(() => { $("forecast-table").innerHTML = `<tbody><tr><td>forecast service unavailable</td></tr></tbody>`; });
 
 api("/api/status").then((s) => {
   const inv = s.invariants.map((i) => `<tr><td>${i.name}</td><td class="num"><span class="pill built">enforced</span></td></tr>`).join("");
