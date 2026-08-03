@@ -115,7 +115,7 @@ def console() -> HTMLResponse:
 def health() -> dict[str, object]:
     return {
         "status": "ok",
-        "phase": "0 -- foundation",
+        "phase": "1 -- data foundation",
         "analysis_only": True,
         "archiving_market_data": True,
         "has_forecasting_models": False,
@@ -207,7 +207,7 @@ def price(request: PriceRequest) -> PriceResponse:
             "the sign of this edge depends on the correlation assumption -- unpriced, not an "
             "opportunity"
         )
-    gates.append("no ingested WNBA data: these probabilities are hand-entered, not model output")
+    gates.append("market data is live, but these probabilities are hand-entered—not model output")
 
     return PriceResponse(
         rule=_rule_view(rule),
@@ -282,7 +282,7 @@ def status() -> dict[str, object]:
     """Honest build status. Every claim here is backed by a test that fails the build."""
     return {
         "analysis_only": True,
-        "phase": "0 -- foundation",
+        "phase": "1 -- data foundation",
         "invariants": [
             {"name": "Bitemporality on every stored fact", "enforced": True},
             {"name": "No look-ahead (point-in-time reads)", "enforced": True},

@@ -4,99 +4,88 @@ A decision-support platform for WNBA player props. It is **not** a pick generato
 calibrated probability engine with an auditable evidence trail, priced against the market and
 wrapped in hard risk limits.
 
-> **Analysis only.** This system never logs into a sportsbook, never places a wager, and never
-> moves money. It produces probabilities, evidence and sizing math for a human to act on.
+> **Analysis only.** This system never logs into a sportsbook, places a wager, or moves money.
+> It produces probabilities, evidence, and sizing math for a human to evaluate.
 
 ## Design influences
 
-| Influence | What we actually take from it |
+| Influence | What we use |
 |---|---|
-| Bridgewater **PAT** | Codified analyst reasoning, explicit causal hypotheses, evidence trails, adversarial review, and a closed loop that turns every outcome into a diagnosis. |
-| Palantir **Ontology** | One canonical object/link/action model over fragmented sources; actions are first-class, audited objects. |
-| **Pydantic v2 strict** | Typed, validated contracts at every boundary. Bad data is quarantined, never silently coerced. |
-| `abdullahtarek/basketball_analysis` | A computer-vision *sensor* for features the box score cannot express. A sensor inside the system — not the system. |
+| Bridgewater PAT | Codified analyst reasoning, causal hypotheses, evidence trails, adversarial review, and a closed learning loop |
+| Palantir Ontology | One canonical object/link/action model over fragmented sources, with audited actions |
+| Pydantic v2 strict | Typed and validated contracts at every boundary; rejected data goes to quarantine |
+| `abdullahtarek/basketball_analysis` | An experimental computer-vision sensor, never a production dependency |
 
-## The seven invariants
+## Seven enforced invariants
 
-These are enforced by tests that fail the build, not by documentation nobody reads.
+1. **Bitemporality.** Facts carry both world time and system-observation time.
+2. **No look-ahead.** Historical features may use only records knowable at forecast time.
+3. **Starter status is a probability.** The WNBA does not require pre-tip lineup submission.
+4. **Strict validation.** Boundary models forbid extra fields and silent coercion.
+5. **Probability first.** Log loss, Brier score, and calibration precede profit.
+6. **Asymmetric autonomy.** Automation may reduce exposure, never expand it.
+7. **Analysis only.** No book automation, wager execution, or fund movement.
 
-1. **Bitemporality.** Every fact carries `valid_from/valid_to` (when it was true in the world) and
-   `system_from/system_to` (when we learned it). All historical reads go through `as_of()`.
-2. **No look-ahead.** `tests/leakage/` asserts every feature vector for a forecast at time *T* was
-   computable from rows with `system_from <= T`. This is what stops a backtest from being fiction.
-3. **Starter status is a probability, never a boolean.** The WNBA does not require pre-tip lineup
-   submission, so "confirmed starter" is not an available input. There is deliberately no
-   `is_starter: bool` field anywhere in the domain — the type system enforces the epistemics.
-4. **Strict validation everywhere.** `strict=True, extra="forbid", validate_assignment=True`.
-5. **Probability first, profit second.** Log loss and Brier are primary. A profit-only feedback
-   loop rewards a lucky 51% and punishes an unlucky 75%.
-6. **Asymmetric autonomy.** The system may automatically become *more* cautious — widen intervals,
-   cut stakes, disable a market. Becoming *more* aggressive always requires a human.
-7. **Analysis only.** No book automation, no wagering, no fund movement.
+These rules are backed by tests and database constraints rather than documentation alone.
 
-## Free-forever data stack
+## Data stack
 
-No paid feeds. That has one large consequence: historical two-sided prop odds are paywalled
-everywhere, so **we are our own odds archive**. The line archiver runs from day one, before any
-model exists, because every day it is off is evaluation data we can never recover.
+The project is free to operate. Historical prop prices cannot be reconstructed later, so the
+market archiver runs before any model exists.
 
 | Layer | Source |
 |---|---|
-| Historical PBP / box scores | `sportsdataverse-py` (`.wnba`), `sportsdataverse/wehoop-wnba-data` parquet releases |
-| Possession parsing | `pbpstats` |
-| Schedule, rosters, injuries, game lines | ESPN public JSON endpoints |
-| Prop lines | PrizePicks and Underdog public JSON endpoints |
-| Research agents | Claude Code skills, run locally |
+| Operational data | PostgreSQL on the VPS, schema `wnba` |
+| Market lines | Underdog public endpoint; changed source states only |
+| Historical stats to normalize | Rescued legacy SQLite plus ESPN/wehoop backfill |
+| Planned play-by-play | wehoop / SportsDataverse and pbpstats |
+| Analytics | DuckDB/Parquet where bulk matrices do not belong in PostgreSQL |
 
-Because the free market is DFS pick'em rather than two-sided sportsbook prices, there is no
-no-vig fair price to solve for. Entry expected value instead depends on the **joint** distribution
-across 2–6 correlated legs under a fixed payout table. That promotes the Monte Carlo simulator
-from optional refinement to load-bearing core, and makes correlation modeling the central edge.
-
-**Source etiquette.** The PrizePicks/Underdog endpoints are undocumented. Adapters poll at
-`WNBA_MIN_POLL_INTERVAL_SECONDS` (≥60s) from a single client with an honest user agent and back
-off on 429. This is for personal analysis. Respect the terms of any source you point it at.
+Underdog currently exposes American prices on both directions for most WNBA lines, allowing
+vig removal. PrizePicks presents bot defence to automated clients and is not accessed or worked
+around. The Underdog adapter uses an honest user agent, a minimum polling interval, and backoff.
 
 ## Layout
 
-```
-packages/     wnba_domain  wnba_ontology  wnba_store  wnba_quality
-              wnba_marketmath  wnba_sim  wnba_obs
-services/     ingestion  feature_engine  forecasting  market_engine
-              research_agents  learning_loop  monitoring  video_intelligence
-apps/         cli (primary interface)  api (FastAPI)
-ontology/     objects.yaml  links.yaml  actions.yaml  policies.yaml
-tests/        unit  integration  data_quality  leakage  backtest
+```text
+packages/       domain, ontology, store, quality, market math, simulation, observability
+services/       ingestion, feature engine, forecasting, market engine, research, monitoring
+apps/           CLI and FastAPI analyst console
+ontology/       objects, links, actions, and policies
+infrastructure/ migrations, systemd units, and backup scripts
+tests/          unit, integration, data quality, leakage, and backtest gates
 ```
 
-`services/video_intelligence/` is an isolated sandbox excluded from the uv workspace. It has its
-own dependencies and **zero production dependency** — the statistical system never imports it.
+`services/video_intelligence/` remains isolated from the production dependency graph.
 
-## Setup
+## Local setup
 
 ```bash
 uv sync --all-groups
 ```
 
-Copy `.env.example` to `.env` and fill in Supabase credentials.
+Copy `.env.example` to `.env` and set `WNBA_DATABASE_URL` for PostgreSQL.
 
 ## Common commands
 
-Run the full check suite (ruff, mypy strict, pytest, leakage and data-quality gates):
-
 ```bash
+# Full quality gate
 uv run python tasks.py check
-```
 
-Poll and archive current prop lines:
+# Apply migrations
+uv run wnba db migrate
 
-```bash
+# Poll the market once
 uv run wnba lines poll
+
+# Report archive coverage
+uv run wnba lines coverage
 ```
 
 ## Status
 
-Phase 0 — foundation. See the build plan for phase gates and the ten criteria that must all pass
-before any real-money use.
+**Phase 1—data foundation.** The PostgreSQL archive, nightly local backup, pricing libraries,
+and public console are operational. Historical normalization, baseline forecasts, and paper
+decision settlement are next. See [docs/ROADMAP.md](docs/ROADMAP.md).
 
 A profitable backtest is not evidence. It is a suspect awaiting questioning.
