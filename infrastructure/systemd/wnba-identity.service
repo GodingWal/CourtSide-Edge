@@ -1,1 +1,16 @@
+[Unit]
+Description=Merge duplicate athletes on unique exact name matches
+# Must run BEFORE role projection. A player who appears from the market feed under a fresh
+# canonical id has no box-score history, so role projection skips them, so the forecaster
+# skips them, and the board silently empties. That is exactly how tonight was lost.
+Before=wnba-roles.service
 
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/wnba/repo
+EnvironmentFile=/opt/wnba/repo/.env
+Environment=PATH=/root/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+# Only unique exact normalized-name matches are merged; anything ambiguous is counted and
+# left for a human. The attribution is honest about being a rule rather than a person.
+ExecStart=/root/.local/bin/uv run wnba identity approve-exact --verified-by automated-exact-unique-name
+SuccessExitStatus=0 1
