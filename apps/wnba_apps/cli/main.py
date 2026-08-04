@@ -29,6 +29,7 @@ from wnba_services.learning_loop.evaluation import evaluate_models
 from wnba_services.learning_loop.proposals import generate_research_proposals
 from wnba_services.learning_loop.readiness import evaluate_readiness
 from wnba_services.learning_loop.settlement import settle_paper_episodes
+from wnba_services.monitoring.liveness import run_liveness_checks
 from wnba_services.research_agents.workflow import run_projection_research
 from wnba_store.db import connect, migrate
 
@@ -54,6 +55,9 @@ roles_app = typer.Typer(help="Projected availability, starts, and minutes.", no_
 effects_app = typer.Typer(help="Shrunk teammate-absence role effects.", no_args_is_help=True)
 matchups_app = typer.Typer(help="Pace, defense, rest, and blowout context.", no_args_is_help=True)
 research_app = typer.Typer(help="Evidence-grounded DeepSeek research.", no_args_is_help=True)
+monitor_app = typer.Typer(
+    help="Pipeline liveness: did the work actually happen?", no_args_is_help=True
+)
 app.add_typer(lines_app, name="lines")
 app.add_typer(db_app, name="db")
 app.add_typer(data_app, name="data")
@@ -67,6 +71,7 @@ app.add_typer(roles_app, name="roles")
 app.add_typer(effects_app, name="effects")
 app.add_typer(matchups_app, name="matchups")
 app.add_typer(research_app, name="research")
+app.add_typer(monitor_app, name="monitor")
 
 console = Console()
 
@@ -384,3 +389,30 @@ def matchups_run() -> None:
 
 if __name__ == "__main__":
     app()
+
+
+@monitor_app.command("liveness")
+def monitor_liveness(
+    record: Annotated[bool, typer.Option(help="Write findings as data-quality incidents.")] = True,
+) -> None:
+    """Check that the pipeline produced work, not merely that it ran.
+
+    Exits non-zero when anything is failing, so a scheduler or an OnFailure handler can act
+    on it. Every failure this catches was previously invisible: the services involved all
+    exited zero while producing nothing.
+    """
+    report = run_liveness_checks(record=record)
+    if report.healthy:
+        console.print(f"[green]{report.summary()}[/green]")
+        return
+
+    console.print(f"[red]{report.summary()}[/red]")
+    for finding in report.findings:
+        colour = "red" if finding.check.blocks_recommendations else "yellow"
+        console.print(
+            f"  [{colour}]{finding.check.severity.value.upper():8}[/{colour}] "
+            f"{finding.check.code}: {finding.detail}"
+        )
+    if report.incidents_written:
+        console.print(f"  recorded {report.incidents_written} data-quality incident(s)")
+    sys.exit(1)
