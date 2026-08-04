@@ -37,4 +37,12 @@ install -m 0644 "$REPO"/infrastructure/systemd/*.timer /etc/systemd/system/
 systemctl daemon-reload
 systemctl enable --now wnba-rule-learning.timer
 systemctl restart wnba-web.service
+for _attempt in {1..15}; do
+  if curl --fail --silent --max-time 3 http://127.0.0.1:8090/api/health >/dev/null; then
+    break
+  fi
+  sleep 2
+done
+curl --fail --silent --show-error --max-time 5 \
+  http://127.0.0.1:8090/api/health >/dev/null
 /bin/bash "$REPO/infrastructure/monitor_health.sh"
