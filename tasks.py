@@ -13,7 +13,14 @@ import subprocess
 import sys
 from collections.abc import Sequence
 
+# What mypy is pointed at. Narrower than the lint surface on purpose: `research/` is exploratory
+# and the video sandbox lives outside the workspace.
 ROOT_PACKAGES = ["packages", "services/wnba_services", "apps", "tests", "tasks.py"]
+
+# What ruff is pointed at -- the whole tree, matching CI exactly. These used to differ, so
+# `tasks.py check` could pass against a repository CI would reject, which is the worst possible
+# arrangement: the local gate reports success and the remote one finds the problem.
+LINT_TARGETS = ["."]
 
 
 def _run(name: str, cmd: Sequence[str]) -> bool:
@@ -25,8 +32,8 @@ def _run(name: str, cmd: Sequence[str]) -> bool:
 
 
 def lint() -> bool:
-    return _run("ruff format", ["ruff", "format", "--check", *ROOT_PACKAGES]) & _run(
-        "ruff lint", ["ruff", "check", *ROOT_PACKAGES]
+    return _run("ruff format", ["ruff", "format", "--check", *LINT_TARGETS]) & _run(
+        "ruff lint", ["ruff", "check", *LINT_TARGETS]
     )
 
 
