@@ -25,6 +25,13 @@ systemd-run --quiet --wait --pipe --collect \
   --property="EnvironmentFile=$MIGRATE_ENV" \
   /opt/wnba/repo/.venv/bin/wnba db migrate
 
+getent group wnba >/dev/null || groupadd --system wnba
+id wnba >/dev/null 2>&1 || \
+  useradd --system --gid wnba --home-dir /var/lib/wnba --shell /usr/sbin/nologin wnba
+install -d -o wnba -g wnba -m 0750 /var/cache/wnba
+chgrp wnba "$REPO/.env"
+chmod 0640 "$REPO/.env"
+
 install -m 0644 "$REPO"/infrastructure/systemd/*.service /etc/systemd/system/
 install -m 0644 "$REPO"/infrastructure/systemd/*.timer /etc/systemd/system/
 systemctl daemon-reload
