@@ -22,6 +22,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from typing import Any
 
 from wnba_store.db import connect
 
@@ -30,6 +31,7 @@ from wnba_services.forecasting.parameters import DEFAULT_MARKET, store_fitted_pa
 from wnba_services.forecasting.scoring import COMPONENT_NAMES
 from wnba_services.forecasting.selection import EdgeShrinkage
 from wnba_services.forecasting.weights import fit_ensemble_weights
+from wnba_services.learning_loop.independence import dedupe_latest_per_market, summarise_sample
 
 __all__ = ["FittingBatch", "fit_model_parameters"]
 
@@ -37,6 +39,8 @@ __all__ = ["FittingBatch", "fit_model_parameters"]
 @dataclass(frozen=True)
 class FittingBatch:
     episodes: int
+    independent_markets: int
+    independent_games: int
     calibration_maps: int
     weight_sets: int
     shrinkage_sets: int
@@ -63,7 +67,7 @@ def fit_model_parameters(*, now: datetime | None = None) -> FittingBatch:
         cur.execute(
             """SELECT d.prop_type,d.side,o.hit,d.predicted_probability,
                       coalesce(f.probability_over_raw,f.probability_over) AS raw_over,
-                      d.episode_id
+                      d.episode_id,d.player_id,d.game_id,d.forecast_timestamp
                FROM wnba.decision_episodes d
                JOIN wnba.episode_outcomes o ON o.episode_id=d.episode_id
                LEFT JOIN wnba.stat_forecasts f
@@ -71,8 +75,13 @@ def fit_model_parameters(*, now: datetime | None = None) -> FittingBatch:
                WHERE NOT o.was_voided AND NOT o.was_push
                ORDER BY d.forecast_timestamp"""
         )
-        settled = cur.fetchall()
+        # Fitting on every revision of a market would weight that market by how many times the
+        # board happened to move, and would let a handful of heavily-re-forecast games dominate
+        # the calibration map. One row per market, the last one issued.
+        all_settled = cur.fetchall()
+        settled = dedupe_latest_per_market(all_settled)
         episodes = len(settled)
+        shape = summarise_sample(all_settled)
 
         calibration_points: dict[str, list[tuple[float, float]]] = {}
         shrinkage_points: dict[str, list[tuple[float, float]]] = {}
@@ -89,8 +98,8 @@ def fit_model_parameters(*, now: datetime | None = None) -> FittingBatch:
             shrinkage_points.setdefault(DEFAULT_MARKET, []).append(selected)
 
         cur.execute(
-            """SELECT d.prop_type,d.side,o.hit,d.episode_id,
-                      fc.component_name,fc.probability_over
+            """SELECT d.prop_type,d.side,o.hit,d.episode_id,d.player_id,d.game_id,
+                      d.forecast_timestamp,fc.component_name,fc.probability_over
                FROM wnba.forecast_components fc
                JOIN wnba.stat_forecasts f ON f.projection_id=fc.projection_id
                JOIN wnba.decision_episodes d
@@ -98,25 +107,35 @@ def fit_model_parameters(*, now: datetime | None = None) -> FittingBatch:
                JOIN wnba.episode_outcomes o ON o.episode_id=d.episode_id
                WHERE NOT o.was_voided AND NOT o.was_push"""
         )
-        by_episode: dict[str, tuple[str, float, dict[str, float]]] = {}
+        # Components arrive one row per (episode, component); fold them back into one record per
+        # episode, then collapse repeated forecasts of the same market exactly as above. Skipping
+        # the second step would let a market that happened to be re-forecast forty times cast
+        # forty votes on the weight vector.
+        by_episode: dict[str, dict[str, Any]] = {}
         for row in cur.fetchall():
             episode_id = str(row["episode_id"])
             entry = by_episode.setdefault(
                 episode_id,
-                (
-                    str(row["prop_type"]),
-                    _over_outcome(str(row["side"]), bool(row["hit"])),
-                    {},
-                ),
+                {
+                    "player_id": row["player_id"],
+                    "game_id": row["game_id"],
+                    "prop_type": row["prop_type"],
+                    "forecast_timestamp": row["forecast_timestamp"],
+                    "outcome": _over_outcome(str(row["side"]), bool(row["hit"])),
+                    "components": {},
+                },
             )
-            entry[2][str(row["component_name"])] = float(str(row["probability_over"]))
+            entry["components"][str(row["component_name"])] = float(str(row["probability_over"]))
 
         weight_points: dict[str, list[tuple[dict[str, float], float]]] = {}
-        for market, outcome, components in by_episode.values():
+        for entry in dedupe_latest_per_market(list(by_episode.values())):
+            components = entry["components"]
             if not set(COMPONENT_NAMES) <= set(components):
                 continue
-            weight_points.setdefault(market, []).append((components, outcome))
-            weight_points.setdefault(DEFAULT_MARKET, []).append((components, outcome))
+            market = str(entry["prop_type"])
+            observation = (components, float(entry["outcome"]))
+            weight_points.setdefault(market, []).append(observation)
+            weight_points.setdefault(DEFAULT_MARKET, []).append(observation)
 
         for market, points in sorted(calibration_points.items()):
             fitted = fit_calibration_map(market, points)
@@ -165,6 +184,8 @@ def fit_model_parameters(*, now: datetime | None = None) -> FittingBatch:
 
     return FittingBatch(
         episodes=episodes,
+        independent_markets=shape.markets,
+        independent_games=shape.games,
         calibration_maps=calibration_maps,
         weight_sets=weight_sets,
         shrinkage_sets=shrinkage_sets,

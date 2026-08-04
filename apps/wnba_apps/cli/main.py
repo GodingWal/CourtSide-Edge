@@ -29,6 +29,8 @@ from wnba_services.ingestion.wnba_injuries import ingest_official_injuries
 from wnba_services.learning_loop.evaluation import evaluate_models
 from wnba_services.learning_loop.proposals import generate_research_proposals
 from wnba_services.learning_loop.readiness import evaluate_readiness
+from wnba_services.learning_loop.rule_lifecycle import run_rule_backtests
+from wnba_services.learning_loop.rule_proposals import propose_from_measured_errors
 from wnba_services.learning_loop.settlement import settle_paper_episodes
 from wnba_services.monitoring.liveness import run_liveness_checks
 from wnba_services.research_agents.workflow import run_projection_research
@@ -305,12 +307,40 @@ def learning_settle() -> None:
     )
 
 
+@learning_app.command("propose-rules")
+def learning_propose_rules() -> None:
+    """Turn repeated measured errors into candidate rules and hypotheses. Nothing goes live."""
+    result = propose_from_measured_errors()
+    console.print(
+        f"[green]proposals complete[/green] categories={result.categories_reviewed} "
+        f"hypotheses={result.hypotheses_created} rules_proposed={result.rules_proposed} "
+        f"episodes_linked={result.episodes_linked}"
+    )
+
+
+@learning_app.command("backtest-rules")
+def learning_backtest_rules() -> None:
+    """Score every proposed rule against the settled record. Never activates anything."""
+    result = run_rule_backtests()
+    console.print(
+        f"[green]rule backtests complete[/green] considered={result.rules_considered} "
+        f"backtested={result.backtested} rejected={result.rejected} "
+        f"inconclusive={result.inconclusive} episodes={result.episodes}"
+    )
+    if result.awaiting_approval:
+        console.print(
+            f"[yellow]{result.awaiting_approval} rule(s) have supporting evidence and await "
+            "a named human approver; nothing activates on its own.[/yellow]"
+        )
+
+
 @learning_app.command("fit")
 def learning_fit() -> None:
     """Refit calibration maps, ensemble weights and edge shrinkage from settled episodes."""
     result = fit_model_parameters()
     console.print(
         f"[green]fitting complete[/green] episodes={result.episodes} "
+        f"markets={result.independent_markets} games={result.independent_games} "
         f"calibration={result.fitted_calibration}/{result.calibration_maps} "
         f"weights={result.fitted_weights}/{result.weight_sets} "
         f"shrinkage={result.shrinkage_sets}"

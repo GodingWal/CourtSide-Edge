@@ -12,6 +12,7 @@ from psycopg.types.json import Jsonb
 from wnba_store.db import connect
 
 from wnba_services.learning_loop.evaluation import expected_calibration_error
+from wnba_services.learning_loop.independence import dedupe_latest_per_market, summarise_sample
 
 GateStatus = Literal["pass", "provisional_pass", "pending", "fail"]
 
@@ -36,11 +37,15 @@ class ReadinessReport:
 
 def build_gate_results(decisions: list[dict[str, object]]) -> tuple[GateResult, ...]:
     """Evaluate historical replay evidence without upgrading it to live proof."""
-    recommendations = [
+    threshold_crossing = [
         row
         for row in decisions
         if max(float(str(row["probability"])), 1 - float(str(row["probability"]))) >= 0.58
     ]
+    # Five pre-tip snapshots of one market are five looks at one event. The out-of-sample count
+    # gate exists to establish that enough *events* have been forecast, so it has to count them.
+    recommendations = dedupe_latest_per_market(threshold_crossing, order_field="forecast_as_of")
+    shape = summarise_sample(threshold_crossing)
     game_count = len({str(row["game_id"]) for row in recommendations})
     player_counts = Counter(str(row["player_id"]) for row in recommendations)
     market_counts = Counter(str(row["prop_type"]) for row in recommendations)
@@ -62,12 +67,13 @@ def build_gate_results(decisions: list[dict[str, object]]) -> tuple[GateResult, 
     return (
         GateResult(
             "out_of_sample_recommendations",
-            "provisional_pass" if len(recommendations) >= 500 else "pending",
+            "provisional_pass" if shape.effective >= 500 else "pending",
             "retrospective_walk_forward",
-            float(len(recommendations)),
+            round(shape.effective, 2),
             500.0,
-            f"Deduplicated recommendations across {game_count} games; weights were inspected "
-            "after replay.",
+            f"{shape.rows} replay rows collapse to {shape.markets} independent markets across "
+            f"{game_count} games; after correcting for markets sharing a game state that is an "
+            f"effective sample of {shape.effective:.0f}. Weights were inspected after replay.",
         ),
         GateResult(
             "positive_closing_line_value",
@@ -178,8 +184,13 @@ def evaluate_readiness(*, now: datetime | None = None) -> ReadinessReport:
                FROM wnba.backtest_results r
                JOIN latest l USING (backtest_run_id)
                JOIN wnba.historical_prop_quotes q USING (historical_quote_id)
-               WHERE r.model_name='ensemble'
-               GROUP BY q.game_id,q.player_id,r.prop_type,r.snapshot_label"""
+               WHERE r.model_name=ANY(%s)
+               GROUP BY q.game_id,q.player_id,r.prop_type,r.snapshot_label""",
+            # 'ensemble' was the replay-only model that no longer exists; 'production_ensemble'
+            # is the shared scorer that replaced it. Both are accepted so a readiness evaluation
+            # run against an archived backtest still finds its rows instead of silently
+            # reporting that no recommendation has ever been made.
+            (["production_ensemble", "ensemble"],),
         )
         decisions = [dict(row) for row in cur.fetchall()]
         gates = build_gate_results(decisions)
@@ -196,6 +207,7 @@ def evaluate_readiness(*, now: datetime | None = None) -> ReadinessReport:
                     {
                         "historical_decisions": len(decisions),
                         "provisional_is_not_ready": True,
+                        "sample_shape": summarise_sample(decisions).to_payload(),
                         "gates": [asdict(gate) for gate in gates],
                     }
                 ),

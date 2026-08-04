@@ -93,7 +93,7 @@ class ForecastBatch:
     rule_firings: int = 0
 
 
-def _default_breakeven() -> float:
+def default_breakeven() -> float:
     table = underdog_payout_table(_PAYOUT_REFERENCE)
     for rule in table.rules:
         if rule.entry_type is EntryType.POWER and rule.leg_count == 2:
@@ -173,7 +173,7 @@ def run_baseline(*, now: datetime | None = None, seed: int = 20260803) -> Foreca
     run_id = uuid4()
     forecasts = episodes = skipped = candidates = firing_count = 0
     league_rates: dict[str, float] = {}
-    breakeven = _default_breakeven()
+    breakeven = default_breakeven()
 
     with connect() as conn, conn.cursor() as cur:
         cur.execute(

@@ -61,7 +61,13 @@ class LivenessReport:
     checked_at: datetime
     findings: list[Finding] = field(default_factory=list)
     incidents_written: int = 0
+    incidents_resolved: int = 0
+    incidents_refreshed: int = 0
     checks_run: int = 0
+
+    @property
+    def failing_codes(self) -> set[str]:
+        return {finding.check.code for finding in self.findings}
 
     @property
     def healthy(self) -> bool:
@@ -72,10 +78,13 @@ class LivenessReport:
         return [f for f in self.findings if f.check.blocks_recommendations]
 
     def summary(self) -> str:
+        resolved = f", {self.incidents_resolved} resolved" if self.incidents_resolved else ""
         if self.healthy:
-            return f"liveness OK ({self.checks_run} checks, nothing to report)"
+            return f"liveness OK ({self.checks_run} checks, nothing to report{resolved})"
         parts = [f"{f.check.code}({f.detail})" for f in self.findings]
-        return f"liveness {len(self.findings)}/{self.checks_run} FAILING: " + "; ".join(parts)
+        return f"liveness {len(self.findings)}/{self.checks_run} FAILING{resolved}: " + "; ".join(
+            parts
+        )
 
 
 # Each query returns problem rows with a single `detail` column. An empty result is health.
@@ -201,10 +210,21 @@ CHECKS: tuple[LivenessCheck, ...] = (
 
 
 def run_liveness_checks(database_url: str | None = None, *, record: bool = True) -> LivenessReport:
-    """Run every check and record findings as data-quality incidents.
+    """Run every check, then reconcile the incident table with what is currently true.
 
     A check that raises is itself a finding. A monitor that dies quietly on a schema change
     would reproduce the exact class of failure it exists to detect.
+
+    **Incidents have a lifecycle now.** The first version only ever inserted: while a condition
+    persisted it wrote a fresh row every fifteen minutes, and when the condition cleared it wrote
+    nothing at all -- so the incident stayed open forever. The console accumulated hundreds of
+    duplicate rows describing one problem, and permanent critical warnings for problems that had
+    been fixed weeks earlier. Both failures corrode the same thing: a dashboard that is always red
+    conveys exactly as much as one that is always green.
+
+    So each run does three things. A check that is failing and has no open incident opens one. A
+    check that is failing and already has one refreshes its detail in place. A check that is now
+    clean resolves whatever it left behind.
     """
     report = LivenessReport(checked_at=datetime.now(UTC))
 
@@ -226,9 +246,33 @@ def run_liveness_checks(database_url: str | None = None, *, record: bool = True)
                 detail = str(row.get("detail", row))
                 report.findings.append(Finding(check=check, detail=detail))
 
-        if record and report.findings:
+        if record:
             with conn.cursor() as cur:
+                # Resolve first. A check that has started passing should stop being red before
+                # anything else is written, so a run that fixes everything leaves a clean board
+                # even if a later statement fails.
+                failing = sorted(report.failing_codes)
+                cur.execute(
+                    """UPDATE wnba.dq_incidents SET resolved_at=%s
+                       WHERE resolved_at IS NULL AND code=ANY(%s)
+                         AND NOT (code = ANY(%s))""",
+                    (report.checked_at, [check.code for check in CHECKS], failing),
+                )
+                report.incidents_resolved = cur.rowcount
+
                 for finding in report.findings:
+                    detail = f"{finding.check.question} -> {finding.detail}"
+                    # One open incident per code. The detail is refreshed because the *shape* of
+                    # a persisting problem matters -- "2 games stuck" becoming "9 games stuck" is
+                    # news, and a frozen first-observed detail would hide it.
+                    cur.execute(
+                        """UPDATE wnba.dq_incidents SET detail=%s,detected_at=%s
+                           WHERE resolved_at IS NULL AND code=%s""",
+                        (detail, report.checked_at, finding.check.code),
+                    )
+                    if cur.rowcount:
+                        report.incidents_refreshed += cur.rowcount
+                        continue
                     cur.execute(
                         """INSERT INTO wnba.dq_incidents
                            (incident_id,detected_at,level,severity,code,source,detail,
@@ -241,7 +285,7 @@ def run_liveness_checks(database_url: str | None = None, *, record: bool = True)
                             finding.check.severity.value,
                             finding.check.code,
                             SourceName.DERIVED.value,
-                            f"{finding.check.question} -> {finding.detail}",
+                            detail,
                             finding.check.blocks_recommendations,
                         ),
                     )
