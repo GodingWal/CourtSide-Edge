@@ -14,6 +14,7 @@ __all__ = [
     "decimal_to_american",
     "expected_value",
     "remove_vig",
+    "remove_vig_decimal",
 ]
 
 MIN_MAGNITUDE = 100
@@ -59,6 +60,27 @@ def remove_vig(over_american: int, under_american: int) -> tuple[float, float]:
     raw_under = american_to_probability(under_american)
     total = raw_over + raw_under
     if total <= 0:
+        raise ValueError("degenerate market: implied probabilities sum to zero")
+    return raw_over / total, raw_under / total
+
+
+def remove_vig_decimal(over_decimal: float, under_decimal: float) -> tuple[float, float] | None:
+    """Fair over/under probabilities from two decimal multipliers, or ``None`` when flat.
+
+    Pick'em products quote a payout multiplier per side rather than a price. When the two sides
+    pay the same the quote is genuinely uninformative about which way the operator leans, and
+    the honest answer is to say so rather than to return ``(0.5, 0.5)`` -- a caller that cannot
+    distinguish "the market says even" from "the market says nothing" will weight a
+    non-observation as if it were evidence.
+    """
+    if over_decimal <= 0.0 or under_decimal <= 0.0:
+        raise ValueError("decimal multipliers must be positive")
+    if abs(over_decimal - under_decimal) < 1e-9:
+        return None
+    raw_over = 1.0 / over_decimal
+    raw_under = 1.0 / under_decimal
+    total = raw_over + raw_under
+    if total <= 0.0:
         raise ValueError("degenerate market: implied probabilities sum to zero")
     return raw_over / total, raw_under / total
 

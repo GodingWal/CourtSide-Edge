@@ -19,6 +19,7 @@ from wnba_services.feature_engine.roles import project_current_roles
 from wnba_services.feature_engine.teammate_effects import project_teammate_effects
 from wnba_services.forecasting.backtest import run_walk_forward_backtest
 from wnba_services.forecasting.baseline import run_baseline
+from wnba_services.forecasting.fitting import fit_model_parameters
 from wnba_services.ingestion.archiver import run_archiver
 from wnba_services.ingestion.espn import backfill_espn, ingest_espn_date
 from wnba_services.ingestion.historical_markets import normalize_historical_markets
@@ -258,7 +259,9 @@ def forecast_run() -> None:
     result = run_baseline()
     console.print(
         f"[green]forecast complete[/green] run={result.model_run_id} "
-        f"forecasts={result.forecasts} paper_episodes={result.episodes} skipped={result.skipped}"
+        f"forecasts={result.forecasts} paper_episodes={result.episodes} "
+        f"candidates={result.candidates} rule_firings={result.rule_firings} "
+        f"skipped={result.skipped}"
     )
 
 
@@ -289,11 +292,28 @@ def learning_settle() -> None:
     """Settle eligible paper episodes from canonical final box scores."""
     result = settle_paper_episodes()
     evaluation = evaluate_models()
+    # Refitting here rather than in a separate timer: settlement is the only event that adds
+    # evidence, so it is the only moment at which the fitted parameters can have changed.
+    fitted = fit_model_parameters()
     console.print(
         f"[green]settlement complete[/green] settled={result.settled} "
         f"voided={result.voided} pushed={result.pushed} unsupported={result.unsupported} "
         f"evaluations={evaluation.evaluations} attributions={evaluation.attributions} "
-        f"drift_incidents={evaluation.drift_incidents}"
+        f"drift_incidents={evaluation.drift_incidents} "
+        f"calibration_fitted={fitted.fitted_calibration}/{fitted.calibration_maps} "
+        f"weights_fitted={fitted.fitted_weights}/{fitted.weight_sets}"
+    )
+
+
+@learning_app.command("fit")
+def learning_fit() -> None:
+    """Refit calibration maps, ensemble weights and edge shrinkage from settled episodes."""
+    result = fit_model_parameters()
+    console.print(
+        f"[green]fitting complete[/green] episodes={result.episodes} "
+        f"calibration={result.fitted_calibration}/{result.calibration_maps} "
+        f"weights={result.fitted_weights}/{result.weight_sets} "
+        f"shrinkage={result.shrinkage_sets}"
     )
 
 

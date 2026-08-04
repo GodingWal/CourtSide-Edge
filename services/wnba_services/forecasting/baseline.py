@@ -1,9 +1,25 @@
-"""Transparent empirical baseline forecasts and paper-only decision episodes."""
+"""Forecasting the live board. Paper-only, and now on the same scorer the replay uses.
+
+What this module is responsible for is reading the world and writing the record. It no longer
+contains any modelling: expectations, distributions, pooling and dispersion all live in
+:mod:`wnba_services.forecasting.scoring`, which the walk-forward harness also calls. That is the
+whole point of the rewrite -- the previous version implemented one ensemble here and the replay
+implemented a different one over different components, so no backtest number ever described the
+model that actually ran.
+
+The order of operations at the end is deliberate and every step can only restrict:
+
+1. the scorer produces a raw distribution;
+2. the fitted calibration map corrects it for measured bias;
+3. active analyst rules may shrink or block it;
+4. edge shrinkage discounts what is left for regression to the mean;
+5. the gate compares the survivor against the payout table's break-even.
+
+Nothing in that chain can make a forecast more confident than the arithmetic supports.
+"""
 
 from __future__ import annotations
 
-import math
-import random
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -11,21 +27,60 @@ from typing import Any
 from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 
 from psycopg.types.json import Jsonb
+from wnba_domain.enums import EntryType, RecommendationStatus
+from wnba_marketmath.odds import remove_vig, remove_vig_decimal
+from wnba_marketmath.pickem import underdog_payout_table
 from wnba_store.db import connect
 
-from wnba_services.forecasting.ensemble import build_ensemble
+from wnba_services.forecasting.parameters import load_fitted_parameters
+from wnba_services.forecasting.rules import (
+    build_facts,
+    evaluate_rules,
+    load_rules,
+    record_firings,
+)
+from wnba_services.forecasting.scoring import (
+    SCORER_VERSION,
+    SUPPORTED_MARKETS,
+    HistoryGame,
+    MarketInputs,
+    MatchupInputs,
+    PriorSeasonRate,
+    RoleInputs,
+    ScoringInputs,
+    TeammateInputs,
+    score_prop,
+)
+from wnba_services.forecasting.selection import breakeven_probability, decide_candidate
 
-SUPPORTED = {
-    "points": ("points",),
-    "rebounds": ("rebounds_offensive", "rebounds_defensive"),
-    "assists": ("assists",),
-    "three_pointers": ("three_pointers_made",),
-    "points_rebounds_assists": ("points", "rebounds_offensive", "rebounds_defensive", "assists"),
-    "points_rebounds": ("points", "rebounds_offensive", "rebounds_defensive"),
-    "points_assists": ("points", "assists"),
-    "rebounds_assists": ("rebounds_offensive", "rebounds_defensive", "assists"),
-}
-MODEL_ID = uuid5(NAMESPACE_URL, "courtside-edge:auditable-ensemble:0.3.1")
+SEMVER = "0.4.0"
+MODEL_ID = uuid5(NAMESPACE_URL, f"courtside-edge:auditable-ensemble:{SEMVER}")
+
+# Retained for callers that imported the market map from here.
+SUPPORTED = SUPPORTED_MARKETS
+
+# Box-score fields the scorer may read. Anything absent from a row is simply absent from the
+# history game, and the opportunity/conversion component falls back accordingly.
+STAT_FIELDS: tuple[str, ...] = (
+    "points",
+    "rebounds_offensive",
+    "rebounds_defensive",
+    "assists",
+    "three_pointers_made",
+    "three_pointers_attempted",
+    "field_goals_attempted",
+    "free_throws_attempted",
+    "steals",
+    "blocks",
+    "turnovers",
+)
+
+HISTORY_GAMES = 25
+# The gate is measured against the most demanding entry shape on the board -- a two-leg power
+# play, which needs 57.7% per leg. Using the least demanding shape would let a forecast qualify
+# for an entry the analyst might never build. See PAYOUT_TABLES_ARE_UNVERIFIED: this number is
+# only as good as the bundled table, and the readiness gate for verifying it is still pending.
+_PAYOUT_REFERENCE = datetime(2026, 1, 1, tzinfo=UTC)
 
 
 @dataclass(frozen=True)
@@ -34,52 +89,81 @@ class ForecastBatch:
     forecasts: int
     episodes: int
     skipped: int
+    candidates: int = 0
+    rule_firings: int = 0
 
 
-def _weighted_mean(values: list[float]) -> float:
-    weights = list(range(1, len(values) + 1))
-    return sum(v * w for v, w in zip(values, weights, strict=True)) / sum(weights)
+def _default_breakeven() -> float:
+    table = underdog_payout_table(_PAYOUT_REFERENCE)
+    for rule in table.rules:
+        if rule.entry_type is EntryType.POWER and rule.leg_count == 2:
+            return breakeven_probability(rule)
+    raise RuntimeError("bundled payout table has no two-leg power rule")
 
 
-def _simulate(
-    rows: list[dict[str, Any]],
-    columns: tuple[str, ...],
-    seed: int,
-    *,
-    projected_minutes: float | None = None,
-    projected_minutes_std: float | None = None,
-    rate_multiplier: float = 1.0,
-) -> list[int]:
-    rng = random.Random(seed)
-    recent = rows[-20:]
-    minutes = [float(r["minutes"]) for r in recent if float(r["minutes"]) > 0]
-    expected_minutes = projected_minutes or _weighted_mean(minutes)
-    minutes_std = projected_minutes_std or max(2.0, _std(minutes))
-    rates = [
-        sum(float(r[c]) for c in columns) / float(r["minutes"])
-        for r in recent
-        if float(r["minutes"]) > 0
-    ]
-    outcomes: list[int] = []
-    for _ in range(10_000):
-        sampled_minutes = max(0.0, min(45.0, rng.gauss(expected_minutes, minutes_std)))
-        sampled_rate = max(0.0, rng.choice(rates) * rate_multiplier)
-        expectation = sampled_minutes * sampled_rate
-        # Poisson sampling preserves count support and naturally widens high-volume props.
-        limit = math.exp(-expectation)
-        k, product = 0, 1.0
-        while product > limit and k < 200:
-            k += 1
-            product *= rng.random()
-        outcomes.append(max(0, k - 1))
-    return outcomes
+def market_inputs(quote: dict[str, Any]) -> MarketInputs:
+    """Devig whatever price the source gave us, or report that it gave us none.
+
+    A flat pick'em board carries no directional information and must not be mistaken for a
+    market that says fifty-fifty; :class:`MarketInputs` distinguishes the two, and the scorer
+    falls back to a line-centred prior when the price is uninformative.
+    """
+    over_odds, under_odds = quote.get("over_american_odds"), quote.get("under_american_odds")
+    if over_odds is not None and under_odds is not None:
+        try:
+            over, under = remove_vig(int(over_odds), int(under_odds))
+        except ValueError:
+            return MarketInputs()
+        return MarketInputs(over_probability=over, under_probability=under)
+
+    over_multiplier = quote.get("over_multiplier")
+    under_multiplier = quote.get("under_multiplier")
+    if over_multiplier is None or under_multiplier is None:
+        return MarketInputs()
+    try:
+        fair = remove_vig_decimal(float(str(over_multiplier)), float(str(under_multiplier)))
+    except ValueError:
+        return MarketInputs()
+    if fair is None:
+        return MarketInputs()
+    return MarketInputs(over_probability=fair[0], under_probability=fair[1])
 
 
-def _std(values: list[float]) -> float:
-    if len(values) < 2:
-        return 0.0
-    mean = sum(values) / len(values)
-    return math.sqrt(sum((v - mean) ** 2 for v in values) / (len(values) - 1))
+def stat_history_game(row: dict[str, Any]) -> HistoryGame:
+    stats = {field: float(str(row[field])) for field in STAT_FIELDS if row.get(field) is not None}
+    return HistoryGame(
+        minutes=float(str(row["minutes"])),
+        started=bool(row.get("started", False)),
+        stats=stats,
+    )
+
+
+def _prior_season_rate(
+    cur: Any, player_id: UUID, columns: tuple[str, ...], season_year: int, before: datetime
+) -> PriorSeasonRate | None:
+    """Per-minute production in earlier seasons, as a shrinkage target for a thin current one.
+
+    Requiring ten current-season games before forecasting anything meant skipping most of the
+    board every April, when a returning player's previous season is by far the best evidence
+    available about them.
+    """
+    expression = " + ".join(f"l.{column}" for column in columns)
+    cur.execute(
+        f"""SELECT coalesce(sum({expression}),0) AS total_stat,
+                   coalesce(sum(l.minutes),0) AS total_minutes
+            FROM wnba.player_game_lines l
+            JOIN wnba.games g ON g.game_id=l.game_id
+            WHERE l.player_id=%s AND l.system_to IS NULL AND g.status='final'
+              AND g.season_year<%s AND g.scheduled_tipoff<%s AND l.minutes>0""",
+        (player_id, season_year, before),
+    )
+    row = cur.fetchone()
+    if row is None:
+        return None
+    minutes = float(str(row["total_minutes"]))
+    if minutes < 60.0:
+        return None
+    return PriorSeasonRate(rate_per_minute=float(str(row["total_stat"])) / minutes, minutes=minutes)
 
 
 def run_baseline(*, now: datetime | None = None, seed: int = 20260803) -> ForecastBatch:
@@ -87,21 +171,28 @@ def run_baseline(*, now: datetime | None = None, seed: int = 20260803) -> Foreca
     at = now or datetime.now(UTC)
     started = datetime.now(UTC)
     run_id = uuid4()
-    forecasts = episodes = skipped = 0
+    forecasts = episodes = skipped = candidates = firing_count = 0
     league_rates: dict[str, float] = {}
+    breakeven = _default_breakeven()
+
     with connect() as conn, conn.cursor() as cur:
         cur.execute(
             """INSERT INTO wnba.model_versions
                (model_version_id,name,semver,target,stage,specification)
-               VALUES (%s,'auditable-ensemble','0.3.1','multi','challenger',%s)
+               VALUES (%s,'auditable-ensemble',%s,'multi','challenger',%s)
                ON CONFLICT DO NOTHING""",
             (
                 MODEL_ID,
+                SEMVER,
                 Jsonb(
                     {
-                        "history_games": 20,
+                        "history_games": HISTORY_GAMES,
                         "simulations": 10_000,
                         "analysis_only": True,
+                        "scorer_version": SCORER_VERSION,
+                        "shared_with_backtest": True,
+                        "count_distribution": "negative_binomial",
+                        "pool": "log_linear",
                         "components": [
                             "empirical",
                             "hierarchical",
@@ -119,10 +210,16 @@ def run_baseline(*, now: datetime | None = None, seed: int = 20260803) -> Foreca
                VALUES (%s,%s,%s,%s,%s,'running','')""",
             (run_id, MODEL_ID, started, started, seed),
         )
+
+        parameters = load_fitted_parameters(cur)
+        rules = load_rules(cur)
+
         cur.execute(
             """SELECT DISTINCT ON (q.source,q.source_quote_id) q.*,
-                      coalesce(m.to_player_id,q.player_id) AS canonical_player_id
+                      coalesce(m.to_player_id,q.player_id) AS canonical_player_id,
+                      g.season_year
                FROM wnba.prop_quotes q
+               JOIN wnba.games g ON g.game_id=q.game_id
                LEFT JOIN wnba.player_merges m
                  ON m.from_player_id=q.player_id AND m.system_to IS NULL
                WHERE q.is_available AND q.game_id IS NOT NULL AND q.locks_at>%s
@@ -154,24 +251,31 @@ def run_baseline(*, now: datetime | None = None, seed: int = 20260803) -> Foreca
             (at, MODEL_ID),
         )
         quotes = cur.fetchall()
+
         for quote in quotes:
             prop = str(quote["prop_type"])
-            columns = SUPPORTED.get(prop)
+            columns = SUPPORTED_MARKETS.get(prop)
             if columns is None:
                 skipped += 1
                 continue
             player_id = UUID(str(quote["canonical_player_id"]))
+
+            # `locks_at` is nullable in the schema and is the cutoff every point-in-time query
+            # below depends on. A quote without one cannot be forecast without risking leakage.
+            locks_at = quote["locks_at"]
+            if not isinstance(locks_at, datetime):
+                skipped += 1
+                continue
+
             cur.execute(
                 """SELECT l.*,g.scheduled_tipoff FROM wnba.player_game_lines l
                    JOIN wnba.games g ON g.game_id=l.game_id
                    WHERE l.player_id=%s AND l.system_to IS NULL AND g.status='final'
-                     AND g.scheduled_tipoff<%s ORDER BY g.scheduled_tipoff DESC LIMIT 20""",
-                (player_id, quote["locks_at"]),
+                     AND g.scheduled_tipoff<%s ORDER BY g.scheduled_tipoff DESC LIMIT %s""",
+                (player_id, locks_at, HISTORY_GAMES),
             )
-            history = list(reversed(cur.fetchall()))
-            if len(history) < 10:
-                skipped += 1
-                continue
+            history = tuple(stat_history_game(dict(row)) for row in reversed(cur.fetchall()))
+
             cur.execute(
                 """SELECT designation,detail FROM wnba.injury_status
                    WHERE player_id=%s AND game_id=%s AND system_to IS NULL
@@ -180,9 +284,14 @@ def run_baseline(*, now: datetime | None = None, seed: int = 20260803) -> Foreca
             )
             injury = cur.fetchone()
             designation = "available" if injury is None else str(injury["designation"])
-            if designation == "out":
+            if designation in {"out", "season_ending", "not_with_team"}:
                 skipped += 1
                 continue
+
+            prior_season = _prior_season_rate(
+                cur, player_id, columns, int(str(quote["season_year"])), locks_at
+            )
+
             cur.execute(
                 """SELECT availability_probability,start_probability,
                           closing_lineup_probability,expected_minutes,minutes_std,
@@ -191,80 +300,95 @@ def run_baseline(*, now: datetime | None = None, seed: int = 20260803) -> Foreca
                    WHERE player_id=%s AND game_id=%s AND system_to IS NULL""",
                 (player_id, quote["game_id"]),
             )
-            role = cur.fetchone()
+            role_row = cur.fetchone()
+            role = (
+                None
+                if role_row is None
+                else RoleInputs(
+                    expected_minutes=float(str(role_row["expected_minutes"])),
+                    minutes_std=float(str(role_row["minutes_std"])),
+                    start_probability=float(str(role_row["start_probability"])),
+                    availability_probability=float(str(role_row["availability_probability"])),
+                    model_version=str(role_row["model_version"]),
+                )
+            )
+
             cur.execute(
                 """SELECT coalesce(exp(sum(ln(rate_multiplier))),1.0) AS rate_multiplier,
                           coalesce(sum(minutes_delta),0.0) AS minutes_delta,
-                          count(*) AS effects,min(confidence) AS confidence
+                          count(*) AS effects,min(confidence) AS confidence,
+                          min(method_version) AS method_version
                    FROM wnba.teammate_role_effects
                    WHERE player_id=%s AND game_id=%s AND prop_type=%s AND system_to IS NULL""",
                 (player_id, quote["game_id"], prop),
             )
-            teammate_effect = cur.fetchone()
-            team_id = history[-1]["team_id"]
-            cur.execute(
-                """SELECT expected_possessions,pace_multiplier,defense_multiplier,
-                          expected_margin,blowout_probability,team_rest_days,
-                          opponent_rest_days,confidence,method_version
-                   FROM wnba.matchup_contexts
-                   WHERE game_id=%s AND team_id=%s AND prop_type=%s AND system_to IS NULL""",
-                (quote["game_id"], team_id, prop),
-            )
-            matchup = cur.fetchone()
-            local_seed = seed ^ int(str(quote["quote_id"]).replace("-", "")[:8], 16)
-            role_minutes = None if role is None else float(str(role["expected_minutes"]))
-            role_std = None if role is None else float(str(role["minutes_std"]))
-            effect_count = int(str(teammate_effect["effects"])) if teammate_effect else 0
-            rate_multiplier = (
-                1.0
-                if not teammate_effect
-                else max(0.75, min(1.35, float(str(teammate_effect["rate_multiplier"]))))
-            )
-            if role_minutes is not None and teammate_effect:
-                role_minutes = max(
-                    0.0,
-                    min(45.0, role_minutes + float(str(teammate_effect["minutes_delta"]))),
-                )
-            if role_minutes is not None and matchup:
-                role_minutes = max(
-                    0.0,
-                    role_minutes - 1.5 * float(str(matchup["blowout_probability"])),
-                )
-            matchup_multiplier = (
-                1.0
-                if not matchup
-                else max(
-                    0.8,
-                    min(
-                        1.25,
-                        float(str(matchup["pace_multiplier"]))
-                        * float(str(matchup["defense_multiplier"])),
+            effect_row = cur.fetchone()
+            effect_count = 0 if effect_row is None else int(str(effect_row["effects"]))
+            teammate = (
+                None
+                if effect_row is None or effect_count == 0
+                else TeammateInputs(
+                    rate_multiplier=float(str(effect_row["rate_multiplier"])),
+                    minutes_delta=float(str(effect_row["minutes_delta"])),
+                    effect_count=effect_count,
+                    confidence=(
+                        None
+                        if effect_row["confidence"] is None
+                        else float(str(effect_row["confidence"]))
+                    ),
+                    method_version=(
+                        None
+                        if effect_row["method_version"] is None
+                        else str(effect_row["method_version"])
                     ),
                 )
             )
-            projected_minutes = role_minutes or _weighted_mean(
-                [float(str(r["minutes"])) for r in history]
+
+            team_id: UUID | None = None
+            cur.execute(
+                """SELECT l.team_id FROM wnba.player_game_lines l
+                   JOIN wnba.games g ON g.game_id=l.game_id
+                   WHERE l.player_id=%s AND l.system_to IS NULL
+                   ORDER BY g.scheduled_tipoff DESC LIMIT 1""",
+                (player_id,),
             )
-            combined_multiplier = rate_multiplier * matchup_multiplier
-            sims = _simulate(
-                history,
-                columns,
-                local_seed,
-                projected_minutes=role_minutes,
-                projected_minutes_std=role_std,
-                rate_multiplier=combined_multiplier,
-            )
-            line = Decimal(str(quote["line"]))
-            if prop not in league_rates:
-                stat_expression = " + ".join(f"l.{column}" for column in columns)
+            team_row = cur.fetchone()
+            if team_row is not None:
+                team_id = UUID(str(team_row["team_id"]))
+
+            matchup = None
+            if team_id is not None:
                 cur.execute(
-                    f"""SELECT coalesce(sum({stat_expression}),0) AS total_stat,
+                    """SELECT expected_possessions,pace_multiplier,defense_multiplier,
+                              expected_margin,blowout_probability,team_rest_days,
+                              opponent_rest_days,confidence,method_version
+                       FROM wnba.matchup_contexts
+                       WHERE game_id=%s AND team_id=%s AND prop_type=%s AND system_to IS NULL""",
+                    (quote["game_id"], team_id, prop),
+                )
+                matchup_row = cur.fetchone()
+                if matchup_row is not None:
+                    matchup = MatchupInputs(
+                        pace_multiplier=float(str(matchup_row["pace_multiplier"])),
+                        defense_multiplier=float(str(matchup_row["defense_multiplier"])),
+                        blowout_probability=float(str(matchup_row["blowout_probability"])),
+                        expected_possessions=float(str(matchup_row["expected_possessions"])),
+                        expected_margin=float(str(matchup_row["expected_margin"])),
+                        team_rest_days=float(str(matchup_row["team_rest_days"])),
+                        opponent_rest_days=float(str(matchup_row["opponent_rest_days"])),
+                        method_version=str(matchup_row["method_version"]),
+                    )
+
+            if prop not in league_rates:
+                expression = " + ".join(f"l.{column}" for column in columns)
+                cur.execute(
+                    f"""SELECT coalesce(sum({expression}),0) AS total_stat,
                                coalesce(sum(l.minutes),0) AS total_minutes
                         FROM wnba.player_game_lines l
                         JOIN wnba.games g ON g.game_id=l.game_id
                         WHERE l.system_to IS NULL AND g.status='final'
                           AND g.scheduled_tipoff<%s AND l.minutes>0""",
-                    (quote["locks_at"],),
+                    (locks_at,),
                 )
                 league = cur.fetchone()
                 if league is None:
@@ -272,29 +396,69 @@ def run_baseline(*, now: datetime | None = None, seed: int = 20260803) -> Foreca
                 league_rates[prop] = float(str(league["total_stat"])) / max(
                     1.0, float(str(league["total_minutes"]))
                 )
-            ensemble = build_ensemble(
-                outcomes=sims,
+
+            local_seed = seed ^ int(str(quote["quote_id"]).replace("-", "")[:8], 16)
+            inputs = ScoringInputs(
+                prop_type=prop,
+                line=Decimal(str(quote["line"])),
                 history=history,
-                columns=columns,
-                expected_minutes=projected_minutes,
-                rate_multiplier=combined_multiplier,
                 league_rate_per_minute=league_rates[prop],
-                line=line,
+                seed=local_seed,
+                injury_designation=designation,
+                role=role,
+                teammate=teammate,
+                matchup=matchup,
+                market=market_inputs(dict(quote)),
+                prior_season=prior_season,
+                weights=parameters.weights_for(prop),
+                calibration=parameters.calibration_for(prop),
             )
-            over, push, under = ensemble.over, ensemble.push, ensemble.under
-            mean = ensemble.mean
-            quality = min(1.0, 0.7 + len(history) / 100)
-            confidence = min(
-                0.75,
-                quality
-                * (1.0 - min(0.5, ensemble.stddev / max(1.0, mean) / 2))
-                * (1.0 - min(0.5, ensemble.disagreement * 2)),
+            if not inputs.has_sufficient_history:
+                skipped += 1
+                continue
+
+            forecast = score_prop(inputs)
+            adjustments = forecast.adjustments
+            projected_minutes = adjustments.expected_minutes
+
+            side = "over" if forecast.calibrated_over >= forecast.calibrated_under else "under"
+            selected = max(forecast.calibrated_over, forecast.calibrated_under)
+
+            facts = build_facts(
+                predicted_probability=selected,
+                confidence=selected,
+                model_disagreement=forecast.disagreement,
+                data_quality_score=forecast.data_quality_score,
+                projected_minutes=projected_minutes,
+                minutes_std=adjustments.minutes_std,
+                line=float(str(quote["line"])),
+                prop_type=prop,
+                source=str(quote["source"]),
+                side=side,
+                injury_designation=designation,
+                teammate_effect_count=effect_count,
+                availability_probability=(None if role is None else role.availability_probability),
+                start_probability=adjustments.start_probability,
             )
-            if designation in {"questionable", "doubtful", "unknown"}:
-                confidence *= 0.7
-            elif designation == "probable":
-                confidence *= 0.9
-            feature_id, projection_id = uuid4(), uuid4()
+            rule_outcome = evaluate_rules(rules, facts, selected)
+
+            decision = decide_candidate(
+                over_probability=(
+                    rule_outcome.probability if side == "over" else 1.0 - rule_outcome.probability
+                ),
+                under_probability=(
+                    rule_outcome.probability if side == "under" else 1.0 - rule_outcome.probability
+                ),
+                shrinkage=parameters.shrinkage_for(prop),
+                breakeven=breakeven,
+                quality=forecast.data_quality_score,
+                disagreement=forecast.disagreement,
+                injury_designation=designation,
+                rule_blocked=rule_outcome.blocked,
+                rule_reason="; ".join(rule_outcome.block_reasons),
+            )
+
+            feature_id, projection_id, episode_id = uuid4(), uuid4(), uuid4()
             cur.execute(
                 """INSERT INTO wnba.feature_snapshots
                    (feature_snapshot_id,player_id,game_id,as_of,features,source_line_ids)
@@ -306,47 +470,36 @@ def run_baseline(*, now: datetime | None = None, seed: int = 20260803) -> Foreca
                     at,
                     Jsonb(
                         {
-                            "history_games": len(history),
-                            "expected_minutes": projected_minutes,
-                            "columns": columns,
+                            **forecast.diagnostics,
                             "injury_designation": designation,
                             "injury_detail": None if injury is None else injury["detail"],
-                            "role_model": None if role is None else role["model_version"],
-                            "start_probability": None
-                            if role is None
-                            else role["start_probability"],
-                            "closing_lineup_probability": None
-                            if role is None
-                            else role["closing_lineup_probability"],
+                            "role_model": None if role is None else role.model_version,
                             "teammate_effect_count": effect_count,
-                            "teammate_rate_multiplier": rate_multiplier,
-                            "teammate_effect_confidence": None
-                            if not teammate_effect
-                            else teammate_effect["confidence"],
-                            "matchup_model": None if not matchup else matchup["method_version"],
-                            "expected_possessions": None
-                            if not matchup
-                            else matchup["expected_possessions"],
-                            "pace_multiplier": None if not matchup else matchup["pace_multiplier"],
-                            "defense_multiplier": None
-                            if not matchup
-                            else matchup["defense_multiplier"],
-                            "expected_margin": None if not matchup else matchup["expected_margin"],
-                            "blowout_probability": None
-                            if not matchup
-                            else matchup["blowout_probability"],
-                            "team_rest_days": None if not matchup else matchup["team_rest_days"],
-                            "opponent_rest_days": None
-                            if not matchup
-                            else matchup["opponent_rest_days"],
+                            "teammate_method": None
+                            if teammate is None
+                            else teammate.method_version,
+                            "matchup_model": None if matchup is None else matchup.method_version,
+                            "expected_possessions": (
+                                None if matchup is None else matchup.expected_possessions
+                            ),
+                            "expected_margin": None if matchup is None else matchup.expected_margin,
+                            "team_rest_days": None if matchup is None else matchup.team_rest_days,
+                            "opponent_rest_days": (
+                                None if matchup is None else matchup.opponent_rest_days
+                            ),
+                            "rules_evaluated": len(rules),
+                            "rules_explanation": rule_outcome.explain(),
+                            "decision_reason": decision.reason,
+                            "breakeven_probability": breakeven,
                         }
                     ),
-                    [r["line_id"] for r in history],
+                    [],
                 ),
             )
+
             distribution = {
                 str(value): probability
-                for value, probability in enumerate(ensemble.pmf)
+                for value, probability in enumerate(forecast.pmf)
                 if probability > 0
             }
             cur.execute(
@@ -354,8 +507,10 @@ def run_baseline(*, now: datetime | None = None, seed: int = 20260803) -> Foreca
                    (projection_id,model_run_id,feature_snapshot_id,quote_id,player_id,game_id,
                     prop_type,line,mean,median,stddev,probability_over,probability_push,
                     probability_under,projected_minutes,sample_size,data_quality_score,confidence,
-                    distribution,generated_at,expires_at,is_shadow)
-                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,true)""",
+                    distribution,generated_at,expires_at,is_shadow,probability_over_raw,
+                    dispersion,scorer_version)
+                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
+                           true,%s,%s,%s)""",
                 (
                     projection_id,
                     run_id,
@@ -364,23 +519,26 @@ def run_baseline(*, now: datetime | None = None, seed: int = 20260803) -> Foreca
                     player_id,
                     quote["game_id"],
                     prop,
-                    line,
-                    mean,
-                    ensemble.median,
-                    ensemble.stddev,
-                    over,
-                    push,
-                    under,
+                    Decimal(str(quote["line"])),
+                    forecast.mean,
+                    forecast.median,
+                    forecast.stddev,
+                    forecast.calibrated_over,
+                    forecast.push,
+                    forecast.calibrated_under,
                     projected_minutes,
                     len(history),
-                    quality,
-                    confidence,
+                    forecast.data_quality_score,
+                    selected,
                     Jsonb(distribution),
                     at,
-                    quote["locks_at"],
+                    locks_at,
+                    forecast.over,
+                    forecast.dispersion,
+                    SCORER_VERSION,
                 ),
             )
-            for component in ensemble.components:
+            for component in forecast.components:
                 cur.execute(
                     """INSERT INTO wnba.forecast_components
                        (component_id,projection_id,component_name,component_version,weight,
@@ -405,50 +563,56 @@ def run_baseline(*, now: datetime | None = None, seed: int = 20260803) -> Foreca
                         ),
                     ),
                 )
-            side, probability = ("over", over) if over >= under else ("under", under)
-            status = (
-                "candidate"
-                if probability >= 0.58 and quality >= 0.85 and ensemble.disagreement <= 0.12
-                else "declined_no_edge"
-            )
-            if designation in {"questionable", "doubtful", "unknown"}:
-                status = "blocked_by_skeptic"
+
             cur.execute(
                 """INSERT INTO wnba.decision_episodes
                    (episode_id,forecast_timestamp,player_id,game_id,prop_type,side,line,source,
                     quote_id,multiplier,projected_mean,projected_median,predicted_probability,
                     projected_minutes,confidence,data_quality_score,model_disagreement,
-                    model_version_ids,model_run_id,feature_snapshot_id,system_recommendation,is_paper)
-                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,1,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,true)""",
+                    model_version_ids,model_run_id,feature_snapshot_id,system_recommendation,
+                    is_paper,shrunk_probability,breakeven_probability,decision_reason)
+                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,1,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
+                           true,%s,%s,%s)""",
                 (
-                    uuid4(),
+                    episode_id,
                     at,
                     player_id,
                     quote["game_id"],
                     prop,
-                    side,
-                    line,
+                    decision.side,
+                    Decimal(str(quote["line"])),
                     quote["source"],
                     quote["quote_id"],
-                    mean,
-                    ensemble.median,
-                    probability,
+                    forecast.mean,
+                    forecast.median,
+                    decision.raw_probability,
                     projected_minutes,
-                    confidence,
-                    quality,
-                    ensemble.disagreement,
+                    decision.shrunk_probability,
+                    forecast.data_quality_score,
+                    forecast.disagreement,
                     [MODEL_ID],
                     run_id,
                     feature_id,
-                    status,
+                    decision.status.value,
+                    decision.shrunk_probability,
+                    breakeven,
+                    decision.reason,
                 ),
             )
+            firing_count += record_firings(cur, episode_id, rule_outcome.firings, at=at)
+
             forecasts += 1
             episodes += 1
+            candidates += int(decision.status is RecommendationStatus.CANDIDATE)
+
         completed = datetime.now(UTC)
         cur.execute(
             """UPDATE wnba.model_runs SET completed_at=%s,status='complete',detail=%s
                WHERE model_run_id=%s""",
-            (completed, f"forecasts={forecasts};skipped={skipped}", run_id),
+            (
+                completed,
+                f"forecasts={forecasts};candidates={candidates};skipped={skipped}",
+                run_id,
+            ),
         )
-    return ForecastBatch(run_id, forecasts, episodes, skipped)
+    return ForecastBatch(run_id, forecasts, episodes, skipped, candidates, firing_count)
