@@ -39,6 +39,47 @@ class SettlementBatch:
     unsupported: int
 
 
+@dataclass(frozen=True)
+class Resolution:
+    """How one forecast resolved against reality."""
+
+    voided: bool
+    pushed: bool
+    hit: bool
+
+    @property
+    def is_scoreable(self) -> bool:
+        """Only a resolved win/loss carries information about forecast quality.
+
+        Voids and pushes are excluded from Brier and log loss entirely. Scoring a void as a
+        loss would punish the model for a coach's rotation decision, and scoring a push as
+        either outcome invents information that does not exist.
+        """
+        return not self.voided and not self.pushed
+
+
+def resolve_outcome(
+    *, side: str, actual: float, forecast_line: float, minutes: float | None
+) -> Resolution:
+    """Decide void / push / hit for a single settled forecast.
+
+    Extracted as a pure function because everything the platform concludes -- calibration,
+    readiness, model evaluation, error attribution -- sits downstream of this decision. A sign
+    error or an inverted comparison here would corrupt every one of them while continuing to
+    look entirely plausible.
+
+    A player who did not appear (no box-score row, or zero minutes) **voids**. That is not the
+    same as losing: the forecast was never given a chance to be right or wrong, and counting
+    it as a loss would blame the model for a scratch it could not have known about.
+    """
+    if minutes is None or minutes == 0.0:
+        return Resolution(voided=True, pushed=False, hit=False)
+    if actual == forecast_line:
+        return Resolution(voided=False, pushed=True, hit=False)
+    beat_the_line = actual > forecast_line if side == "over" else actual < forecast_line
+    return Resolution(voided=False, pushed=False, hit=beat_the_line)
+
+
 def actual_stat(line: dict[str, Any], prop_type: str) -> float:
     columns = STAT_COLUMNS.get(prop_type)
     if columns is None:
@@ -75,19 +116,14 @@ def settle_paper_episodes(*, now: datetime | None = None) -> SettlementBatch:
                 (episode["player_id"], episode["game_id"]),
             )
             line = cur.fetchone()
-            is_void = line is None or float(str(line["minutes"])) == 0.0
             value = 0.0 if line is None else actual_stat(line, str(episode["prop_type"]))
-            forecast_line = float(str(episode["line"]))
-            is_push = not is_void and value == forecast_line
-            side = str(episode["side"])
-            hit = (
-                not is_void
-                and not is_push
-                and (
-                    (side == "over" and value > forecast_line)
-                    or (side == "under" and value < forecast_line)
-                )
+            resolution = resolve_outcome(
+                side=str(episode["side"]),
+                actual=value,
+                forecast_line=float(str(episode["line"])),
+                minutes=None if line is None else float(str(line["minutes"])),
             )
+            is_void, is_push, hit = resolution.voided, resolution.pushed, resolution.hit
             cur.execute(
                 """SELECT line,coalesce(over_multiplier,under_multiplier) AS multiplier
                    FROM wnba.prop_quotes
