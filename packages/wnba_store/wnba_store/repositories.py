@@ -53,16 +53,51 @@ _TEAM_ZONE_BY_ABBREVIATION: dict[str, str] = {
 }
 
 
+# Sources spell the same franchise differently: Underdog says LVA, ESPN says LV. Looking a
+# team up by raw abbreviation therefore mints a duplicate franchise -- which is how three
+# stub teams (LVA/NYL/GSV, each with full_name equal to its abbreviation) came to exist
+# alongside the real ones, splitting one club's identity across two UUIDs.
+#
+# The canonical spelling is ESPN's, because that is where the actual game history lives.
+_CANONICAL_ABBREVIATION: dict[str, str] = {
+    "LVA": "LV",
+    "NYL": "NY",
+    "GSV": "GS",
+    "WAS": "WSH",
+    "LAS": "LA",
+    "LAX": "LA",
+    "PHO": "PHX",
+    "CONN": "CON",
+}
+
+
+def canonical_team_abbreviation(abbreviation: str) -> str:
+    """Fold a source's spelling onto the canonical one."""
+    code = abbreviation.upper().strip()
+    return _CANONICAL_ABBREVIATION.get(code, code)
+
+
 def _register_market_team(
     conn: psycopg.Connection[Any], *, source: SourceName, abbreviation: str, observed_at: datetime
 ) -> UUID:
-    code = abbreviation.upper()
-    zone = _TEAM_ZONE_BY_ABBREVIATION.get(code)
+    raw = abbreviation.upper().strip()
+    code = canonical_team_abbreviation(raw)
+    zone = _TEAM_ZONE_BY_ABBREVIATION.get(code) or _TEAM_ZONE_BY_ABBREVIATION.get(raw)
     if zone is None:
-        raise ValueError(f"unknown market team abbreviation {code!r}")
+        raise ValueError(f"unknown market team abbreviation {raw!r}")
     with conn.cursor() as cur:
-        cur.execute("SELECT team_id FROM wnba.teams WHERE abbreviation=%s", (code,))
+        # Resolve through an existing alias binding first. The alias table was already being
+        # written here but never read, so the one structure that could have prevented the
+        # duplicate was being maintained and ignored.
+        cur.execute(
+            """SELECT team_id FROM wnba.team_aliases
+               WHERE source=%s AND source_team_id=%s AND system_to IS NULL LIMIT 1""",
+            (source.value, raw),
+        )
         existing = cur.fetchone()
+        if existing is None:
+            cur.execute("SELECT team_id FROM wnba.teams WHERE abbreviation=%s", (code,))
+            existing = cur.fetchone()
         team_id = (
             UUID(str(existing["team_id"]))
             if existing
@@ -74,12 +109,15 @@ def _register_market_team(
                    VALUES (%s,%s,%s,%s,%s)""",
                 (team_id, code, code, code, zone),
             )
+        # Record the binding under the spelling the SOURCE used, not the canonical one --
+        # that is the key the resolver above looks up, and storing the canonical form here
+        # would leave the alias permanently unable to match its own source.
         cur.execute(
             """INSERT INTO wnba.team_aliases
                (alias_id,team_id,source,source_team_id,source_display_name,
                 valid_from,system_from)
                VALUES (%s,%s,%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING""",
-            (uuid4(), team_id, source.value, code, code, observed_at, observed_at),
+            (uuid4(), team_id, source.value, raw, raw, observed_at, observed_at),
         )
     return team_id
 
