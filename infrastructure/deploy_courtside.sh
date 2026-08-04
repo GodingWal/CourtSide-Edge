@@ -14,8 +14,12 @@ if [[ ! -x "$UV_BIN" ]]; then
 fi
 "$UV_BIN" sync --frozen
 
+MIGRATE_ENV=${MIGRATE_ENV:-$REPO/.env.migrate}
+if [[ ! -f "$MIGRATE_ENV" ]]; then
+  MIGRATE_ENV="$REPO/.env"
+fi
 set -a
-. "$REPO/.env.migrate"
+. "$MIGRATE_ENV"
 set +a
 /opt/wnba/repo/.venv/bin/wnba db migrate
 
