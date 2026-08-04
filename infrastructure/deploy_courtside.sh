@@ -7,7 +7,12 @@ cd "$REPO"
 /bin/bash "$REPO/infrastructure/backup_postgres.sh"
 git fetch origin main
 git merge --ff-only origin/main
-/usr/local/bin/uv sync --frozen
+UV_BIN=${UV_BIN:-/root/.local/bin/uv}
+if [[ ! -x "$UV_BIN" ]]; then
+  echo "uv executable not found at $UV_BIN; set UV_BIN to its absolute path" >&2
+  exit 1
+fi
+"$UV_BIN" sync --frozen
 
 set -a
 . "$REPO/.env.migrate"
