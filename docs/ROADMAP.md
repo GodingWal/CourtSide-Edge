@@ -30,6 +30,7 @@ operational. Automated wager execution remains permanently out of scope.
 | Incident lifecycle | Complete | Cleared conditions resolve; persisting ones refresh |
 | Cross-source consensus | Built, one source live | Consensus, dispersion, best price, closing line |
 | End-to-end pipeline tests | Complete | Quote -> forecast -> decision -> settlement |
+| Champion/challenger | Two families, shadow-ready | Hierarchical Bayes and state-space role models; promotion is human-only |
 | Video intelligence | Not started | Experimental track remains isolated |
 
 ## Critical path
@@ -60,6 +61,11 @@ Status: the replay and the live board now share one scorer, so this comparison f
 the deployed model. The comparison itself has not been re-run since the change, and the prior
 0.3.1 figures were withdrawn rather than carried forward -- they described a replay-only ensemble
 that shared a single component with production.
+
+The replay now also scores both challenger families on the same snapshots, so the model
+comparison on the Validation page shows champion, naive baselines and challengers side by side.
+That is fitted-period evidence about historical markets, and it is labelled as such: it is not
+the live shadow record and the two sample counts are never added together.
 
 ### 3. Produce paper decisions and settle them
 
@@ -103,9 +109,16 @@ makes that call, closing-line value stays a pending readiness gate.
   rules in the closed vocabulary, and every proposed rule is replayed against the settled record
   to produce the evidence the schema demands. Activation requires the dedicated CLI command and
   a named human; no scheduled job or research-agent path can activate a rule.
-- Champion/challenger *experiments* remain unimplemented, and deliberately so: an experiment row
-  requires two model versions to compare and only one exists. Filling the table with a synthetic
-  challenger would satisfy the schema and teach nothing.
+- Champion/challenger experiments are implemented. What was blocking them was never the schema:
+  an experiment row requires two model versions and only one existed, and a synthetic challenger
+  wrapping the same five components would have satisfied the table while teaching nothing. Two
+  genuinely different families now exist -- a conjugate Gamma-Poisson model that carries its
+  posterior variance into the forecast, and a local-level state-space model whose gain adapts to
+  observed role change -- and both run in live shadow from the same point-in-time inputs the
+  champion reads. They are scored paired on identical episodes, deduplicated to one row per
+  market, gated on the effective sample after clustering, and checked for subgroup degradation.
+  The evaluation reaches a verdict and stops; promotion needs a named human, and the database
+  rejects a promotion without one. A gradient-boosted family remains unbuilt rather than stubbed.
 
 ### 6. Add video intelligence as an experimental sensor
 

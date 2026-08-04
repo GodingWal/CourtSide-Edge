@@ -52,6 +52,10 @@ from wnba_services.forecasting.scoring import (
     score_prop,
 )
 from wnba_services.forecasting.selection import breakeven_probability, decide_candidate
+from wnba_services.learning_loop.experiments import (
+    record_shadow_predictions,
+    running_experiments,
+)
 
 SEMVER = "0.4.0"
 MODEL_ID = uuid5(NAMESPACE_URL, f"courtside-edge:auditable-ensemble:{SEMVER}")
@@ -179,7 +183,7 @@ def run_baseline(*, now: datetime | None = None, seed: int = 20260803) -> Foreca
         cur.execute(
             """INSERT INTO wnba.model_versions
                (model_version_id,name,semver,target,stage,specification)
-               VALUES (%s,'auditable-ensemble',%s,'multi','challenger',%s)
+               VALUES (%s,'auditable-ensemble',%s,'multi','champion',%s)
                ON CONFLICT DO NOTHING""",
             (
                 MODEL_ID,
@@ -213,6 +217,11 @@ def run_baseline(*, now: datetime | None = None, seed: int = 20260803) -> Foreca
 
         parameters = load_fitted_parameters(cur)
         rules = load_rules(cur)
+        # Challengers with an open experiment score the same board from the same inputs. They
+        # write to `challenger_predictions` and to nothing else: no rule reads them, no decision
+        # consults them, and the recommendation below would be byte-identical if this list were
+        # empty. Shadow means shadow.
+        experiments = running_experiments(cur)
 
         cur.execute(
             """SELECT DISTINCT ON (q.source,q.source_quote_id) q.*,
@@ -600,6 +609,15 @@ def run_baseline(*, now: datetime | None = None, seed: int = 20260803) -> Foreca
                 ),
             )
             firing_count += record_firings(cur, episode_id, rule_outcome.firings, at=at)
+            if experiments:
+                record_shadow_predictions(
+                    cur,
+                    experiments,
+                    episode_id=episode_id,
+                    inputs=inputs,
+                    side=decision.side,
+                    at=at,
+                )
 
             forecasts += 1
             episodes += 1

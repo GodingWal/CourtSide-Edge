@@ -19,6 +19,7 @@ from wnba_services.feature_engine.roles import project_current_roles
 from wnba_services.feature_engine.teammate_effects import project_teammate_effects
 from wnba_services.forecasting.backtest import run_walk_forward_backtest
 from wnba_services.forecasting.baseline import run_baseline
+from wnba_services.forecasting.challengers import challenger_names
 from wnba_services.forecasting.fitting import fit_model_parameters
 from wnba_services.ingestion.archiver import run_archiver
 from wnba_services.ingestion.espn import backfill_espn, ingest_espn_date
@@ -27,6 +28,15 @@ from wnba_services.ingestion.identity import approve_unique_exact_names
 from wnba_services.ingestion.legacy import import_legacy_sqlite
 from wnba_services.ingestion.wnba_injuries import ingest_official_injuries
 from wnba_services.learning_loop.evaluation import evaluate_models
+from wnba_services.learning_loop.experiments import (
+    MINIMUM_INDEPENDENT_SAMPLE,
+    abandon_experiment,
+    evaluate_experiments,
+    list_experiments,
+    open_experiment,
+    promote_challenger,
+    rollback_promotion,
+)
 from wnba_services.learning_loop.proposals import generate_research_proposals
 from wnba_services.learning_loop.readiness import evaluate_readiness
 from wnba_services.learning_loop.rule_lifecycle import approve_rule, retire_rule, run_rule_backtests
@@ -53,6 +63,9 @@ identity_app = typer.Typer(help="Audited cross-source identity review.", no_args
 learning_app = typer.Typer(
     help="Paper settlement, scoring, and learning loop.", no_args_is_help=True
 )
+experiments_app = typer.Typer(
+    help="Champion/challenger experiments. Promotion is a named human act.", no_args_is_help=True
+)
 injuries_app = typer.Typer(help="Official bitemporal WNBA injury reports.", no_args_is_help=True)
 roles_app = typer.Typer(help="Projected availability, starts, and minutes.", no_args_is_help=True)
 effects_app = typer.Typer(help="Shrunk teammate-absence role effects.", no_args_is_help=True)
@@ -69,6 +82,7 @@ app.add_typer(forecast_app, name="forecast")
 app.add_typer(backtest_app, name="backtest")
 app.add_typer(identity_app, name="identity")
 app.add_typer(learning_app, name="learning")
+learning_app.add_typer(experiments_app, name="experiments")
 app.add_typer(injuries_app, name="injuries")
 app.add_typer(roles_app, name="roles")
 app.add_typer(effects_app, name="effects")
@@ -391,6 +405,108 @@ def learning_propose() -> None:
     console.print(
         f"[green]proposal review complete[/green] proposed={result.proposed} "
         f"categories_reviewed={result.categories_reviewed}"
+    )
+
+
+@experiments_app.command("list")
+def experiments_list() -> None:
+    """Show every champion/challenger experiment and what it has measured so far."""
+    for row in list_experiments():
+        console.print(
+            f"  {row['status']:11} {row['challenger_name'] or '-':20} "
+            f"verdict={row['verdict'] or 'pending':22} "
+            f"markets={row['independent_sample_size']}/{row['minimum_sample']} "
+            f"id={row['experiment_id']}"
+        )
+    console.print(f"[dim]known challengers: {', '.join(challenger_names())}[/dim]")
+
+
+@experiments_app.command("open")
+def experiments_open(
+    challenger: Annotated[str, typer.Argument(help="Challenger model family name.")],
+    opened_by: Annotated[str, typer.Option(help="Named human opening the experiment.")],
+    primary_metric: Annotated[
+        str, typer.Option(help="log_loss, brier, mae or line_value.")
+    ] = "log_loss",
+    minimum_sample: Annotated[
+        int, typer.Option(help="Independent markets required before promotion is considered.")
+    ] = MINIMUM_INDEPENDENT_SAMPLE,
+) -> None:
+    """Start a live shadow comparison. The challenger reaches no recommendation."""
+    experiment_id = open_experiment(
+        challenger,
+        opened_by=opened_by,
+        primary_metric=primary_metric,
+        minimum_sample=minimum_sample,
+    )
+    console.print(
+        f"[green]experiment open[/green] id={experiment_id} challenger={challenger} "
+        f"gate={minimum_sample} independent markets"
+    )
+
+
+@experiments_app.command("evaluate")
+def experiments_evaluate() -> None:
+    """Score open experiments against settled outcomes. Promotes nothing."""
+    evaluations = evaluate_experiments()
+    if not evaluations:
+        console.print("[yellow]no open experiments[/yellow]")
+        return
+    for result in evaluations:
+        champion = result.champion.log_loss
+        challenger = result.challenger.log_loss
+        console.print(
+            f"  {result.challenger_name:20} verdict={result.verdict:22} "
+            f"markets={result.independent_sample_size} "
+            f"champion_log_loss={'-' if champion is None else f'{champion:.4f}'} "
+            f"challenger_log_loss={'-' if challenger is None else f'{challenger:.4f}'}"
+        )
+        for group in result.subgroups:
+            if group["degraded"]:
+                console.print(
+                    f"    [red]degraded[/red] {group['dimension']}={group['value']} "
+                    f"n={group['sample_size']} gain={group['log_loss_gain']}"
+                )
+    console.print("[dim]promotion requires `wnba learning experiments promote`.[/dim]")
+
+
+@experiments_app.command("promote")
+def experiments_promote(
+    experiment_id: Annotated[str, typer.Argument(help="Evaluated experiment UUID.")],
+    approved_by: Annotated[str, typer.Option(help="Named human approver, stored permanently.")],
+    reason: Annotated[str, typer.Option(help="Why the evidence justifies replacing the champion.")],
+) -> None:
+    """Replace the champion with a challenger. Never called by automation."""
+    result = promote_challenger(UUID(experiment_id), approved_by=approved_by, reason=reason)
+    console.print(
+        f"[green]challenger promoted[/green] {result.challenger_name} "
+        f"approved_by={result.actor} at={result.changed_at.isoformat()}"
+    )
+
+
+@experiments_app.command("rollback")
+def experiments_rollback(
+    experiment_id: Annotated[str, typer.Argument(help="Promoted experiment UUID.")],
+    rolled_back_by: Annotated[str, typer.Option(help="Named human rolling the promotion back.")],
+    reason: Annotated[str, typer.Option(help="Why the promoted challenger is being withdrawn.")],
+) -> None:
+    """Restore the previous champion, keeping the promotion in the record."""
+    result = rollback_promotion(UUID(experiment_id), rolled_back_by=rolled_back_by, reason=reason)
+    console.print(
+        f"[yellow]promotion rolled back[/yellow] {result.challenger_name} by={result.actor}"
+    )
+
+
+@experiments_app.command("abandon")
+def experiments_abandon(
+    experiment_id: Annotated[str, typer.Argument(help="Running experiment UUID.")],
+    actor: Annotated[str, typer.Option(help="Named human closing the experiment.")],
+    reason: Annotated[str, typer.Option(help="Why the experiment is being stopped.")],
+) -> None:
+    """Stop collecting shadow predictions without reaching a verdict."""
+    result = abandon_experiment(UUID(experiment_id), actor=actor, reason=reason)
+    console.print(
+        f"[yellow]experiment abandoned[/yellow] {result.challenger_name} by={result.actor}"
     )
 
 

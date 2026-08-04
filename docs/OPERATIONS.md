@@ -27,6 +27,31 @@ other route requires the owner credential.
 - DeepSeek failure: forecasts continue; research fails closed and may be retried manually.
 - Disk above 80%: inspect PostgreSQL, Docker and backup growth before deleting anything.
 
+## Champion/challenger experiments
+
+Opening an experiment makes the live forecast run also score the board with that challenger and
+write the result to `wnba.challenger_predictions`. Nothing else reads that table, so the
+recommendations on the board are unchanged by an open experiment.
+
+```bash
+wnba learning experiments open state-space-role --opened-by "<name>"
+wnba learning experiments list
+wnba learning experiments evaluate          # also runs weekly in wnba-rule-learning.service
+```
+
+`evaluate` reaches a verdict and stops. Promotion and rollback are separate commands that each
+require a named human and a reason of at least ten characters:
+
+```bash
+wnba learning experiments promote  <experiment-id> --approved-by "<name>" --reason "<why>"
+wnba learning experiments rollback <experiment-id> --rolled-back-by "<name>" --reason "<why>"
+```
+
+If a promotion looks wrong after the fact, roll it back rather than editing the row: the
+promotion stays in the record deliberately. A challenger whose failure rate or p95 latency is
+climbing should be abandoned (`experiments abandon`) rather than left collecting predictions it
+cannot produce.
+
 ## Escalation
 
 The owner is the only operator. Disable recommendations first, preserve evidence, record UTC

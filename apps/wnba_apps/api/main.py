@@ -916,9 +916,16 @@ def learning() -> dict[str, object]:
 
 @app.get("/api/validation")
 def validation() -> dict[str, object]:
-    """Historical replay diagnostics by week, market, probability bucket, and snapshot."""
+    """Historical replay diagnostics by week, market, probability bucket, and model.
+
+    The model name here is ``production_ensemble``. It used to be ``ensemble``, which no row in
+    ``backtest_results`` has ever carried, so every panel on this page rendered an empty list and
+    read as "no replay has run" rather than as a broken filter.
+    """
+    from wnba_services.forecasting.challengers import challenger_names
     from wnba_store.db import connect
 
+    champion = "production_ensemble"
     with connect() as conn, conn.cursor() as cur:
         cur.execute(
             """SELECT backtest_run_id FROM wnba.backtest_runs WHERE status='complete'
@@ -926,16 +933,22 @@ def validation() -> dict[str, object]:
         )
         run = cur.fetchone()
         if run is None:
-            return {"available": True, "weekly": [], "markets": [], "calibration": []}
+            return {
+                "available": True,
+                "weekly": [],
+                "markets": [],
+                "calibration": [],
+                "model_comparison": [],
+            }
         run_id = run["backtest_run_id"]
         cur.execute(
             """SELECT date_trunc('week',forecast_as_of) AS week,count(*) AS forecasts,
                       avg(brier) AS brier,avg(log_loss) AS log_loss,
                       avg(abs(actual_stat-projected_mean)) AS mae
                FROM wnba.backtest_results
-               WHERE backtest_run_id=%s AND model_name='ensemble'
+               WHERE backtest_run_id=%s AND model_name=%s
                GROUP BY 1 ORDER BY 1""",
-            (run_id,),
+            (run_id, champion),
         )
         weekly = [dict(row) for row in cur.fetchall()]
         cur.execute(
@@ -943,9 +956,9 @@ def validation() -> dict[str, object]:
                       avg(log_loss) AS log_loss,
                       avg(abs(actual_stat-projected_mean)) AS mae
                FROM wnba.backtest_results
-               WHERE backtest_run_id=%s AND model_name='ensemble'
+               WHERE backtest_run_id=%s AND model_name=%s
                GROUP BY prop_type ORDER BY forecasts DESC""",
-            (run_id,),
+            (run_id, champion),
         )
         markets = [dict(row) for row in cur.fetchall()]
         cur.execute(
@@ -953,17 +966,46 @@ def validation() -> dict[str, object]:
                       avg(predicted_probability) AS predicted,
                       avg(CASE WHEN hit THEN 1.0 ELSE 0.0 END) AS observed
                FROM wnba.backtest_results
-               WHERE backtest_run_id=%s AND model_name='ensemble'
+               WHERE backtest_run_id=%s AND model_name=%s
                GROUP BY 1 ORDER BY 1""",
-            (run_id,),
+            (run_id, champion),
         )
         calibration = [dict(row) for row in cur.fetchall()]
+        # Every model the replay scored, side by side on identical snapshots: the naive
+        # baselines production must beat, and the challengers being measured against it.
+        cur.execute(
+            """SELECT model_name,count(*) AS forecasts,avg(brier) AS brier,
+                      avg(log_loss) AS log_loss,
+                      avg(abs(actual_stat-projected_mean)) AS mae
+               FROM wnba.backtest_results
+               WHERE backtest_run_id=%s
+               GROUP BY model_name ORDER BY avg(log_loss)""",
+            (run_id,),
+        )
+        comparison = [
+            {
+                **dict(row),
+                "role": (
+                    "champion"
+                    if str(row["model_name"]) == champion
+                    else "challenger"
+                    if str(row["model_name"]) in challenger_names()
+                    else "baseline"
+                ),
+            }
+            for row in cur.fetchall()
+        ]
     return {
         "available": True,
         "backtest_run_id": run_id,
+        "champion_model": champion,
         "weekly": weekly,
         "markets": markets,
         "calibration": calibration,
+        "model_comparison": comparison,
+        # Replay is fitted-period evidence about historical markets. It is not the live shadow
+        # record, and the two must never be added together into one "sample size".
+        "evidence_class": "historical_replay",
     }
 
 

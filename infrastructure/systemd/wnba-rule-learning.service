@@ -8,6 +8,11 @@ WorkingDirectory=/opt/wnba/repo
 EnvironmentFile=/opt/wnba/repo/.env
 ExecStart=/opt/wnba/repo/.venv/bin/wnba learning propose-rules
 ExecStart=/opt/wnba/repo/.venv/bin/wnba learning backtest-rules
+# Re-scores open champion/challenger experiments against whatever settled during the week. It
+# cannot promote anything -- the database rejects a promotion with no named approver -- so this
+# unit reaching a `challenger_better` verdict changes nothing until a human runs
+# `wnba learning experiments promote`.
+ExecStart=/opt/wnba/repo/.venv/bin/wnba learning experiments evaluate
 TimeoutStartSec=30m
 Nice=10
 
