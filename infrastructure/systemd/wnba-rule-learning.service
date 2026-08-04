@@ -1,0 +1,13 @@
+[Unit]
+Description=Propose and backtest conservative WNBA analyst rules
+After=wnba-settlement.service docker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/wnba/repo
+EnvironmentFile=/opt/wnba/repo/.env
+ExecStart=/opt/wnba/repo/.venv/bin/wnba learning propose-rules
+ExecStart=/opt/wnba/repo/.venv/bin/wnba learning backtest-rules
+TimeoutStartSec=30m
+Nice=10
+

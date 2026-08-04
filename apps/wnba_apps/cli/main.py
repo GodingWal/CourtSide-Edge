@@ -29,7 +29,7 @@ from wnba_services.ingestion.wnba_injuries import ingest_official_injuries
 from wnba_services.learning_loop.evaluation import evaluate_models
 from wnba_services.learning_loop.proposals import generate_research_proposals
 from wnba_services.learning_loop.readiness import evaluate_readiness
-from wnba_services.learning_loop.rule_lifecycle import run_rule_backtests
+from wnba_services.learning_loop.rule_lifecycle import approve_rule, retire_rule, run_rule_backtests
 from wnba_services.learning_loop.rule_proposals import propose_from_measured_errors
 from wnba_services.learning_loop.settlement import settle_paper_episodes
 from wnba_services.monitoring.liveness import run_liveness_checks
@@ -332,6 +332,32 @@ def learning_backtest_rules() -> None:
             f"[yellow]{result.awaiting_approval} rule(s) have supporting evidence and await "
             "a named human approver; nothing activates on its own.[/yellow]"
         )
+
+
+@learning_app.command("approve-rule")
+def learning_approve_rule(
+    rule_id: Annotated[str, typer.Argument(help="Backtested analyst-rule identifier.")],
+    approved_by: Annotated[
+        str, typer.Option(help="Named human approver stored in the audit trail.")
+    ],
+    reason: Annotated[str, typer.Option(help="Why the backtest evidence justifies activation.")],
+) -> None:
+    """Activate one helpful backtested rule. This is never called by automation."""
+    result = approve_rule(rule_id, approved_by=approved_by, reason=reason)
+    console.print(f"[green]rule activated[/green] rule={result.rule_id} approved_by={result.actor}")
+
+
+@learning_app.command("retire-rule")
+def learning_retire_rule(
+    rule_id: Annotated[str, typer.Argument(help="Active analyst-rule identifier.")],
+    retired_by: Annotated[
+        str, typer.Option(help="Named human retiring the rule, retained in command logs.")
+    ],
+    reason: Annotated[str, typer.Option(help="Why the active rule is being retired.")],
+) -> None:
+    """Immediately retire an active rule; retired rules no longer enter forecasts."""
+    result = retire_rule(rule_id, retired_by=retired_by, reason=reason)
+    console.print(f"[yellow]rule retired[/yellow] rule={result.rule_id} retired_by={result.actor}")
 
 
 @learning_app.command("fit")

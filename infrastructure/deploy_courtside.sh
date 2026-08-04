@@ -14,6 +14,9 @@ set -a
 set +a
 /opt/wnba/repo/.venv/bin/wnba db migrate
 
+install -m 0644 "$REPO"/infrastructure/systemd/*.service /etc/systemd/system/
+install -m 0644 "$REPO"/infrastructure/systemd/*.timer /etc/systemd/system/
 systemctl daemon-reload
+systemctl enable --now wnba-rule-learning.timer
 systemctl restart wnba-web.service
 /bin/bash "$REPO/infrastructure/monitor_health.sh"

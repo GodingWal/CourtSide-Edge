@@ -887,6 +887,21 @@ def learning() -> dict[str, object]:
                FROM wnba.analyst_feedback GROUP BY feedback_type ORDER BY labels DESC"""
         )
         feedback = [dict(row) for row in cur.fetchall()]
+        cur.execute(
+            """SELECT rule_id,title,rationale,status,priority,proposed_by,proposed_at,
+                      approved_by,approved_at,approval_reason,retired_by,retired_at,
+                      retirement_reason,backtest
+               FROM wnba.analyst_rules
+               ORDER BY proposed_at DESC LIMIT 100"""
+        )
+        rules = [dict(row) for row in cur.fetchall()]
+        cur.execute(
+            """SELECT rule_id,count(*) AS firings,
+                      count(*) FILTER (WHERE shadow) AS shadow_firings,
+                      max(fired_at) AS latest_firing
+               FROM wnba.rule_firings GROUP BY rule_id ORDER BY firings DESC"""
+        )
+        rule_firings = [dict(row) for row in cur.fetchall()]
     return {
         "automatic_approval": False,
         "proposals": proposals,
@@ -894,6 +909,8 @@ def learning() -> dict[str, object]:
         "experiments": experiments,
         "agent_credibility": credibility,
         "feedback": feedback,
+        "rules": rules,
+        "rule_firings": rule_firings,
     }
 
 

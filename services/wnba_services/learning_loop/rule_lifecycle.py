@@ -34,7 +34,117 @@ from wnba_services.learning_loop.rule_backtest import (
     backtest_rule,
 )
 
-__all__ = ["RuleLifecycleBatch", "load_settled_episodes", "run_rule_backtests"]
+__all__ = [
+    "RuleApproval",
+    "RuleLifecycleBatch",
+    "approve_rule",
+    "approve_rule_with_cursor",
+    "load_settled_episodes",
+    "retire_rule",
+    "run_rule_backtests",
+]
+
+
+@dataclass(frozen=True)
+class RuleApproval:
+    rule_id: str
+    status: str
+    actor: str
+    changed_at: datetime
+
+
+def _named_actor(value: str) -> str:
+    actor = value.strip()
+    if len(actor) < 2:
+        raise ValueError("a named human actor is required")
+    if len(actor) > 100:
+        raise ValueError("actor must be at most 100 characters")
+    return actor
+
+
+def _required_reason(value: str) -> str:
+    reason = value.strip()
+    if len(reason) < 10:
+        raise ValueError("an audit reason of at least 10 characters is required")
+    if len(reason) > 1000:
+        raise ValueError("audit reason must be at most 1000 characters")
+    return reason
+
+
+def approve_rule_with_cursor(
+    cur: Any,
+    rule_id: str,
+    *,
+    approved_by: str,
+    reason: str,
+    now: datetime | None = None,
+) -> RuleApproval:
+    """Activate one helpful, backtested rule under a named human identity.
+
+    The row lock makes approval atomic with the status check. Merely having a backtest document
+    is insufficient: its recorded verdict must be ``helpful``. Agents and scheduled jobs have no
+    caller for this function; the CLI requires the human name explicitly.
+    """
+    actor = _named_actor(approved_by)
+    audit_reason = _required_reason(reason)
+    at = now or datetime.now(UTC)
+    cur.execute(
+        """SELECT status,backtest FROM wnba.analyst_rules
+           WHERE rule_id=%s FOR UPDATE""",
+        (rule_id,),
+    )
+    row = cur.fetchone()
+    if row is None:
+        raise ValueError(f"unknown analyst rule {rule_id!r}")
+    if str(row["status"]) != "backtested":
+        raise ValueError(f"rule {rule_id!r} must be backtested before approval")
+    backtest = dict(row["backtest"] or {})
+    if backtest.get("verdict") != "helpful":
+        raise ValueError(f"rule {rule_id!r} does not have a helpful backtest verdict")
+    cur.execute(
+        """UPDATE wnba.analyst_rules
+           SET status='active',approved_by=%s,approved_at=%s,approval_reason=%s
+           WHERE rule_id=%s AND status='backtested'""",
+        (actor, at, audit_reason, rule_id),
+    )
+    return RuleApproval(rule_id=rule_id, status="active", actor=actor, changed_at=at)
+
+
+def approve_rule(
+    rule_id: str,
+    *,
+    approved_by: str,
+    reason: str,
+    now: datetime | None = None,
+) -> RuleApproval:
+    with connect() as conn, conn.cursor() as cur:
+        return approve_rule_with_cursor(
+            cur, rule_id, approved_by=approved_by, reason=reason, now=now
+        )
+
+
+def retire_rule(
+    rule_id: str,
+    *,
+    retired_by: str,
+    reason: str,
+    now: datetime | None = None,
+) -> RuleApproval:
+    """Fail closed by retiring an active rule while preserving its full history."""
+    actor = _named_actor(retired_by)
+    audit_reason = _required_reason(reason)
+    at = now or datetime.now(UTC)
+    with connect() as conn, conn.cursor() as cur:
+        cur.execute(
+            """UPDATE wnba.analyst_rules
+               SET status='retired',retired_at=%s,retired_by=%s,retirement_reason=%s
+               WHERE rule_id=%s AND status='active'
+               RETURNING rule_id""",
+            (at, actor, audit_reason, rule_id),
+        )
+        if cur.fetchone() is None:
+            raise ValueError(f"rule {rule_id!r} is not active")
+    return RuleApproval(rule_id=rule_id, status="retired", actor=actor, changed_at=at)
 
 
 @dataclass(frozen=True)

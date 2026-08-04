@@ -26,7 +26,7 @@ operational. Automated wager execution remains permanently out of scope.
 | PAT-style research | Awaiting API key | Five DeepSeek roles with cited expiring claims |
 | Learning loop | Operational | Calibration, drift, attribution, feedback and proposals |
 | Independent-sample accounting | Complete | Repeats collapsed; game clustering corrected |
-| Rule proposal and backtest | Operational | proposed -> backtested; activation stays human-only |
+| Rule proposal and backtest | Operational | Weekly proposal/backtest; named CLI approval only |
 | Incident lifecycle | Complete | Cleared conditions resolve; persisting ones refresh |
 | Cross-source consensus | Built, one source live | Consensus, dispersion, best price, closing line |
 | End-to-end pipeline tests | Complete | Quote -> forecast -> decision -> settlement |
@@ -101,8 +101,8 @@ makes that call, closing-line value stays a pending readiness gate.
 - Carry a discovered pattern through proposal, backtest, approval and activation. Done as far as
   approval: repeated measured errors now generate hypotheses with stated mechanisms and candidate
   rules in the closed vocabulary, and every proposed rule is replayed against the settled record
-  to produce the evidence the schema demands. Activation remains a human typing their own name,
-  and no code path here can write it.
+  to produce the evidence the schema demands. Activation requires the dedicated CLI command and
+  a named human; no scheduled job or research-agent path can activate a rule.
 - Champion/challenger *experiments* remain unimplemented, and deliberately so: an experiment row
   requires two model versions to compare and only one exists. Filling the table with a synthetic
   challenger would satisfy the schema and teach nothing.
