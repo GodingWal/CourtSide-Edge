@@ -483,13 +483,36 @@ def forecasts() -> dict[str, object]:
                           c.expected_possessions,c.pace_multiplier,c.defense_multiplier,
                           c.expected_margin,c.blowout_probability,c.team_rest_days,
                           c.opponent_rest_days,c.confidence AS matchup_confidence,
-                          c.method_version AS matchup_model,fc.components
+                          c.method_version AS matchup_model,fc.components,
+                          ht.abbreviation AS home_team,at.abbreviation AS away_team,
+                          lt.abbreviation AS team,
+                          CASE
+                            WHEN lt.abbreviation = ht.abbreviation THEN at.abbreviation
+                            WHEN lt.abbreviation = at.abbreviation THEN ht.abbreviation
+                          END AS opponent
                    FROM wnba.stat_forecasts f
                    JOIN wnba.players p ON p.player_id=f.player_id
                    JOIN wnba.decision_episodes d ON d.model_run_id=f.model_run_id
                      AND d.quote_id=f.quote_id
                    JOIN wnba.prop_quotes q ON q.quote_id=f.quote_id
                    JOIN wnba.games g ON g.game_id=f.game_id
+                   JOIN wnba.teams ht ON ht.team_id=g.home_team_id
+                   JOIN wnba.teams at ON at.team_id=g.away_team_id
+                   -- Player's team, taken from their most recent completed box score. There
+                   -- is no pre-tip roster feed, so this is the best available mapping; it
+                   -- reads only settled history, so it introduces no look-ahead. A player
+                   -- traded since their last appearance will show the old team until they
+                   -- next play, which is why `opponent` is NULL rather than guessed when the
+                   -- team does not match either side of this game.
+                   LEFT JOIN LATERAL (
+                     SELECT t.abbreviation
+                     FROM wnba.player_game_lines l
+                     JOIN wnba.games pg ON pg.game_id=l.game_id
+                     JOIN wnba.teams t ON t.team_id=l.team_id
+                     WHERE l.player_id=f.player_id
+                       AND pg.scheduled_tipoff < g.scheduled_tipoff
+                     ORDER BY pg.scheduled_tipoff DESC LIMIT 1
+                   ) lt ON true
                    LEFT JOIN LATERAL (
                      SELECT designation,detail FROM wnba.injury_status
                      WHERE player_id=f.player_id AND game_id=f.game_id AND system_to IS NULL
