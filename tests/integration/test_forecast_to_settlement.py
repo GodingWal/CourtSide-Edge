@@ -440,3 +440,99 @@ def test_forecasts_are_always_written_as_paper(monkeypatch: pytest.MonkeyPatch) 
     episode_sql, _ = database.executed("INSERT INTO wnba.decision_episodes")[0]
     assert "true" in forecast_sql  # is_shadow
     assert "true" in episode_sql  # is_paper
+
+
+# --------------------------------------------------------------------------------------
+# The closing line is a designation, not the newest row
+# --------------------------------------------------------------------------------------
+def _archived(source: str, line: str, *, minutes_late: int, over: str = "1.00") -> dict[str, Any]:
+    return {
+        "source": source,
+        "line": Decimal(line),
+        "over_multiplier": Decimal(over),
+        "under_multiplier": Decimal("1.00"),
+        "is_available": True,
+        "system_from": LOCKS_AT + timedelta(minutes=minutes_late),
+    }
+
+
+def _closing_database(archive: list[dict[str, Any]]) -> FakeDatabase:
+    database = _settlement_database({"points": 22, "minutes": Decimal("31.0"), "started": True})
+    database.when("FROM wnba.prop_quotes WHERE player_id=", archive)
+    return database
+
+
+def test_the_closing_line_excludes_quotes_written_after_lock(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A line that moved once the market closed could not have been acted on."""
+    database = _closing_database(
+        [
+            _archived("underdog", "15.5", minutes_late=-30),
+            _archived("underdog", "24.5", minutes_late=+30),
+        ]
+    )
+    monkeypatch.setattr(settlement, "connect", database.connect)
+
+    settle_paper_episodes(now=NOW)
+
+    _, params = database.executed("INSERT INTO wnba.episode_outcomes")[0]
+    assert params[9] == Decimal("15.5")
+
+
+def test_the_closing_query_is_bounded_by_lock_rather_than_by_sort_order(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database = _closing_database([_archived("underdog", "15.5", minutes_late=-10)])
+    monkeypatch.setattr(settlement, "connect", database.connect)
+
+    settle_paper_episodes(now=NOW)
+
+    statement, params = database.executed("FROM wnba.prop_quotes WHERE player_id=")[0]
+    assert "system_from<=%s" in statement
+    assert LOCKS_AT in params
+
+
+def test_the_closing_line_reads_every_source_not_just_the_one_we_priced_against(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The old version filtered to the episode's own source, which is a different quantity."""
+    database = _closing_database([_archived("underdog", "15.5", minutes_late=-10)])
+    monkeypatch.setattr(settlement, "connect", database.connect)
+
+    settle_paper_episodes(now=NOW)
+
+    statement, _ = database.executed("FROM wnba.prop_quotes WHERE player_id=")[0]
+    assert "source=%s" not in statement
+
+
+def test_the_closing_multiplier_belongs_to_a_real_quote(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Averaging payouts across operators would produce a price nobody offered."""
+    database = _closing_database(
+        [
+            _archived("underdog", "15.5", minutes_late=-20, over="1.25"),
+            _archived("prizepicks", "15.5", minutes_late=-10, over="0.80"),
+        ]
+    )
+    monkeypatch.setattr(settlement, "connect", database.connect)
+
+    settle_paper_episodes(now=NOW)
+
+    _, params = database.executed("INSERT INTO wnba.episode_outcomes")[0]
+    assert params[10] in {Decimal("1.25"), Decimal("0.80")}
+
+
+def test_a_market_with_no_pre_lock_archive_settles_without_a_closing_line(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database = _closing_database([_archived("underdog", "15.5", minutes_late=+5)])
+    monkeypatch.setattr(settlement, "connect", database.connect)
+
+    batch = settle_paper_episodes(now=NOW)
+
+    assert batch.settled == 1
+    _, params = database.executed("INSERT INTO wnba.episode_outcomes")[0]
+    assert params[9] is None
+    assert params[10] is None
