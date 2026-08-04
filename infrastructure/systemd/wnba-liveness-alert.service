@@ -1,0 +1,8 @@
+[Unit]
+Description=Record that a liveness check failed
+
+[Service]
+Type=oneshot
+# Findings are already rows in wnba.dq_incidents and surface on the Operations page. This
+# also writes a file the console reads, so a failure is visible without reading journals.
+ExecStart=/bin/sh -c "date -u +%%Y-%%m-%%dT%%H:%%M:%%SZ > /var/lib/wnba/last_liveness_failure; journalctl -u wnba-liveness.service -n 20 --no-pager >> /var/lib/wnba/last_liveness_failure"
