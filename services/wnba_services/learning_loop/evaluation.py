@@ -12,6 +12,8 @@ from psycopg.types.json import Jsonb
 from wnba_domain.decision import brier_score, log_loss
 from wnba_store.db import connect
 
+from wnba_services.learning_loop.independence import dedupe_latest_per_market, summarise_sample
+
 MINIMUM_SAMPLE = 100
 CALIBRATION_WARNING = 0.08
 CALIBRATION_BLOCKING = 0.12
@@ -123,7 +125,8 @@ def evaluate_models(*, now: datetime | None = None) -> EvaluationBatch:
             series: dict[str, list[dict[str, Any]]] = {"ensemble": model_episodes}
             cur.execute(
                 """SELECT fc.*,d.side,o.hit,o.brier AS ensemble_brier,o.log_loss AS ensemble_log,
-                          d.episode_id,d.line,d.projected_mean,o.actual_stat,o.closing_line
+                          d.episode_id,d.line,d.projected_mean,o.actual_stat,o.closing_line,
+                          d.player_id,d.game_id,d.prop_type,d.forecast_timestamp
                    FROM wnba.forecast_components fc
                    JOIN wnba.stat_forecasts f ON f.projection_id=fc.projection_id
                    JOIN wnba.decision_episodes d ON d.quote_id=f.quote_id
@@ -135,7 +138,12 @@ def evaluate_models(*, now: datetime | None = None) -> EvaluationBatch:
             )
             for row in cur.fetchall():
                 series.setdefault(str(row["component_name"]), []).append(row)
-            for component_name, rows in series.items():
+            for component_name, all_rows in series.items():
+                # One market resolves once, however many times it was forecast. Scoring every
+                # revision separately would inflate the sample by the polling rate and make a
+                # handful of nights look like a validated track record.
+                shape = summarise_sample(all_rows)
+                rows = dedupe_latest_per_market(all_rows)
                 scored: list[tuple[float, bool]] = []
                 briers: list[float] = []
                 logs: list[float] = []
@@ -162,8 +170,12 @@ def evaluate_models(*, now: datetime | None = None) -> EvaluationBatch:
                             direction * (float(str(row["closing_line"])) - float(str(row["line"])))
                         )
                 ece = expected_calibration_error(scored)
+                # The gate is the effective sample, not the row count. Markets inside one game
+                # share that game's state, so twenty props across three nights carry nowhere near
+                # twenty markets' worth of independent evidence.
+                sufficient = shape.effective >= MINIMUM_SAMPLE
                 status = "insufficient_data"
-                if len(scored) >= MINIMUM_SAMPLE:
+                if sufficient:
                     status = (
                         "degraded" if ece is not None and ece > CALIBRATION_WARNING else "healthy"
                     )
@@ -188,7 +200,14 @@ def evaluate_models(*, now: datetime | None = None) -> EvaluationBatch:
                         if not absolute_errors
                         else math.fsum(absolute_errors) / len(absolute_errors),
                         status,
-                        Jsonb({"minimum_sample": MINIMUM_SAMPLE, "promotion_automatic": False}),
+                        Jsonb(
+                            {
+                                "minimum_sample": MINIMUM_SAMPLE,
+                                "promotion_automatic": False,
+                                "sample_shape": shape.to_payload(),
+                                "sample_is_sufficient": sufficient,
+                            }
+                        ),
                     ),
                 )
                 evaluation_count += 1
@@ -214,7 +233,7 @@ def evaluate_models(*, now: datetime | None = None) -> EvaluationBatch:
                         ),
                     )
                     bucket_count += 1
-                if len(scored) >= MINIMUM_SAMPLE and ece is not None and ece > CALIBRATION_WARNING:
+                if sufficient and ece is not None and ece > CALIBRATION_WARNING:
                     severity = "blocking" if ece > CALIBRATION_BLOCKING else "warning"
                     cur.execute(
                         """SELECT incident_id FROM wnba.drift_incidents

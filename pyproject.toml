@@ -80,10 +80,12 @@ select = [
 ignore = ["N818"]
 
 [tool.ruff.lint.per-file-ignores]
-# Printing is the entire job of the task runner and the CLI.
+# Printing is the entire job of the task runner, the CLI, and a research script whose only
+# output is a report a human reads once.
 "tests/**" = ["T20"]
 "apps/wnba_apps/cli/**" = ["T20"]
 "tasks.py" = ["T20"]
+"research/**" = ["T20"]
 
 # ---------------------------------------------------------------------------
 # Types

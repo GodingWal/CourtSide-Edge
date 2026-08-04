@@ -1,4 +1,17 @@
-"""Point-in-time pace, opponent, rest, and blowout context."""
+"""Point-in-time pace, opponent, rest, and blowout context.
+
+**Opponent adjustment.** The raw version of this feature divided a team's conceded rate by the
+league average and called the result a defensive multiplier. That measures schedule as much as
+defence: a team whose last ten games happened to fall against the league's worst offences reads
+as elite, and the forecast then shades every prop against them downward for a quality they do
+not have. Over a short season the schedule imbalance is large enough to swamp the real signal.
+
+:func:`opponent_adjusted_rates` fits the obvious two-way additive model --
+``rate = league + offence(scorer) + defence(conceder)`` -- by alternating means, which is the
+Gauss-Seidel solution to the least-squares problem and converges in a handful of passes at this
+size. A defence is then credited only with what it conceded *beyond what its opponents score
+against everyone else*.
+"""
 
 from __future__ import annotations
 
@@ -21,7 +34,12 @@ MARKET_COLUMNS: dict[str, tuple[str, ...]] = {
     "points_assists": ("points", "assists"),
     "rebounds_assists": ("rebounds_offensive", "rebounds_defensive", "assists"),
 }
-METHOD = "pace-defense-rest-0.1.0"
+METHOD = "pace-defense-rest-0.2.0"
+_ADJUSTMENT_ITERATIONS = 30
+# Games of evidence before a team's adjusted defensive effect is credited in full. Deliberately
+# heavier than the raw version used, because an adjusted effect is estimated jointly with every
+# other team's offence and so converges more slowly than a simple average.
+_DEFENCE_PRIOR_GAMES = 12.0
 STAT_COLUMNS = tuple(sorted({column for columns in MARKET_COLUMNS.values() for column in columns}))
 
 
@@ -57,6 +75,85 @@ class MatchupBatch:
     skipped: int
 
 
+@dataclass(frozen=True)
+class AdjustedRates:
+    """League baseline plus each team's additive offensive and defensive effects."""
+
+    league_rate: float
+    offense: dict[UUID, float]
+    defense: dict[UUID, float]
+    games_by_team: dict[UUID, int]
+
+    def defense_rate(self, team_id: UUID) -> float:
+        """Rate this defence concedes against a league-average offence."""
+        return max(0.0, self.league_rate + self.defense.get(team_id, 0.0))
+
+    def shrunk_defense_rate(self, team_id: UUID) -> float:
+        """The same, pulled toward the league baseline by how little we have seen."""
+        games = self.games_by_team.get(team_id, 0)
+        weight = games / (games + _DEFENCE_PRIOR_GAMES)
+        return weight * self.defense_rate(team_id) + (1.0 - weight) * self.league_rate
+
+
+def opponent_adjusted_rates(
+    games: list[TeamGame], columns: tuple[str, ...], *, iterations: int = _ADJUSTMENT_ITERATIONS
+) -> AdjustedRates:
+    """Separate defensive quality from strength of schedule.
+
+    Alternating means on ``rate = league + offence(scorer) + defence(conceder)``. Both effect
+    vectors are re-centred to mean zero on every pass, because the model is otherwise
+    unidentified -- adding a constant to every offence and subtracting it from every defence
+    describes the same data -- and an unidentified fit drifts instead of converging.
+    """
+    scored: dict[UUID, list[tuple[float, UUID]]] = defaultdict(list)
+    conceded: dict[UUID, list[tuple[float, UUID]]] = defaultdict(list)
+    rates: list[float] = []
+    for game in games:
+        if game.possessions <= 0.0:
+            continue
+        own = sum(game.totals.get(column, 0.0) for column in columns) / game.possessions
+        against = sum(game.allowed.get(column, 0.0) for column in columns) / game.possessions
+        scored[game.team_id].append((own, game.opponent_id))
+        conceded[game.team_id].append((against, game.opponent_id))
+        rates.append(own)
+
+    league = sum(rates) / len(rates) if rates else 0.0
+    teams = set(scored) | set(conceded)
+    offense = dict.fromkeys(teams, 0.0)
+    defense = dict.fromkeys(teams, 0.0)
+
+    for _ in range(iterations):
+        for team in teams:
+            rows = scored[team]
+            if rows:
+                offense[team] = sum(
+                    rate - league - defense.get(opponent, 0.0) for rate, opponent in rows
+                ) / len(rows)
+        _centre(offense)
+        for team in teams:
+            rows = conceded[team]
+            if rows:
+                defense[team] = sum(
+                    rate - league - offense.get(opponent, 0.0) for rate, opponent in rows
+                ) / len(rows)
+        _centre(defense)
+
+    return AdjustedRates(
+        league_rate=league,
+        offense=offense,
+        defense=defense,
+        games_by_team={team: len(conceded[team]) for team in teams},
+    )
+
+
+def _centre(effects: dict[UUID, float]) -> None:
+    if not effects:
+        return
+    mean = sum(effects.values()) / len(effects)
+    for team in effects:
+        effects[team] -= mean
+
+
 def estimate_matchup(
     team_games: list[TeamGame],
     opponent_games: list[TeamGame],
@@ -66,7 +163,15 @@ def estimate_matchup(
     prop_type: str,
     target_tipoff: datetime,
     is_home: bool,
+    opponent_defense_rate: float | None = None,
 ) -> MatchupEstimate | None:
+    """Project pace, defence, rest and blowout risk for one team in one game.
+
+    ``opponent_defense_rate`` is the schedule-adjusted rate the opponent concedes. When it is
+    omitted the function falls back to the opponent's raw conceded rate over their last ten
+    games, which is what the previous version always did and is retained only so a caller
+    without a full league fit still gets an answer.
+    """
     team_recent = sorted(team_games, key=lambda game: game.tipoff)[-10:]
     opp_recent = sorted(opponent_games, key=lambda game: game.tipoff)[-10:]
     if len(team_recent) < 5 or len(opp_recent) < 5:
@@ -76,9 +181,11 @@ def estimate_matchup(
     ) / (len(team_recent) + len(opp_recent))
     pace_multiplier = max(0.9, min(1.1, expected_pace / max(1.0, league_pace)))
     columns = MARKET_COLUMNS[prop_type]
-    allowed_total = sum(sum(game.allowed[column] for column in columns) for game in opp_recent)
-    opp_possessions = sum(game.possessions for game in opp_recent)
-    raw_defense = (allowed_total / max(1.0, opp_possessions)) / max(0.01, league_allowed_rate)
+    if opponent_defense_rate is None:
+        allowed_total = sum(sum(game.allowed[column] for column in columns) for game in opp_recent)
+        opp_possessions = sum(game.possessions for game in opp_recent)
+        opponent_defense_rate = allowed_total / max(1.0, opp_possessions)
+    raw_defense = opponent_defense_rate / max(0.01, league_allowed_rate)
     reliability = min(1.0, len(opp_recent) / 20)
     defense_multiplier = 1.0 + (max(0.85, min(1.15, raw_defense)) - 1.0) * reliability
     team_strength = sum(game.point_diff for game in team_recent) / len(team_recent)
@@ -164,6 +271,12 @@ def project_matchup_contexts(*, now: datetime | None = None) -> MatchupBatch:
         for team_game in team_games:
             by_team[team_game.team_id].append(team_game)
         league_pace = sum(game.possessions for game in team_games) / max(1, len(team_games))
+        # One league-wide fit per market, reused across every target: the adjustment is a
+        # property of the season so far, not of the prop being priced.
+        adjusted: dict[str, AdjustedRates] = {
+            prop_type: opponent_adjusted_rates(team_games, columns)
+            for prop_type, columns in MARKET_COLUMNS.items()
+        }
         cur.execute(
             """SELECT DISTINCT coalesce(m.to_player_id,q.player_id) AS player_id,
                               q.game_id,q.prop_type,g.scheduled_tipoff,
@@ -200,18 +313,16 @@ def project_matchup_contexts(*, now: datetime | None = None) -> MatchupBatch:
             if not isinstance(target_tipoff, datetime):
                 skipped += 1
                 continue
-            all_allowed = [
-                sum(game.allowed[column] for column in MARKET_COLUMNS[prop_type]) / game.possessions
-                for game in team_games
-            ]
+            rates = adjusted[prop_type]
             estimate = estimate_matchup(
                 by_team[team_id],
                 by_team[opponent_id],
                 league_pace=league_pace,
-                league_allowed_rate=sum(all_allowed) / max(1, len(all_allowed)),
+                league_allowed_rate=rates.league_rate,
                 prop_type=prop_type,
                 target_tipoff=target_tipoff,
                 is_home=team_id == home,
+                opponent_defense_rate=rates.shrunk_defense_rate(opponent_id),
             )
             if estimate is None:
                 skipped += 1

@@ -13,6 +13,7 @@ from wnba_marketmath.odds import (
     decimal_to_american,
     expected_value,
     remove_vig,
+    remove_vig_decimal,
 )
 from wnba_marketmath.pickem import (
     PAYOUT_TABLES_ARE_UNVERIFIED,
@@ -39,6 +40,7 @@ __all__ = [
     "independent_correct_count_pmf",
     "prizepicks_payout_table",
     "remove_vig",
+    "remove_vig_decimal",
     "staked_fraction",
     "underdog_payout_table",
 ]
