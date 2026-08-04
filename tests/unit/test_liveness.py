@@ -141,3 +141,16 @@ def test_a_failing_report_names_the_check_in_its_summary() -> None:
 def test_run_liveness_checks_is_importable_without_a_database() -> None:
     """The monitor must not require the thing it monitors in order to be loaded and tested."""
     assert callable(run_liveness_checks)
+
+
+def test_identity_sensitive_checks_resolve_through_player_merges() -> None:
+    """Regression: on its first live run QUOTED_PLAYERS_WITHOUT_ROLES reported all nine
+    athletes as role-less because it read the raw quote id, while the role projector writes
+    against the merged canonical id. Every check that reasons about a player must resolve
+    identity the same way the pipeline does, or it reports a permanent false alarm -- and a
+    monitor that cries wolf gets muted, which is worse than no monitor at all.
+    """
+    for code in ("QUOTED_PLAYERS_WITHOUT_ROLES", "UNMERGED_QUOTED_ATHLETES"):
+        sql = check(code).sql
+        assert "player_merges" in sql, f"{code} ignores merges and will false-positive"
+        assert "coalesce(" in sql, f"{code} does not fall back to the raw id when unmerged"

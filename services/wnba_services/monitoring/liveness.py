@@ -137,17 +137,22 @@ CHECKS: tuple[LivenessCheck, ...] = (
         # The proximate cause of tonight's empty board: role projection skipped every athlete
         # because each was a duplicate identity with no history. Catching it here names the
         # failure one step earlier than "the board is empty".
+        # Resolves through player_merges exactly as the role projector does. Checking the
+        # raw quote id instead reports every merged athlete as missing a role -- which this
+        # check did on its first live run, and a monitor that cries wolf gets muted.
         sql="""
             SELECT count(DISTINCT q.player_id) || ' quoted athlete(s) have no projected role'
                    AS detail
             FROM wnba.prop_quotes q
             JOIN wnba.games g ON g.game_id = q.game_id
+            LEFT JOIN wnba.player_merges m
+              ON m.from_player_id = q.player_id AND m.system_to IS NULL
             WHERE g.status = 'scheduled' AND g.scheduled_tipoff > now()
               AND q.system_from < now() - interval '30 minutes'
               AND NOT EXISTS (
                 SELECT 1 FROM wnba.projected_roles r
-                WHERE r.player_id = q.player_id AND r.game_id = q.game_id
-                  AND r.system_to IS NULL)
+                WHERE r.player_id = coalesce(m.to_player_id, q.player_id)
+                  AND r.game_id = q.game_id AND r.system_to IS NULL)
             HAVING count(DISTINCT q.player_id) > 0
         """,
     ),
@@ -164,7 +169,11 @@ CHECKS: tuple[LivenessCheck, ...] = (
             JOIN wnba.games g ON g.game_id = q.game_id
             WHERE g.status = 'scheduled' AND g.scheduled_tipoff > now()
               AND NOT EXISTS (
-                SELECT 1 FROM wnba.player_game_lines l WHERE l.player_id = q.player_id)
+                SELECT 1 FROM wnba.player_game_lines l
+                WHERE l.player_id = coalesce(
+                  (SELECT m2.to_player_id FROM wnba.player_merges m2
+                   WHERE m2.from_player_id = q.player_id AND m2.system_to IS NULL LIMIT 1),
+                  q.player_id))
               AND NOT EXISTS (
                 SELECT 1 FROM wnba.player_merges m
                 WHERE m.from_player_id = q.player_id AND m.system_to IS NULL)
