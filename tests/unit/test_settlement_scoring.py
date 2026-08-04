@@ -162,5 +162,5 @@ def test_combination_markets_sum_their_components() -> None:
 
 def test_an_unsupported_market_raises_rather_than_guessing() -> None:
     """Silently settling a market we cannot compute would fabricate an outcome."""
-    with pytest.raises(Exception, match="(?i)unsupported|unknown"):
+    with pytest.raises(Exception, match=r"(?i)unsupported|unknown"):
         actual_stat({"points": 20, "minutes": 30.0}, "double_double")
