@@ -11,6 +11,7 @@ dependencies = [
     "wnba-quality",
     "wnba-marketmath",
     "wnba-sim",
+    "wnba-rules",
     "wnba-obs",
     "wnba-services",
     "wnba-apps",
@@ -30,6 +31,7 @@ wnba-store = { workspace = true }
 wnba-quality = { workspace = true }
 wnba-marketmath = { workspace = true }
 wnba-sim = { workspace = true }
+wnba-rules = { workspace = true }
 wnba-obs = { workspace = true }
 wnba-services = { workspace = true }
 wnba-apps = { workspace = true }

@@ -16,6 +16,7 @@ members = [
     "wnba-ontology",
     "wnba-prop-intelligence",
     "wnba-quality",
+    "wnba-rules",
     "wnba-services",
     "wnba-sim",
     "wnba-store",
@@ -1427,6 +1428,7 @@ dependencies = [
     { name = "wnba-obs" },
     { name = "wnba-ontology" },
     { name = "wnba-quality" },
+    { name = "wnba-rules" },
     { name = "wnba-services" },
     { name = "wnba-sim" },
     { name = "wnba-store" },
@@ -1451,6 +1453,7 @@ requires-dist = [
     { name = "wnba-obs", editable = "packages/wnba_obs" },
     { name = "wnba-ontology", editable = "packages/wnba_ontology" },
     { name = "wnba-quality", editable = "packages/wnba_quality" },
+    { name = "wnba-rules", editable = "packages/wnba_rules" },
     { name = "wnba-services", editable = "services" },
     { name = "wnba-sim", editable = "packages/wnba_sim" },
     { name = "wnba-store", editable = "packages/wnba_store" },
@@ -1480,6 +1483,21 @@ dependencies = [
 requires-dist = [
     { name = "wnba-domain", editable = "packages/wnba_domain" },
     { name = "wnba-obs", editable = "packages/wnba_obs" },
+]
+
+[[package]]
+name = "wnba-rules"
+version = "0.1.0"
+source = { editable = "packages/wnba_rules" }
+dependencies = [
+    { name = "pydantic" },
+    { name = "wnba-domain" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "pydantic", specifier = ">=2.10" },
+    { name = "wnba-domain", editable = "packages/wnba_domain" },
 ]
 
 [[package]]
