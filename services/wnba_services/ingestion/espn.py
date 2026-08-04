@@ -217,6 +217,15 @@ def _write_line(
     return True
 
 
+def _date_is_settled(statuses: list[str]) -> bool:
+    """True only when ESPN shows at least one game and every one of them is final.
+
+    An empty scoreboard means ESPN has not published the slate yet, which is emphatically not
+    the same as the day being over.
+    """
+    return bool(statuses) and all(status == "final" for status in statuses)
+
+
 def ingest_espn_date(
     game_date: date,
     database_url: str | None = None,
@@ -239,13 +248,23 @@ def ingest_espn_date(
     # ESPN includes national-team exhibitions and All-Star events in the WNBA scoreboard.
     # They do not belong in franchise player-prop training and often use pseudo-team codes
     # such as PUERTORICO or WNBASTARS, so require both teams to have a verified home zone.
+    parsed = list(feed.parse_scoreboard(scoreboard))
     games = [
         game
-        for game in feed.parse_scoreboard(scoreboard)
+        for game in parsed
         if game.status == "final"
         and game.home.abbreviation in _TEAM_ZONES
         and game.away.abbreviation in _TEAM_ZONES
     ]
+    # A date is only "done" once every game on it has actually finished. Recording completion
+    # while games are still in progress permanently strands them: the ledger check above skips
+    # the date on every future run, so those games never go final, never settle, and the whole
+    # learning loop silently starves behind them.
+    #
+    # This is not hypothetical -- it happened. A manual ingest run just after midnight, while
+    # two games were still in the fourth quarter, found zero finals and marked the date
+    # complete. The daily job then skipped it indefinitely.
+    date_is_settled = _date_is_settled([game.status for game in parsed])
     written = 0
 
     with connect(database_url) as conn:
@@ -306,16 +325,17 @@ def ingest_espn_date(
                     written += _write_line(
                         conn, line, source_event_id=game.source_id, observed_at=observed_at
                     )
-            with conn.cursor() as cur:
-                cur.execute(
-                    """INSERT INTO wnba.ingested_dates
-                       (source,feed,game_date,games,rows_written,completed_at)
-                       VALUES ('espn','boxscore',%s,%s,%s,%s)
-                       ON CONFLICT (source,feed,game_date) DO UPDATE SET
-                         games=excluded.games,rows_written=excluded.rows_written,
-                         completed_at=excluded.completed_at""",
-                    (game_date, len(games), written, observed_at),
-                )
+            if date_is_settled:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """INSERT INTO wnba.ingested_dates
+                           (source,feed,game_date,games,rows_written,completed_at)
+                           VALUES ('espn','boxscore',%s,%s,%s,%s)
+                           ON CONFLICT (source,feed,game_date) DO UPDATE SET
+                             games=excluded.games,rows_written=excluded.rows_written,
+                             completed_at=excluded.completed_at""",
+                        (game_date, len(games), written, observed_at),
+                    )
             conn.commit()
         except Exception as exc:
             conn.rollback()

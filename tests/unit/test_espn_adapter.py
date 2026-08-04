@@ -153,3 +153,28 @@ def test_box_score_schema_change_fails_closed() -> None:
         assert "keys missing" in str(exc)
     else:  # pragma: no cover - explicit failure message is more useful than a bare assert
         raise AssertionError("schema drift was silently accepted")
+
+
+def test_a_date_with_live_games_is_never_marked_complete() -> None:
+    """Regression: a partially-played date must stay open for re-ingest.
+
+    Recording completion while games are still in progress permanently strands them. The
+    ledger check skips the date on every future run, so those games never go final, never
+    settle, and the entire learning loop starves behind them showing empty panels.
+
+    This happened in production: a manual ingest just after midnight, with two games still in
+    the fourth quarter, found zero finals and closed the date. The daily job skipped it
+    indefinitely until the games were force-re-ingested.
+    """
+    from wnba_services.ingestion.espn import _date_is_settled
+
+    live = [("final", "ATL", "LV"), ("in", "NY", "SEA")]
+    done = [("final", "ATL", "LV"), ("final", "NY", "SEA")]
+
+    assert _date_is_settled([s for s, _, _ in done]) is True
+    assert _date_is_settled([s for s, _, _ in live]) is False, (
+        "a date with a live game must remain open so the finished games can be re-ingested"
+    )
+    assert _date_is_settled([]) is False, (
+        "an empty scoreboard means ESPN has not published yet -- not that the day is done"
+    )
