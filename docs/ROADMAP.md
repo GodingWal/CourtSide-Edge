@@ -25,6 +25,11 @@ operational. Automated wager execution remains permanently out of scope.
 | Walk-forward evaluation | Operational | Five pre-tip snapshots and benchmark comparisons |
 | PAT-style research | Awaiting API key | Five DeepSeek roles with cited expiring claims |
 | Learning loop | Operational | Calibration, drift, attribution, feedback and proposals |
+| Independent-sample accounting | Complete | Repeats collapsed; game clustering corrected |
+| Rule proposal and backtest | Operational | proposed -> backtested; activation stays human-only |
+| Incident lifecycle | Complete | Cleared conditions resolve; persisting ones refresh |
+| Cross-source consensus | Built, one source live | Consensus, dispersion, best price, closing line |
+| End-to-end pipeline tests | Complete | Quote -> forecast -> decision -> settlement |
 | Video intelligence | Not started | Experimental track remains isolated |
 
 ## Critical path
@@ -74,6 +79,15 @@ value. Profit alone is not a gate.
 - Verify payout tables from the live products; remove the unverified defaults.
 - Model cross-player and same-game dependence, not a single scalar correlation.
 
+Status: the consensus layer is built and tested -- weighted-median line, price dispersion,
+best-price selection, source reliability and an explicit pre-lock closing designation. It runs
+today against one source and reports itself as uncorroborated rather than presenting a lone quote
+as agreement.
+
+What remains is not code. Choosing the second source means checking that operator's terms,
+confirming the collection is lawful and permitted, and dating that verification. Until an owner
+makes that call, closing-line value stays a pending readiness gate.
+
 ### 5. Add PAT-style research and the learning loop
 
 - Evidence retrieval with immutable source documents and claim expiry.
@@ -84,6 +98,14 @@ value. Profit alone is not a gate.
 - Feed measured miscalibration back into the forecast rather than only recording it. Done:
   calibration maps, ensemble weights and edge shrinkage are refit at settlement and applied on
   the next run, each adopted only when it beats the status quo out of fold.
+- Carry a discovered pattern through proposal, backtest, approval and activation. Done as far as
+  approval: repeated measured errors now generate hypotheses with stated mechanisms and candidate
+  rules in the closed vocabulary, and every proposed rule is replayed against the settled record
+  to produce the evidence the schema demands. Activation remains a human typing their own name,
+  and no code path here can write it.
+- Champion/challenger *experiments* remain unimplemented, and deliberately so: an experiment row
+  requires two model versions to compare and only one exists. Filling the table with a synthetic
+  challenger would satisfy the schema and teach nothing.
 
 ### 6. Add video intelligence as an experimental sensor
 
