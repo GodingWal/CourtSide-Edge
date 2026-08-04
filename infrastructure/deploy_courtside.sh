@@ -18,10 +18,12 @@ MIGRATE_ENV=${MIGRATE_ENV:-$REPO/.env.migrate}
 if [[ ! -f "$MIGRATE_ENV" ]]; then
   MIGRATE_ENV="$REPO/.env"
 fi
-set -a
-. "$MIGRATE_ENV"
-set +a
-/opt/wnba/repo/.venv/bin/wnba db migrate
+MIGRATE_UNIT="wnba-deploy-migrate-$(date +%s)"
+systemd-run --quiet --wait --pipe --collect \
+  --unit="$MIGRATE_UNIT" \
+  --property="WorkingDirectory=$REPO" \
+  --property="EnvironmentFile=$MIGRATE_ENV" \
+  /opt/wnba/repo/.venv/bin/wnba db migrate
 
 install -m 0644 "$REPO"/infrastructure/systemd/*.service /etc/systemd/system/
 install -m 0644 "$REPO"/infrastructure/systemd/*.timer /etc/systemd/system/
