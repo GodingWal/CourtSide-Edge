@@ -13,6 +13,7 @@ from wnba_services.forecasting.backtest import (
     poisson_over_probability,
 )
 from wnba_services.forecasting.baseline import market_inputs, stat_history_game
+from wnba_services.forecasting.challengers import challenger_names
 from wnba_services.forecasting.scoring import (
     HistoryGame,
     ScoringInputs,
@@ -92,7 +93,10 @@ def test_the_replay_scores_the_model_production_actually_runs() -> None:
     benchmarks = benchmark_predictions(inputs)
 
     assert "production_ensemble" not in benchmarks
-    assert set(benchmarks) | {"production_ensemble"} == set(MODEL_NAMES)
+    # Challengers replay beside the champion but are not benchmarks: the naive baselines are what
+    # production must beat, and a challenger is a peer being measured on the same terms.
+    assert set(benchmarks) | {"production_ensemble"} | set(challenger_names()) == set(MODEL_NAMES)
+    assert set(benchmarks).isdisjoint(challenger_names())
 
     forecast = score_prop(inputs)
     assert 0.0 <= forecast.over <= 1.0

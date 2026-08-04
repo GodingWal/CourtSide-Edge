@@ -33,6 +33,7 @@ from wnba_services.forecasting.baseline import (
     market_inputs,
     stat_history_game,
 )
+from wnba_services.forecasting.challengers import CHALLENGERS, challenger_names
 from wnba_services.forecasting.parameters import load_fitted_parameters
 from wnba_services.forecasting.recency import MARKET_HALF_LIFE, weighted_mean, weighted_ratio
 from wnba_services.forecasting.scoring import (
@@ -62,6 +63,7 @@ MODEL_NAMES = (
     "opportunity_conversion",
     "market_prior",
     "production_ensemble",
+    *challenger_names(),
 )
 
 # Fewer draws than production uses. The replay scores tens of thousands of snapshots, and the
@@ -355,6 +357,16 @@ def run_walk_forward_backtest(*, now: datetime | None = None) -> BacktestBatch:
                 predictions = dict(benchmark_predictions(inputs))
                 forecast = score_prop(inputs)
                 predictions["production_ensemble"] = (forecast.mean, forecast.over)
+                # Challengers replay alongside the champion on identical inputs. A challenger
+                # that raises is left out of this snapshot rather than aborting the run; the
+                # live experiment records failures explicitly, which is where failure rate is
+                # measured. Here it would only be measuring the historical data's gaps.
+                for name, challenger in CHALLENGERS.items():
+                    try:
+                        prediction = challenger.predict(inputs)
+                    except Exception:  # replay must survive one bad prop
+                        continue
+                    predictions[name] = (prediction.mean, prediction.over)
 
                 for model_name, (mean, probability) in predictions.items():
                     cur.execute(
