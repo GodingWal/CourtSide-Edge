@@ -23,7 +23,8 @@ operational. Automated wager execution remains permanently out of scope.
 | Fitted calibration and weights | Operational | Isotonic maps, stacked weights, edge shrinkage |
 | Analyst rules in the forecast path | Operational | Active and shadow firings recorded per episode |
 | Walk-forward evaluation | Operational | Five pre-tip snapshots and benchmark comparisons |
-| PAT-style research | Awaiting API key | Five DeepSeek roles with cited expiring claims |
+| PAT-style research | Organization built, awaiting API key | Coordinator, blocking data auditor, two rounds, synthesizer, credibility |
+| Agent-authored rules | Built | Closed-vocabulary proposals with leakage inspection; no self-approval |
 | Learning loop | Operational | Calibration, drift, attribution, feedback and proposals |
 | Independent-sample accounting | Complete | Repeats collapsed; game clustering corrected |
 | Rule proposal and backtest | Operational | Weekly proposal/backtest; named CLI approval only |
@@ -99,6 +100,31 @@ makes that call, closing-line value stays a pending readiness gate.
 - Evidence retrieval with immutable source documents and claim expiry.
 - Availability, rotation and matchup analysts plus an independent skeptic.
 - Reject uncited claims; agents may propose features but never write forecast probabilities.
+- Research is now an organization rather than a panel. A coordinator plans investigations from
+  measured changes -- an injury row written after the forecast, a role row that postdates it, a
+  claim past its refresh time, a candidate recommendation, component spread above the level at
+  which pooling has historically been an artefact -- and sends only the roles that trigger needs.
+  A deterministic data auditor runs first and can block: an `out` designation beside a full
+  rotation workload, a near-certain start beside bench minutes, an archival quote. Blocking is a
+  correct outcome, not an error, and it costs nothing because no model has been called yet.
+- Round one is independent and the schema says so: `saw_peers` is false for every first-round
+  analysis and the database refuses a first-round row claiming otherwise. Round two is
+  adversarial -- each analyst reads its peers, concedes or restates its disagreement, and the
+  revision is stored beside what it revised rather than replacing it.
+- Claims carry a refresh time derived from how fast their domain actually goes stale (availability
+  in 45 minutes, matchup in six hours), and a new claim about the same predicate supersedes the
+  old one instead of sitting beside it.
+- Comparable historical decisions are retrieved by situation rather than by player, over
+  point-in-time fields only, and reported with their own sample size. A precedent hit rate is a
+  base rate of a small self-selected reference class and is never combined with the model's
+  probability.
+- The decision synthesizer combines model output, research, market state and policy into one
+  posture stored beside the episode. It has no column for a probability of its own and computes
+  none. Agent credibility is scored per role *and domain*, pooled hard toward 0.5, and weights the
+  agreement statistic only -- it never gates a claim.
+- Evidence ranking now reads the analyst usefulness labels that `analyst_feedback` has carried
+  since migration 018 and that nothing had ever read, and source reliability is scored per source
+  and domain from those labels plus how often a source's evidence ends up contradicted.
 - Postgame error attribution, analyst feedback, hypothesis registry and weekly proposals.
 - Champion/challenger evaluation, shadow deployment and human-only promotion.
 - Feed measured miscalibration back into the forecast rather than only recording it. Done:
@@ -109,6 +135,14 @@ makes that call, closing-line value stays a pending readiness gate.
   rules in the closed vocabulary, and every proposed rule is replayed against the settled record
   to produce the evidence the schema demands. Activation requires the dedicated CLI command and
   a named human; no scheduled job or research-agent path can activate a rule.
+- Candidate rules no longer come only from the curated catalogue. The research director is handed
+  a measured failure pattern, the closed vocabulary, the four available actions and the observed
+  range of every field, and returns a structured document -- never code, because the schema has no
+  field an expression could occupy and rejects unknown keys. The draft is compiled through the
+  DSL's own validators, inspected for leakage, and stored as `proposed` with its evidence ids,
+  mechanism, confounders, expiry conditions and withdrawal criteria attached. The database
+  enforces that provenance for agent-authored rules and refuses any approval whose approver is
+  the proposer, so no agent can activate its own rule even by naming itself.
 - Champion/challenger experiments are implemented. What was blocking them was never the schema:
   an experiment row requires two model versions and only one existed, and a synthetic challenger
   wrapping the same five components would have satisfied the table while teaching nothing. Two

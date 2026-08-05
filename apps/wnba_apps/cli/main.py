@@ -39,11 +39,14 @@ from wnba_services.learning_loop.experiments import (
 )
 from wnba_services.learning_loop.proposals import generate_research_proposals
 from wnba_services.learning_loop.readiness import evaluate_readiness
+from wnba_services.learning_loop.rule_authoring import author_rules_from_findings
 from wnba_services.learning_loop.rule_lifecycle import approve_rule, retire_rule, run_rule_backtests
 from wnba_services.learning_loop.rule_proposals import propose_from_measured_errors
 from wnba_services.learning_loop.settlement import settle_paper_episodes
 from wnba_services.monitoring.liveness import run_liveness_checks
-from wnba_services.research_agents.workflow import run_projection_research
+from wnba_services.research_agents.coordinator import pending_plans, plan_investigations
+from wnba_services.research_agents.credibility import score_research_credibility
+from wnba_services.research_agents.workflow import execute_plan, run_projection_research
 from wnba_store.db import connect, migrate
 
 app = typer.Typer(
@@ -532,10 +535,105 @@ def research_run(
     except ValueError as exc:
         raise typer.BadParameter("expected a projection UUID") from exc
     result = run_projection_research(parsed_id)
+    if result.status == "blocked":
+        console.print(
+            "[yellow]data audit blocked the investigation[/yellow] "
+            f"findings={', '.join(result.blocked_by)}"
+        )
+        return
     console.print(
         f"[green]research complete[/green] run={result.research_run_id} "
-        f"analyses={result.analyses} claims={result.claims} evidence={result.evidence}"
+        f"analyses={result.analyses} claims={result.claims} evidence={result.evidence} "
+        f"posture={result.posture}"
     )
+
+
+@research_app.command("plan")
+def research_plan(
+    limit: Annotated[int, typer.Option(help="Maximum investigations to queue.")] = 25,
+) -> None:
+    """Queue investigations for open markets that have changed since they were forecast."""
+    result = plan_investigations(limit=limit)
+    console.print(
+        f"[green]planning complete[/green] considered={result.considered} "
+        f"planned={result.planned} expired={result.expired}"
+    )
+    for plan in result.plans:
+        console.print(
+            f"  [{plan.priority:3}] {plan.trigger_kind:24} roles={','.join(plan.roles)} "
+            f"plan={plan.plan_id}"
+        )
+
+
+@research_app.command("queue")
+def research_queue(
+    limit: Annotated[int, typer.Option(help="Maximum queued plans to show.")] = 20,
+) -> None:
+    """Show what the coordinator wants investigated, highest priority first."""
+    with connect() as conn, conn.cursor() as cur:
+        rows = pending_plans(cur, limit=limit)
+    if not rows:
+        console.print("[yellow]no investigations queued[/yellow]")
+        return
+    for row in rows:
+        console.print(
+            f"  [{row['priority']:3}] {row['trigger_kind']:24} {row['full_name']} "
+            f"{row['prop_type']} {row['line']} plan={row['plan_id']}"
+        )
+
+
+@research_app.command("execute")
+def research_execute(
+    plan_id: Annotated[str, typer.Argument(help="Queued research-plan UUID.")],
+) -> None:
+    """Audit, investigate in two rounds, and synthesise one queued plan."""
+    try:
+        parsed_id = UUID(plan_id)
+    except ValueError as exc:
+        raise typer.BadParameter("expected a plan UUID") from exc
+    result = execute_plan(parsed_id)
+    if result.status == "blocked":
+        console.print(
+            "[yellow]data audit blocked the investigation[/yellow] "
+            f"findings={', '.join(result.blocked_by)}"
+        )
+        return
+    console.print(
+        f"[green]investigation complete[/green] run={result.research_run_id} "
+        f"analyses={result.analyses} claims={result.claims} posture={result.posture}"
+    )
+
+
+@research_app.command("score-credibility")
+def research_score_credibility() -> None:
+    """Refresh agent credibility, evidence ranking and source reliability from outcomes."""
+    result = score_research_credibility()
+    console.print(
+        f"[green]credibility scored[/green] agents={result.agent_scores} "
+        f"evidence_ranked={result.evidence_ranked} sources={result.source_scores} "
+        f"claims_scored={result.claims_scored}"
+    )
+
+
+@research_app.command("author-rules")
+def research_author_rules(
+    limit: Annotated[int, typer.Option(help="Maximum failure patterns to work from.")] = 3,
+) -> None:
+    """Ask the research director to propose rules. Nothing proposed here can fire."""
+    result = author_rules_from_findings(limit=limit)
+    console.print(
+        f"[green]rule authoring complete[/green] considered={result.considered} "
+        f"compiled={result.compiled} proposed={result.proposed} "
+        f"rejected_vocabulary={result.rejected_vocabulary} "
+        f"rejected_leakage={result.rejected_leakage}"
+    )
+    for reason in result.reasons:
+        console.print(f"  [yellow]{reason}[/yellow]")
+    if result.proposed:
+        console.print(
+            "[dim]Proposed rules require a backtest and then a named human approver who is not "
+            "the proposer; the database refuses anything else.[/dim]"
+        )
 
 
 @injuries_app.command("poll")

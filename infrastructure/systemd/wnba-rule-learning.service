@@ -13,6 +13,10 @@ ExecStart=/opt/wnba/repo/.venv/bin/wnba learning backtest-rules
 # unit reaching a `challenger_better` verdict changes nothing until a human runs
 # `wnba learning experiments promote`.
 ExecStart=/opt/wnba/repo/.venv/bin/wnba learning experiments evaluate
+# Refresh agent credibility, evidence ranking and source reliability from whatever settled this
+# week. Read-only with respect to forecasts: these scores weight the research console's agreement
+# statistic and the retrieval order, and nothing else.
+ExecStart=/opt/wnba/repo/.venv/bin/wnba research score-credibility
 TimeoutStartSec=30m
 Nice=10
 

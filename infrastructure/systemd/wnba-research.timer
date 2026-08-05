@@ -1,0 +1,10 @@
+[Unit]
+Description=Re-plan WNBA research as injuries, lineups and claims change
+
+[Timer]
+OnCalendar=*-*-* *:07,37:00 UTC
+RandomizedDelaySec=3m
+Persistent=false
+
+[Install]
+WantedBy=timers.target

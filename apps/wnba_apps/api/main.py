@@ -755,6 +755,75 @@ def latest_backtest() -> dict[str, object]:
     }
 
 
+@app.get("/api/research/organization")
+def research_organization() -> dict[str, object]:
+    """The research organization's own state: queue, audits, credibility, source reliability.
+
+    Declared before ``/api/research/{projection_id}`` deliberately. That route parses its path
+    segment as a UUID, so a later declaration of this literal path would never be reached -- the
+    UUID converter would reject "organization" with a 422 first.
+    """
+    from wnba_store.db import connect
+
+    with connect() as conn, conn.cursor() as cur:
+        cur.execute(
+            """SELECT p.plan_id,p.trigger_kind,p.reason,p.priority,p.status,p.planned_at,
+                      p.locks_at,p.roles,p.detail,pl.full_name,f.prop_type,f.line
+               FROM wnba.research_plans p
+               JOIN wnba.stat_forecasts f ON f.projection_id=p.projection_id
+               JOIN wnba.players pl ON pl.player_id=f.player_id
+               ORDER BY p.planned_at DESC LIMIT 50"""
+        )
+        plans = [dict(row) for row in cur.fetchall()]
+        cur.execute(
+            """SELECT a.audit_id,a.plan_id,a.audited_at,a.verdict,a.findings,a.blocking_count
+               FROM wnba.research_audits a
+               WHERE a.verdict <> 'clear' ORDER BY a.audited_at DESC LIMIT 50"""
+        )
+        audits = [dict(row) for row in cur.fetchall()]
+        cur.execute(
+            """SELECT s.synthesis_id,s.episode_id,s.posture,s.created_at,s.agent_agreement,
+                      s.unresolved_conflicts,s.policy_blocked,s.concerns,s.narrative,
+                      s.precedent_hit_rate
+               FROM wnba.decision_syntheses s ORDER BY s.created_at DESC LIMIT 50"""
+        )
+        syntheses = [dict(row) for row in cur.fetchall()]
+        cur.execute(
+            """SELECT DISTINCT ON (agent_role,domain) agent_role,domain,credibility,sample_size,
+                      calibration,calculated_at,claims_scored
+               FROM wnba.agent_credibility ORDER BY agent_role,domain,calculated_at DESC"""
+        )
+        credibility = [dict(row) for row in cur.fetchall()]
+        cur.execute(
+            """SELECT DISTINCT ON (source,domain) source,domain,reliability,citations,
+                      useful_labels,misleading_labels,contradiction_rate,calculated_at
+               FROM wnba.source_reliability ORDER BY source,domain,calculated_at DESC"""
+        )
+        sources = [dict(row) for row in cur.fetchall()]
+        cur.execute(
+            """SELECT count(*) FILTER (WHERE superseded_at IS NULL AND expires_at>now())
+                        AS live_claims,
+                      count(*) FILTER (WHERE superseded_at IS NOT NULL) AS superseded_claims,
+                      count(*) FILTER (
+                          WHERE superseded_at IS NULL AND refresh_after IS NOT NULL
+                            AND refresh_after<=now() AND expires_at>now()) AS claims_due_refresh
+               FROM wnba.research_claims"""
+        )
+        claim_row = cur.fetchone()
+    return {
+        "plans": plans,
+        "audits": audits,
+        "syntheses": syntheses,
+        "agent_credibility": credibility,
+        "source_reliability": sources,
+        "claims": {} if claim_row is None else dict(claim_row),
+        # Restated on the wire because the console renders agent output beside model output and
+        # the distinction has to survive the trip.
+        "agents_can_write_probabilities": False,
+        "agents_can_activate_rules": False,
+    }
+
+
 @app.get("/api/research/{projection_id}")
 def projection_research(projection_id: UUID) -> dict[str, object]:
     """Cited research state for one immutable projection."""
@@ -779,13 +848,47 @@ def projection_research(projection_id: UUID) -> dict[str, object]:
                           )) FILTER (WHERE c.claim_id IS NOT NULL),'[]') AS claims
                    FROM wnba.agent_analyses a
                    LEFT JOIN wnba.research_claims c ON c.analysis_id=a.analysis_id
-                   WHERE a.research_run_id=%s GROUP BY a.analysis_id ORDER BY a.created_at""",
+                   WHERE a.research_run_id=%s GROUP BY a.analysis_id
+                   ORDER BY a.round,a.created_at""",
                 (run["research_run_id"],),
             )
             analyses = [dict(row) for row in cur.fetchall()]
+            cur.execute(
+                "SELECT * FROM wnba.decision_syntheses WHERE research_run_id=%s",
+                (run["research_run_id"],),
+            )
+            synthesis_row = cur.fetchone()
+            cur.execute(
+                """SELECT p.plan_id,p.trigger_kind,p.reason,p.priority,p.status,p.planned_at,
+                          p.roles,p.detail
+                   FROM wnba.research_plans p
+                   WHERE p.research_run_id=%s ORDER BY p.planned_at DESC LIMIT 1""",
+                (run["research_run_id"],),
+            )
+            plan_row = cur.fetchone()
+            audits: list[dict[str, object]] = []
+            if plan_row is not None:
+                cur.execute(
+                    """SELECT audit_id,audited_at,verdict,findings,blocking_count,auditor
+                       FROM wnba.research_audits WHERE plan_id=%s ORDER BY audited_at DESC""",
+                    (plan_row["plan_id"],),
+                )
+                audits = [dict(row) for row in cur.fetchall()]
     except Exception as exc:
         return {"available": False, "reason": str(exc)[:200]}
-    return {"available": True, "configured": True, "run": dict(run), "analyses": analyses}
+    return {
+        "available": True,
+        "configured": True,
+        "run": dict(run),
+        "analyses": analyses,
+        # Both rounds are returned. The console shows them side by side because a revision only
+        # means something next to the independent position it revised.
+        "rounds": {"independent": 1, "adversarial": 2},
+        "synthesis": None if synthesis_row is None else dict(synthesis_row),
+        "plan": None if plan_row is None else dict(plan_row),
+        "audits": audits,
+        "research_can_write_probabilities": False,
+    }
 
 
 @app.post("/api/research/{projection_id}/run")
@@ -804,6 +907,9 @@ def launch_projection_research(projection_id: UUID) -> dict[str, object]:
         "analyses": result.analyses,
         "claims": result.claims,
         "evidence": result.evidence,
+        "status": result.status,
+        "posture": result.posture,
+        "blocked_by": list(result.blocked_by),
     }
 
 

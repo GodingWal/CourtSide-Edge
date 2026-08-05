@@ -97,6 +97,21 @@ set assembled from the feature store, and a fitting job with its own leakage con
 wrapping the same five components would fill the experiments table without creating anything to
 learn from.
 
+## What research can and cannot do
+
+The DeepSeek research organization plans investigations, audits their inputs, runs two rounds of
+analysis, and synthesises a posture beside each decision. It has no path to a probability:
+
+- Every agent schema forbids unknown fields and none of them has a field for a prop outcome
+  probability, a projection, a stake, or a recommendation. A model returning one fails to parse.
+- `decision_syntheses` stores `model_probability` as a copy for context and has no other
+  probability column. The synthesizer computes none.
+- Agent credibility weights the *agreement statistic* on the research console. It never gates a
+  claim, silences a role, or reaches the forecast.
+- Agent-authored rules land as `proposed`, must carry evidence ids, a mechanism, confounders,
+  expiry conditions and withdrawal criteria, and must pass a leakage inspection. The database
+  refuses an approval whose approver equals the proposer.
+
 ## Promotion
 
 Only the owner may promote a model, and only after every machine readiness gate is `pass` rather

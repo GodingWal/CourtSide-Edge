@@ -27,6 +27,26 @@ other route requires the owner credential.
 - DeepSeek failure: forecasts continue; research fails closed and may be retried manually.
 - Disk above 80%: inspect PostgreSQL, Docker and backup growth before deleting anything.
 
+## Research investigations
+
+The coordinator queues investigations from measured changes and calls no model, so planning is
+free. Executing a plan spends provider tokens and is a separate command deliberately.
+
+```bash
+wnba research plan --limit 15     # also runs every half hour in wnba-research.service
+wnba research queue               # what the coordinator wants investigated, and why
+wnba research execute <plan-id>   # audit, two rounds, synthesis
+wnba research score-credibility   # agent credibility, evidence ranking, source reliability
+```
+
+A plan that comes back `blocked` is a correct outcome, not a failure: the data auditor found the
+inputs contradictory or archival and stopped before any model was called. Fix the input the
+finding names and re-plan; the blocked audit stays in the record.
+
+`wnba research author-rules` asks the research director to propose analyst rules from measured
+failure patterns. Everything it proposes lands as `proposed`, cannot fire, and needs a backtest
+and then a named human approver who is not the proposer — the database refuses anything else.
+
 ## Champion/challenger experiments
 
 Opening an experiment makes the live forecast run also score the board with that challenger and

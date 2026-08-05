@@ -1,0 +1,13 @@
+[Unit]
+Description=Plan and run WNBA research investigations from measured changes
+After=wnba-forecast.service docker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/wnba/repo
+EnvironmentFile=/opt/wnba/repo/.env
+# The coordinator queues investigations; it calls no model and spends nothing. Executing a plan
+# is a separate command so that queue depth and provider spend are two decisions, not one.
+ExecStart=/opt/wnba/repo/.venv/bin/wnba research plan --limit 15
+TimeoutStartSec=10m
+Nice=10
