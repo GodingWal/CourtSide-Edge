@@ -26,13 +26,18 @@ forecasts do worse" and a claim somebody can argue with and design against.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID, uuid4
 
 from psycopg.types.json import Jsonb
+from pydantic import ValidationError
+from wnba_rules.dsl import RuleParseError
 from wnba_store.db import connect
+
+from wnba_services.forecasting.rules import parse_rule_definition
+from wnba_services.research_agents.advisor import Advisor, advisory_summary
 
 __all__ = [
     "CANDIDATE_RULES",
@@ -233,6 +238,11 @@ class ProposalBatch:
     hypotheses_created: int
     rules_proposed: int
     episodes_linked: int
+    # Of `rules_proposed`, how many DeepSeek wrote. Reported separately so the catalogue's
+    # contribution and the model's stay distinguishable in the weekly console line -- they are
+    # subject to identical evidence, which is exactly why the difference is worth measuring.
+    model_authored_rules: int = 0
+    advisories: dict[str, int] = field(default_factory=dict)
 
 
 def _existing(cur: Any, table: str, column: str) -> set[str]:
@@ -240,7 +250,9 @@ def _existing(cur: Any, table: str, column: str) -> set[str]:
     return {str(row[column]) for row in cur.fetchall()}
 
 
-def propose_from_measured_errors(*, now: datetime | None = None) -> ProposalBatch:
+def propose_from_measured_errors(
+    *, now: datetime | None = None, advisor: Advisor | None = None
+) -> ProposalBatch:
     """Create hypotheses and candidate rules from error categories that keep recurring.
 
     Everything created here is inert. A hypothesis is a claim awaiting evidence and a proposed
@@ -248,9 +260,10 @@ def propose_from_measured_errors(*, now: datetime | None = None) -> ProposalBatc
     it. The point is to make the next step *possible*, not to take it.
     """
     at = now or datetime.now(UTC)
-    reviewed = hypotheses = rules = links = 0
+    reviewed = hypotheses = rules = links = model_rules = 0
 
     with connect() as conn, conn.cursor() as cur:
+        assistant = advisor or Advisor(cur)
         cur.execute(
             """SELECT a.primary_error,
                       count(*) AS failures,
@@ -291,8 +304,8 @@ def propose_from_measured_errors(*, now: datetime | None = None) -> ProposalBatc
                     """INSERT INTO wnba.hypotheses
                        (hypothesis_id,name,causal_statement,mechanism,target_markets,
                         expected_direction,required_features,confounders,status,confidence,
-                        created_by,created_at)
-                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s,'proposed',0.5,'research_director',%s)""",
+                        created_by,created_at,error_category)
+                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s,'proposed',0.5,'research_director',%s,%s)""",
                     (
                         hypothesis_id,
                         template.name,
@@ -303,6 +316,9 @@ def propose_from_measured_errors(*, now: datetime | None = None) -> ProposalBatc
                         template.required_features,
                         template.confounders,
                         at,
+                        # The claim this hypothesis is making, recorded so the weekly review can
+                        # test it without reverse-engineering it from the name.
+                        category,
                     ),
                 )
                 hypotheses += 1
@@ -319,6 +335,7 @@ def propose_from_measured_errors(*, now: datetime | None = None) -> ProposalBatc
                     )
                     links += cur.rowcount
 
+            catalogue_added = 0
             for candidate in CANDIDATE_RULES.get(category, ()):
                 if candidate.rule_id in known_rules:
                     continue
@@ -337,10 +354,130 @@ def propose_from_measured_errors(*, now: datetime | None = None) -> ProposalBatc
                 )
                 known_rules.add(candidate.rule_id)
                 rules += 1
+                catalogue_added += 1
+
+            # The catalogue is finite and this category has exhausted it, but the failures are
+            # still recurring. This is the point the module's own docstring anticipated: a model
+            # may extend the catalogue through the identical proposal path. What it writes lands
+            # as `proposed` with no backtest and no approver, so it cannot touch a forecast, and
+            # `run_rule_backtests` will judge it on exactly the evidence a template rule faces.
+            if catalogue_added == 0 and _propose_with_model(
+                cur,
+                advisor=assistant,
+                category=category,
+                failures=int(str(row["failures"])),
+                markets=int(str(row["markets"])),
+                affected=affected,
+                episodes=episodes,
+                known_rules=known_rules,
+                at=at,
+            ):
+                rules += 1
+                model_rules += 1
+
+        advisories = advisory_summary(assistant.outcomes)
 
     return ProposalBatch(
         categories_reviewed=reviewed,
         hypotheses_created=hypotheses,
         rules_proposed=rules,
         episodes_linked=links,
+        model_authored_rules=model_rules,
+        advisories=advisories,
     )
+
+
+def _propose_with_model(
+    cur: Any,
+    *,
+    advisor: Advisor,
+    category: str,
+    failures: int,
+    markets: int,
+    affected: list[str],
+    episodes: list[UUID],
+    known_rules: set[str],
+    at: datetime,
+) -> bool:
+    """Ask DeepSeek for one new rule in the closed DSL. Returns whether one was stored.
+
+    Three gates stand between the model and the table, and a proposal has to clear all of them:
+    the strict ``RuleProposalDraft`` schema, the evidence check inside the client (a cited
+    episode id that was not supplied is a hard error), and :func:`parse_rule_definition`, which
+    re-validates the conditions and action against the same vocabulary the engine executes. A
+    rule that cannot be expressed in that language cannot be stored, whatever the model meant.
+    """
+    evidence = {
+        episode_id: (
+            f"Settled WNBA prop decision attributed to a recurring {category} failure. "
+            f"Markets affected: {', '.join(affected)}."
+        )
+        for episode_id in episodes[:12]
+    }
+    if not evidence:
+        return False
+
+    measured_failure = (
+        f"The category '{category}' has produced {failures} avoidable errors across {markets} "
+        f"independent markets in {', '.join(affected)}, and every rule the catalogue holds for "
+        "it has already been proposed. Propose one further conservative rule that would have "
+        "declined or softened these decisions."
+    )
+    try:
+        draft, _, _ = advisor.client.propose_rule(
+            measured_failure=measured_failure, evidence=evidence
+        )
+    except Exception as error:  # provider failure is a fallback, never a job failure
+        advisor.reject(
+            task="rule_authoring",
+            subject=category,
+            reason=f"{type(error).__name__}: {error}",
+            now=at,
+        )
+        return False
+
+    if draft.rule_id in known_rules:
+        advisor.reject(
+            task="rule_authoring",
+            subject=category,
+            reason=f"proposed rule_id {draft.rule_id!r} already exists",
+            now=at,
+        )
+        return False
+
+    definition = {
+        "conditions": draft.conditions,
+        "combinator": draft.combinator,
+        "action": draft.action,
+    }
+    try:
+        parse_rule_definition(
+            {
+                **definition,
+                "rule_id": draft.rule_id,
+                "title": draft.title,
+                "rationale": draft.rationale,
+                "status": "proposed",
+                "priority": 50,
+                "proposed_by": "deepseek",
+                "approved_by": None,
+            }
+        )
+    except (RuleParseError, ValidationError, ValueError, KeyError, TypeError) as error:
+        advisor.reject(
+            task="rule_authoring",
+            subject=category,
+            reason=f"definition does not parse against the closed vocabulary: {error}",
+            now=at,
+        )
+        return False
+
+    cur.execute(
+        """INSERT INTO wnba.analyst_rules
+           (rule_id,title,rationale,definition,status,priority,proposed_by,proposed_at,
+            authored_by_model)
+           VALUES (%s,%s,%s,%s,'proposed',50,'deepseek',%s,true)""",
+        (draft.rule_id, draft.title, draft.rationale, Jsonb(definition), at),
+    )
+    known_rules.add(draft.rule_id)
+    return True

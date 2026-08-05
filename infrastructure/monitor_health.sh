@@ -11,7 +11,7 @@ curl --fail --silent --show-error --max-time 15 \
 
 for unit in wnba-archiver.timer wnba-injuries.timer wnba-roles.timer wnba-effects.timer \
     wnba-matchups.timer wnba-forecast.timer wnba-stats.timer wnba-settlement.timer \
-    wnba-backup.timer wnba-liveness.timer wnba-rule-learning.timer; do
+    wnba-backup.timer wnba-liveness.timer wnba-rule-learning.timer wnba-pat-research.timer; do
     systemctl is-active --quiet "$unit" || failures+=("$unit")
 done
 

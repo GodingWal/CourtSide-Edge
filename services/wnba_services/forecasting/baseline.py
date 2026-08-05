@@ -32,6 +32,7 @@ from wnba_marketmath.odds import remove_vig, remove_vig_decimal
 from wnba_marketmath.pickem import underdog_payout_table
 from wnba_store.db import connect
 
+from wnba_services.forecasting.deescalation import load_drift_guard, record_deescalation
 from wnba_services.forecasting.parameters import load_fitted_parameters
 from wnba_services.forecasting.rules import (
     build_facts,
@@ -95,6 +96,9 @@ class ForecastBatch:
     skipped: int
     candidates: int = 0
     rule_firings: int = 0
+    # Forecasts widened because an unresolved calibration incident was open against this model
+    # version. Non-zero means the system measured its own drift and acted on it.
+    deescalations: int = 0
 
 
 def default_breakeven() -> float:
@@ -175,7 +179,7 @@ def run_baseline(*, now: datetime | None = None, seed: int = 20260803) -> Foreca
     at = now or datetime.now(UTC)
     started = datetime.now(UTC)
     run_id = uuid4()
-    forecasts = episodes = skipped = candidates = firing_count = 0
+    forecasts = episodes = skipped = candidates = firing_count = deescalations = 0
     league_rates: dict[str, float] = {}
     breakeven = default_breakeven()
 
@@ -217,6 +221,11 @@ def run_baseline(*, now: datetime | None = None, seed: int = 20260803) -> Foreca
 
         parameters = load_fitted_parameters(cur)
         rules = load_rules(cur)
+        # If this model version has an unresolved calibration incident open against it, every
+        # probability it emits today is shrunk toward even before it reaches the gate. Loaded
+        # once per run: the incident set does not change mid-board, and re-reading it per quote
+        # would make the run's behaviour depend on when settlement happened to commit.
+        drift_guard = load_drift_guard(cur, MODEL_ID)
         # Challengers with an open experiment score the same board from the same inputs. They
         # write to `challenger_predictions` and to nothing else: no rule reads them, no decision
         # consults them, and the recommendation below would be byte-identical if this list were
@@ -450,14 +459,13 @@ def run_baseline(*, now: datetime | None = None, seed: int = 20260803) -> Foreca
                 start_probability=adjustments.start_probability,
             )
             rule_outcome = evaluate_rules(rules, facts, selected)
+            # Measured drift is applied after the rules and before the gate, so a rule firing and
+            # a drift response compose the way two restrictions should: each can only widen.
+            guarded = drift_guard.apply(rule_outcome.probability)
 
             decision = decide_candidate(
-                over_probability=(
-                    rule_outcome.probability if side == "over" else 1.0 - rule_outcome.probability
-                ),
-                under_probability=(
-                    rule_outcome.probability if side == "under" else 1.0 - rule_outcome.probability
-                ),
+                over_probability=(guarded if side == "over" else 1.0 - guarded),
+                under_probability=(guarded if side == "under" else 1.0 - guarded),
                 shrinkage=parameters.shrinkage_for(prop),
                 breakeven=breakeven,
                 quality=forecast.data_quality_score,
@@ -609,6 +617,14 @@ def run_baseline(*, now: datetime | None = None, seed: int = 20260803) -> Foreca
                 ),
             )
             firing_count += record_firings(cur, episode_id, rule_outcome.firings, at=at)
+            deescalations += record_deescalation(
+                cur,
+                drift_guard,
+                episode_id=episode_id,
+                before=rule_outcome.probability,
+                after=guarded,
+                at=at,
+            )
             if experiments:
                 record_shadow_predictions(
                     cur,
@@ -633,4 +649,6 @@ def run_baseline(*, now: datetime | None = None, seed: int = 20260803) -> Foreca
                 run_id,
             ),
         )
-    return ForecastBatch(run_id, forecasts, episodes, skipped, candidates, firing_count)
+    return ForecastBatch(
+        run_id, forecasts, episodes, skipped, candidates, firing_count, deescalations
+    )

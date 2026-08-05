@@ -33,10 +33,12 @@ from wnba_rules.dsl import (
 from wnba_rules.engine import Firing, RuleOutcome, apply_rules
 
 __all__ = [
+    "RULE_FIELDS",
     "active_rule_count",
     "build_facts",
     "evaluate_rules",
     "load_rules",
+    "parse_rule_definition",
     "record_firings",
 ]
 
@@ -71,6 +73,18 @@ def _coerce_enums(definition: dict[str, Any]) -> dict[str, Any]:
         action["kind"] = ActionKind(str(action["kind"]))
     coerced["action"] = action
     return coerced
+
+
+def parse_rule_definition(definition: dict[str, Any]) -> Rule:
+    """Validate one rule document against the closed vocabulary, raising if it does not fit.
+
+    ``load_rules`` swallows a parse failure because a bad row must not take down a forecast. A
+    *proposal* is the opposite case: an unparseable definition should never reach the table in the
+    first place, and this is the gate that keeps a model-authored rule out. Anything that survives
+    here is expressible in the same language a human's proposal is, with the same absence of any
+    verb that could raise a probability.
+    """
+    return Rule.model_validate(_coerce_enums(dict(definition)))
 
 
 def load_rules(cur: Cursor, *, include_shadow: bool = True) -> list[Rule]:

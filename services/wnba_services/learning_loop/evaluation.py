@@ -52,17 +52,76 @@ def classify_error(
     projected_stat: float,
     actual_stat: float,
     line_value: float | None,
-) -> tuple[str, bool, float]:
-    """Assign a deliberately coarse, testable first-pass error category."""
+    data_quality_score: float | None = None,
+    predicted_probability: float | None = None,
+    hit: bool | None = None,
+) -> tuple[str, bool, float, str | None]:
+    """Rank the candidate causes of one miss and name the best two.
+
+    This replaces an ordered if-chain whose first branch was ``abs(minutes_error) >= 5``. Because
+    every downstream stage -- hypotheses, candidate rules, research proposals -- groups by the
+    category chosen here, that branch order was quietly deciding what the system was able to
+    learn: a five-minute rotation swing is routine, so a large share of every miss was filed as
+    ``minutes_projection`` whatever else had also gone wrong, and the proposal generator dutifully
+    kept proposing minutes rules.
+
+    Three changes:
+
+    **Causes are scored, not ordered.** Each candidate produces a score normalised so that 1.0 is
+    the old pass/fail threshold. The highest wins; the runner-up is returned as
+    ``secondary_error`` so a cause sitting underneath a louder one is still visible to the
+    reviewer.
+
+    **The stat error is decomposed.** Minutes enter the forecast multiplicatively, so part of any
+    stat miss is just the minutes miss carried through. Scoring efficiency on the *residual* --
+    what is left after the minutes error explains what it can -- is what stops a correct
+    per-minute rate from being blamed for a rotation change, and stops a genuine efficiency
+    collapse from hiding behind one.
+
+    **Two causes that had nowhere to go.** ``data_quality`` for a forecast built on inputs the
+    quality gate already distrusted, and ``modeling`` for the case that matters most: a
+    confidently wrong forecast with no identifiable input error. That last one used to land in
+    ``random_variance`` and be marked unavoidable, which is how a systematic modelling bias gets
+    filed as luck and generates nothing, forever.
+
+    Returns ``(primary, avoidable, confidence, secondary)``.
+    """
     minutes_error = actual_minutes - projected_minutes
     stat_error = actual_stat - projected_stat
-    if abs(minutes_error) >= 5.0:
-        return "minutes_projection", True, min(0.95, 0.55 + abs(minutes_error) / 40)
+
+    # What the minutes miss alone would have produced, at the rate we projected.
+    per_minute = projected_stat / projected_minutes if projected_minutes > 0 else 0.0
+    residual = stat_error - minutes_error * per_minute
+
+    # 1.0 == "as large as the old threshold". Anything below 1.0 is not a nameable cause.
+    tolerance = max(4.0, abs(projected_stat) * 0.3)
+    scores: dict[str, float] = {
+        "minutes_projection": abs(minutes_error) / 5.0,
+        "rate_or_efficiency": abs(residual) / tolerance,
+    }
     if line_value is not None and line_value <= -1.0:
-        return "market_movement", True, min(0.9, 0.6 + abs(line_value) / 20)
-    if abs(stat_error) >= max(4.0, abs(projected_stat) * 0.3):
-        return "rate_or_efficiency", True, 0.65
-    return "random_variance", False, 0.6
+        scores["market_movement"] = abs(line_value) / 1.0
+    if data_quality_score is not None and data_quality_score < 0.90:
+        # 0.90 is the recommendation gate; below it the forecast was built on inputs the system
+        # had already said it did not trust.
+        scores["data_quality"] = (0.90 - data_quality_score) / 0.10
+
+    ranked = sorted(scores.items(), key=lambda item: item[1], reverse=True)
+    named = [(cause, score) for cause, score in ranked if score >= 1.0]
+
+    if named:
+        primary, score = named[0]
+        secondary = named[1][0] if len(named) > 1 else None
+        return primary, True, round(min(0.95, 0.55 + min(score, 4.0) / 10), 4), secondary
+
+    # No input error large enough to name. If the forecast was nevertheless sharp and wrong, that
+    # is a modelling failure and an avoidable one -- the inputs were fine and the answer was not.
+    if predicted_probability is not None and hit is False:
+        sharpness = abs(predicted_probability - 0.5) * 2
+        if sharpness >= 0.50:
+            return "modeling", True, round(min(0.9, 0.5 + sharpness / 4), 4), ranked[0][0]
+
+    return "random_variance", False, 0.6, None
 
 
 def _probability_for_side(over_probability: float, side: str) -> float:
@@ -89,29 +148,33 @@ def evaluate_models(*, now: datetime | None = None) -> EvaluationBatch:
                 line_value = direction * (
                     float(str(episode["closing_line"])) - float(str(episode["line"]))
                 )
-            category, avoidable, confidence = classify_error(
+            category, avoidable, confidence, secondary = classify_error(
                 projected_minutes=float(str(episode["projected_minutes"])),
                 actual_minutes=float(str(episode["actual_minutes"])),
                 projected_stat=float(str(episode["projected_mean"])),
                 actual_stat=float(str(episode["actual_stat"])),
                 line_value=line_value,
+                data_quality_score=float(str(episode["data_quality_score"])),
+                predicted_probability=float(str(episode["predicted_probability"])),
+                hit=bool(episode["hit"]),
             )
             cur.execute(
                 """INSERT INTO wnba.error_attributions
-                   (attribution_id,episode_id,primary_error,avoidable,confidence,minutes_error,
-                    stat_error,line_value,detail,attributed_at)
-                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING""",
+                   (attribution_id,episode_id,primary_error,secondary_error,avoidable,confidence,
+                    minutes_error,stat_error,line_value,detail,attributed_at)
+                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING""",
                 (
                     uuid4(),
                     episode["episode_id"],
                     category,
+                    secondary,
                     avoidable,
                     confidence,
                     float(str(episode["actual_minutes"]))
                     - float(str(episode["projected_minutes"])),
                     float(str(episode["actual_stat"])) - float(str(episode["projected_mean"])),
                     line_value,
-                    Jsonb({"method": "rules-v0.1.0", "human_reviewed": False}),
+                    Jsonb({"method": "scored-causes-v1", "human_reviewed": False}),
                     at,
                 ),
             )

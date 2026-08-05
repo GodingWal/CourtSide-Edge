@@ -1,18 +1,35 @@
 [Unit]
 Description=Propose and backtest conservative WNBA analyst rules
 After=wnba-settlement.service docker.service
+OnFailure=wnba-liveness-alert.service
 
 [Service]
 Type=oneshot
 WorkingDirectory=/opt/wnba/repo
 EnvironmentFile=/opt/wnba/repo/.env
+# Ordering is the loop's own order, and each step reads what the one before it wrote.
+#
+#   propose-rules      measured errors  -> hypotheses + candidate rules (DeepSeek extends the
+#                                          catalogue where it is exhausted; everything lands
+#                                          `proposed`, unable to touch a forecast)
+#   backtest-rules     proposed rules   -> `backtested` or `rejected` against the settled record
+#   review-rules       ACTIVE rules     -> scored on their own live firings; harmful ones are
+#                                          suspended automatically. This is the only step here
+#                                          that changes what a forecast sees, and it can only
+#                                          ever remove a rule's effect.
+#   review-hypotheses  open hypotheses  -> supported / refuted / inconclusive on post-creation
+#                                          evidence, so causal memory stops being append-only
+#   propose            error categories -> the research-proposal queue. This ran nowhere before:
+#                                          the unit called `propose-rules`, one suffix away, and
+#                                          the proposals panel rendered its empty state for the
+#                                          life of the deployment.
+#   experiments evaluate               -> verdicts on open champion/challenger experiments;
+#                                          promotes nothing, ever.
 ExecStart=/opt/wnba/repo/.venv/bin/wnba learning propose-rules
 ExecStart=/opt/wnba/repo/.venv/bin/wnba learning backtest-rules
-# Re-scores open champion/challenger experiments against whatever settled during the week. It
-# cannot promote anything -- the database rejects a promotion with no named approver -- so this
-# unit reaching a `challenger_better` verdict changes nothing until a human runs
-# `wnba learning experiments promote`.
+ExecStart=/opt/wnba/repo/.venv/bin/wnba learning review-rules
+ExecStart=/opt/wnba/repo/.venv/bin/wnba learning review-hypotheses
+ExecStart=/opt/wnba/repo/.venv/bin/wnba learning propose
 ExecStart=/opt/wnba/repo/.venv/bin/wnba learning experiments evaluate
-TimeoutStartSec=30m
+TimeoutStartSec=45m
 Nice=10
-

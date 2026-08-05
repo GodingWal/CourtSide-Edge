@@ -1,0 +1,10 @@
+[Unit]
+Description=Review materially changed WNBA projections with PAT research
+
+[Timer]
+OnCalendar=*:0/30
+RandomizedDelaySec=2m
+Persistent=true
+
+[Install]
+WantedBy=timers.target

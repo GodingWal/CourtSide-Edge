@@ -23,10 +23,13 @@ operational. Automated wager execution remains permanently out of scope.
 | Fitted calibration and weights | Operational | Isotonic maps, stacked weights, edge shrinkage |
 | Analyst rules in the forecast path | Operational | Active and shadow firings recorded per episode |
 | Walk-forward evaluation | Operational | Five pre-tip snapshots and benchmark comparisons |
-| PAT-style research | Awaiting API key | Five DeepSeek roles with cited expiring claims |
-| Learning loop | Operational | Calibration, drift, attribution, feedback and proposals |
+| PAT-style research | Built, not yet deployed | Five DeepSeek roles with cited expiring claims; migration 026 and its modules are uncommitted, so the VPS does not have them |
+| Learning loop | Closed | Hypotheses reviewed against post-creation evidence; active rules re-scored on live firings and auto-suspended when harmful; measured drift widens forecasts |
+| Error attribution | Scored, two causes | Ordered if-chain replaced by ranked causes over the minutes-residual; `data_quality` and `modeling` added |
+| Model participation in learning | Advisory, audited | DeepSeek drafts rules, proposal designs, hypothesis critiques and withdrawal rationales; every call recorded in `model_advisories` with used/fallback/rejected |
 | Independent-sample accounting | Complete | Repeats collapsed; game clustering corrected |
 | Rule proposal and backtest | Operational | Weekly proposal/backtest; named CLI approval only |
+| Rule withdrawal | Automatic, one-way | Harmful active rules suspend without a human; reactivation still needs a named one |
 | Incident lifecycle | Complete | Cleared conditions resolve; persisting ones refresh |
 | Cross-source consensus | Built, one source live | Consensus, dispersion, best price, closing line |
 | End-to-end pipeline tests | Complete | Quote -> forecast -> decision -> settlement |
@@ -101,6 +104,20 @@ makes that call, closing-line value stays a pending readiness gate.
 - Reject uncited claims; agents may propose features but never write forecast probabilities.
 - Postgame error attribution, analyst feedback, hypothesis registry and weekly proposals.
 - Champion/challenger evaluation, shadow deployment and human-only promotion.
+- The PAT organization is implemented: deterministic coordinators create trigger-specific plans;
+  a data auditor blocks stale, locked, incomplete, or low-quality evidence; comparable settled
+  episodes are retrieved strictly from before the forecast; five agents state independent
+  advisory views before seeing peers and revise once after adversarial disclosure; and a decision
+  synthesizer records support, caution, block, or insufficient evidence without changing the
+  statistical model probability.
+- Claims expire automatically. Normal analyst usage records viewed/useful/misleading evidence and
+  feeds a ranker. Settled advisory views update domain-specific credibility, while source
+  timeliness updates source reliability. Material injuries, unresolved roles, stale quotes,
+  teammate changes, and high model disagreement trigger scheduled research automatically.
+- DeepSeek may propose only declarative rules over the closed DSL. The proposal must cite evidence
+  and state a mechanism, confounders, expiry, and withdrawal criteria. It lands as `proposed`, is
+  replayed by the existing rule backtester, runs in shadow, and still needs a named human approval
+  before it can affect a forecast. There is no executable-code or self-activation path.
 - Feed measured miscalibration back into the forecast rather than only recording it. Done:
   calibration maps, ensemble weights and edge shrinkage are refit at settlement and applied on
   the next run, each adopted only when it beats the status quo out of fold.

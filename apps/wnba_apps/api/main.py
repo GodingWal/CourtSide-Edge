@@ -155,6 +155,8 @@ class FeedbackRequest(BaseModel):
     weakest_assumption: Annotated[str, Field(max_length=500)] | None = None
     missing_context: Annotated[str, Field(max_length=1000)] | None = None
     would_repeat: bool
+    evidence_ids_useful: list[UUID] = Field(default_factory=list, max_length=50)
+    evidence_ids_misleading: list[UUID] = Field(default_factory=list, max_length=50)
 
 
 class PickLegDraft(BaseModel):
@@ -783,27 +785,97 @@ def projection_research(projection_id: UUID) -> dict[str, object]:
                 (run["research_run_id"],),
             )
             analyses = [dict(row) for row in cur.fetchall()]
+            cur.execute(
+                """SELECT * FROM wnba.research_audits WHERE research_run_id=%s
+                   ORDER BY audited_at DESC LIMIT 1""",
+                (run["research_run_id"],),
+            )
+            audit = cur.fetchone()
+            cur.execute(
+                "SELECT * FROM wnba.decision_syntheses WHERE research_run_id=%s",
+                (run["research_run_id"],),
+            )
+            synthesis = cur.fetchone()
+            cur.execute(
+                """SELECT * FROM wnba.agent_forecasts WHERE research_run_id=%s
+                   ORDER BY round,agent_role""",
+                (run["research_run_id"],),
+            )
+            agent_forecasts = [dict(row) for row in cur.fetchall()]
+            cur.execute(
+                """SELECT rp.*,d.prop_type,d.line,o.actual_stat,o.hit
+                   FROM wnba.research_precedents rp
+                   JOIN wnba.decision_episodes d USING(episode_id)
+                   JOIN wnba.episode_outcomes o USING(episode_id)
+                   WHERE rp.research_run_id=%s ORDER BY rp.rank""",
+                (run["research_run_id"],),
+            )
+            precedents = [dict(row) for row in cur.fetchall()]
+            cur.execute(
+                """SELECT d.episode_id FROM wnba.stat_forecasts f
+                   JOIN wnba.decision_episodes d
+                     ON d.quote_id=f.quote_id AND d.model_run_id=f.model_run_id
+                   WHERE f.projection_id=%s LIMIT 1""",
+                (projection_id,),
+            )
+            episode = cur.fetchone()
+            if episode is not None:
+                for analysis in analyses:
+                    raw_evidence_ids = analysis["evidence_ids"]
+                    evidence_ids = (
+                        raw_evidence_ids if isinstance(raw_evidence_ids, list | tuple) else []
+                    )
+                    for evidence_id in evidence_ids:
+                        cur.execute(
+                            """INSERT INTO wnba.evidence_interactions
+                               (interaction_id,evidence_id,episode_id,analyst,interaction,weight,
+                                occurred_at)
+                               SELECT %s,%s,%s,'owner','viewed',1,%s
+                               WHERE NOT EXISTS (
+                                 SELECT 1 FROM wnba.evidence_interactions
+                                 WHERE evidence_id=%s AND episode_id=%s
+                                   AND analyst='owner' AND interaction='viewed')""",
+                            (
+                                uuid4(),
+                                evidence_id,
+                                episode["episode_id"],
+                                datetime.now(UTC),
+                                evidence_id,
+                                episode["episode_id"],
+                            ),
+                        )
     except Exception as exc:
         return {"available": False, "reason": str(exc)[:200]}
-    return {"available": True, "configured": True, "run": dict(run), "analyses": analyses}
+    return {
+        "available": True,
+        "configured": True,
+        "run": dict(run),
+        "analyses": analyses,
+        "audit": None if audit is None else dict(audit),
+        "synthesis": None if synthesis is None else dict(synthesis),
+        "agent_forecasts": agent_forecasts,
+        "precedents": precedents,
+    }
 
 
 @app.post("/api/research/{projection_id}/run")
 def launch_projection_research(projection_id: UUID) -> dict[str, object]:
     """Owner-triggered research only; no automatic API spending."""
-    from wnba_services.research_agents.workflow import run_projection_research
+    from wnba_services.research_agents.pat_workflow import run_pat_research
 
     try:
-        result = run_projection_research(projection_id)
+        result = run_pat_research(projection_id)
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     return {
         "research_run_id": result.research_run_id,
-        "analyses": result.analyses,
-        "claims": result.claims,
-        "evidence": result.evidence,
+        "status": result.status,
+        "round_one": result.round_one,
+        "round_two": result.round_two,
+        "precedents": result.precedents,
+        "rule_proposed": result.rule_proposed,
     }
 
 
@@ -821,8 +893,8 @@ def submit_feedback(episode_id: UUID, feedback: FeedbackRequest) -> dict[str, ob
             """INSERT INTO wnba.analyst_feedback
                (feedback_id,episode_id,analyst,submitted_at,feedback_type,projection_useful,
                 evidence_relevant,confidence_appropriate,weakest_assumption,missing_context,
-                would_repeat)
-               VALUES (%s,%s,'owner',%s,%s,%s,%s,%s,%s,%s,%s)""",
+                would_repeat,evidence_ids_useful,evidence_ids_misleading)
+               VALUES (%s,%s,'owner',%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
             (
                 feedback_id,
                 episode_id,
@@ -834,8 +906,25 @@ def submit_feedback(episode_id: UUID, feedback: FeedbackRequest) -> dict[str, ob
                 feedback.weakest_assumption,
                 feedback.missing_context,
                 feedback.would_repeat,
+                feedback.evidence_ids_useful,
+                feedback.evidence_ids_misleading,
             ),
         )
+        at = datetime.now(UTC)
+        for evidence_id in feedback.evidence_ids_useful:
+            cur.execute(
+                """INSERT INTO wnba.evidence_interactions
+                   (interaction_id,evidence_id,episode_id,analyst,interaction,weight,occurred_at)
+                   VALUES (%s,%s,%s,'owner','useful',2,%s)""",
+                (uuid4(), evidence_id, episode_id, at),
+            )
+        for evidence_id in feedback.evidence_ids_misleading:
+            cur.execute(
+                """INSERT INTO wnba.evidence_interactions
+                   (interaction_id,evidence_id,episode_id,analyst,interaction,weight,occurred_at)
+                   VALUES (%s,%s,%s,'owner','misleading',-3,%s)""",
+                (uuid4(), evidence_id, episode_id, at),
+            )
         cur.execute(
             """UPDATE wnba.decision_episodes SET analyst_decision=%s
                WHERE episode_id=%s AND analyst_decision IS NULL""",
@@ -865,8 +954,13 @@ def learning() -> dict[str, object]:
         proposals = [dict(row) for row in cur.fetchall()]
         cur.execute("SELECT * FROM wnba.hypotheses ORDER BY created_at DESC LIMIT 100")
         hypotheses = [dict(row) for row in cur.fetchall()]
+        # `e.*` already carries `challenger_name` since migration 025, so aliasing
+        # `challenger.name` to the same label put two columns of that name in the result set and
+        # left `dict(row)` to silently keep whichever came last. They hold identical strings today
+        # only because `ensure_challenger_version` writes both from `challenger.name`; the
+        # champion alias is the one that is actually needed.
         cur.execute(
-            """SELECT e.*,champion.name AS champion_name,challenger.name AS challenger_name
+            """SELECT e.*,champion.name AS champion_name
                FROM wnba.experiments e
                JOIN wnba.model_versions champion
                  ON champion.model_version_id=e.champion_model_version_id
@@ -890,7 +984,8 @@ def learning() -> dict[str, object]:
         cur.execute(
             """SELECT rule_id,title,rationale,status,priority,proposed_by,proposed_at,
                       approved_by,approved_at,approval_reason,retired_by,retired_at,
-                      retirement_reason,backtest
+                      retirement_reason,backtest,live_review,last_reviewed_at,suspended_at,
+                      suspension_reason,authored_by_model
                FROM wnba.analyst_rules
                ORDER BY proposed_at DESC LIMIT 100"""
         )
@@ -902,6 +997,33 @@ def learning() -> dict[str, object]:
                FROM wnba.rule_firings GROUP BY rule_id ORDER BY firings DESC"""
         )
         rule_firings = [dict(row) for row in cur.fetchall()]
+        # How much of the last month's learning the model actually authored, and how often the
+        # provider failed. Without this, a loop quietly degraded to templates by an outage reads
+        # exactly like a loop that is working.
+        cur.execute(
+            """SELECT task,
+                      count(*) FILTER (WHERE disposition='used') AS used,
+                      count(*) FILTER (WHERE disposition='fallback') AS fallback,
+                      count(*) FILTER (WHERE disposition='rejected') AS rejected,
+                      max(requested_at) AS latest
+               FROM wnba.model_advisories
+               WHERE requested_at > now() - interval '30 days'
+               GROUP BY task ORDER BY count(*) DESC"""
+        )
+        advisories = [dict(row) for row in cur.fetchall()]
+        # Forecasts the system widened on its own measured drift.
+        cur.execute(
+            """SELECT e.response,count(*) AS events,
+                      avg(abs(e.probability_before-0.5)
+                          -abs(e.probability_after-0.5)) AS mean_shrink,
+                      max(e.applied_at) AS latest,i.component_name,i.severity
+               FROM wnba.deescalation_events e
+               JOIN wnba.drift_incidents i ON i.incident_id=e.incident_id
+               WHERE e.applied_at > now() - interval '30 days'
+               GROUP BY e.response,i.component_name,i.severity
+               ORDER BY count(*) DESC"""
+        )
+        deescalations = [dict(row) for row in cur.fetchall()]
     return {
         "automatic_approval": False,
         "proposals": proposals,
@@ -911,6 +1033,8 @@ def learning() -> dict[str, object]:
         "feedback": feedback,
         "rules": rules,
         "rule_firings": rule_firings,
+        "advisories": advisories,
+        "deescalations": deescalations,
     }
 
 

@@ -37,12 +37,16 @@ from wnba_services.learning_loop.experiments import (
     promote_challenger,
     rollback_promotion,
 )
+from wnba_services.learning_loop.hypothesis_review import review_hypotheses
 from wnba_services.learning_loop.proposals import generate_research_proposals
 from wnba_services.learning_loop.readiness import evaluate_readiness
 from wnba_services.learning_loop.rule_lifecycle import approve_rule, retire_rule, run_rule_backtests
 from wnba_services.learning_loop.rule_proposals import propose_from_measured_errors
+from wnba_services.learning_loop.rule_review import review_active_rules
 from wnba_services.learning_loop.settlement import settle_paper_episodes
 from wnba_services.monitoring.liveness import run_liveness_checks
+from wnba_services.research_agents.organization import refresh_research_memory
+from wnba_services.research_agents.pat_workflow import run_pat_research, run_triggered_research
 from wnba_services.research_agents.workflow import run_projection_research
 from wnba_store.db import connect, migrate
 
@@ -328,8 +332,41 @@ def learning_propose_rules() -> None:
     console.print(
         f"[green]proposals complete[/green] categories={result.categories_reviewed} "
         f"hypotheses={result.hypotheses_created} rules_proposed={result.rules_proposed} "
-        f"episodes_linked={result.episodes_linked}"
+        f"model_authored={result.model_authored_rules} "
+        f"episodes_linked={result.episodes_linked} advisories={result.advisories}"
     )
+
+
+@learning_app.command("review-hypotheses")
+def learning_review_hypotheses() -> None:
+    """Re-judge open hypotheses against evidence that postdates them."""
+    result = review_hypotheses()
+    console.print(
+        f"[green]hypothesis review complete[/green] reviewed={result.reviewed} "
+        f"supported={result.supported} refuted={result.refuted} "
+        f"inconclusive={result.inconclusive} episodes_linked={result.episodes_linked} "
+        f"advisories={result.advisories}"
+    )
+
+
+@learning_app.command("review-rules")
+def learning_review_rules() -> None:
+    """Score active rules on their live firings and suspend the harmful ones.
+
+    Suspension is automatic because it is a de-escalation. Reactivation is not reachable from
+    here and still requires `wnba learning approve-rule` with a named human.
+    """
+    result = review_active_rules()
+    console.print(
+        f"[green]rule review complete[/green] reviewed={result.reviewed} "
+        f"helpful={result.helpful} harmful={result.harmful} "
+        f"inconclusive={result.inconclusive} advisories={result.advisories}"
+    )
+    if result.suspended:
+        console.print(
+            f"[yellow]{result.suspended} rule(s) suspended automatically on measured harm; "
+            "each needs a named human to return to active.[/yellow]"
+        )
 
 
 @learning_app.command("backtest-rules")
@@ -404,7 +441,8 @@ def learning_propose() -> None:
     result = generate_research_proposals()
     console.print(
         f"[green]proposal review complete[/green] proposed={result.proposed} "
-        f"categories_reviewed={result.categories_reviewed}"
+        f"categories_reviewed={result.categories_reviewed} "
+        f"model_authored={result.model_authored} advisories={result.advisories}"
     )
 
 
@@ -535,6 +573,42 @@ def research_run(
     console.print(
         f"[green]research complete[/green] run={result.research_run_id} "
         f"analyses={result.analyses} claims={result.claims} evidence={result.evidence}"
+    )
+
+
+@research_app.command("pat")
+def research_pat(
+    projection_id: Annotated[UUID, typer.Argument(help="Immutable projection identifier.")],
+) -> None:
+    """Run coordinator, audit, independent debate, synthesis, and safe rule proposal."""
+    result = run_pat_research(projection_id)
+    console.print(
+        f"[green]PAT research complete[/green] run={result.research_run_id} "
+        f"status={result.status} rounds={result.round_one}/{result.round_two} "
+        f"precedents={result.precedents} rule_proposed={result.rule_proposed}"
+    )
+
+
+@research_app.command("triggered")
+def research_triggered(
+    limit: Annotated[int, typer.Option(min=1, max=20)] = 3,
+) -> None:
+    """Research material injury, role, freshness, or disagreement changes automatically."""
+    batches = run_triggered_research(limit=limit)
+    console.print(
+        f"[green]triggered PAT review complete[/green] runs={len(batches)} "
+        f"blocked={sum(item.status == 'blocked' for item in batches)}"
+    )
+
+
+@research_app.command("refresh-memory")
+def research_refresh_memory() -> None:
+    """Expire claims and update evidence, source, and domain credibility scores."""
+    result = refresh_research_memory()
+    console.print(
+        f"[green]research memory refreshed[/green] expired_claims={result.expired_claims} "
+        f"evidence_rankings={result.evidence_rankings} source_scores={result.source_scores} "
+        f"credibility_scores={result.credibility_scores}"
     )
 
 
