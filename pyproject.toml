@@ -105,8 +105,20 @@ disallow_any_generics = true
 plugins = ["pydantic.mypy"]
 exclude = ["services/video_intelligence", "research/"]
 
+# Optional-dependency modules. CI runs `uv sync --all-groups`, which installs dependency *groups*
+# and not optional-dependency *extras*, so none of these are importable there -- and that is the
+# point: every one of them is imported inside a function, behind a guard, by code whose absence is
+# a supported state. `sportsdataverse` and `pbpstats` are the `stats` extra; `lightgbm` is the
+# `models` extra that the gradient-boosted challenger needs and production must never require.
 [[tool.mypy.overrides]]
-module = ["duckdb.*", "polars.*", "sportsdataverse.*", "pbpstats.*", "supabase.*"]
+module = [
+    "duckdb.*",
+    "lightgbm.*",
+    "pbpstats.*",
+    "polars.*",
+    "sportsdataverse.*",
+    "supabase.*",
+]
 ignore_missing_imports = true
 
 # ---------------------------------------------------------------------------

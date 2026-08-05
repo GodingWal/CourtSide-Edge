@@ -159,3 +159,34 @@ def test_the_specification_records_what_it_had_to_beat() -> None:
     assert specification["baseline_that_must_be_beaten"] == "devigged market prior"
     assert specification["serialisation"] == "plain text booster, never a pickle"
     assert specification["analysis_only"] is True
+
+
+# --------------------------------------------------------------------------------------
+# Production must never depend on the optional dependency
+# --------------------------------------------------------------------------------------
+def test_the_optional_dependency_is_never_imported_at_module_scope() -> None:
+    """The property CI depends on, asserted rather than assumed.
+
+    CI installs dependency *groups* and not optional-dependency *extras*, so ``lightgbm`` is
+    absent there -- and the whole forecasting package still has to import, because a missing
+    optional model library must not break the champion. A module-level ``import lightgbm`` would
+    pass locally, where the extra is installed, and break every CI run and every deployment that
+    did not opt in.
+    """
+    import ast
+    from pathlib import Path
+
+    package = Path(__file__).resolve().parents[2] / "services" / "wnba_services" / "forecasting"
+    offenders: list[str] = []
+    for source in package.glob("*.py"):
+        tree = ast.parse(source.read_text())
+        for node in tree.body:  # module scope only; guarded function-level imports are the point
+            names: list[str] = []
+            if isinstance(node, ast.Import):
+                names = [alias.name for alias in node.names]
+            elif isinstance(node, ast.ImportFrom) and node.module:
+                names = [node.module]
+            if any(name.split(".")[0] in {"lightgbm", "numpy"} for name in names):
+                offenders.append(f"{source.name}:{node.lineno}")
+
+    assert not offenders, f"optional dependency imported at module scope: {offenders}"
