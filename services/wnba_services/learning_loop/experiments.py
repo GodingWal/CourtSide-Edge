@@ -41,6 +41,7 @@ from psycopg.types.json import Jsonb
 from wnba_domain.decision import brier_score, log_loss
 from wnba_store.db import connect
 
+from wnba_services.forecasting.challenger_types import ArtifactBacked
 from wnba_services.forecasting.challengers import (
     CHALLENGERS,
     ChallengerPrediction,
@@ -354,7 +355,14 @@ def record_shadow_predictions(
         failure: str | None = None
         started = time.perf_counter()
         try:
-            prediction = challenger_by_name(name).predict(inputs)
+            family = challenger_by_name(name)
+            # A family whose weights live in the database has to be given the cursor before it
+            # can answer. Without this the tree challenger raises on every episode forever and
+            # the experiment record reports a 100% failure rate, which reads as a broken model
+            # rather than as missing wiring.
+            if isinstance(family, ArtifactBacked):
+                family.ensure_loaded(cur)
+            prediction = family.predict(inputs)
         except Exception as error:  # the failure is itself the measurement
             failure = f"{type(error).__name__}: {error}"[:500]
         latency_ms = (time.perf_counter() - started) * 1000.0

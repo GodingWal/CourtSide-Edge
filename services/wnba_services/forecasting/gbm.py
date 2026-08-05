@@ -564,8 +564,15 @@ class GradientBoostedChallenger:
             "analysis_only": True,
         }
 
-    def load(self, cur: Any) -> bool:
-        """Load the active artifact. Returns whether one was found."""
+    def ensure_loaded(self, cur: Any) -> bool:
+        """Load the active artifact once. Returns whether one is available.
+
+        Idempotent because it is called per forecast run and per replay, not per prop: re-reading
+        a booster out of the database for every line on the board would turn a shadow comparison
+        into a load test.
+        """
+        if self._loaded:
+            return self._booster is not None
         try:
             import lightgbm as lgb
         except ImportError as error:  # pragma: no cover - optional-extra path

@@ -33,6 +33,7 @@ from wnba_services.forecasting.baseline import (
     market_inputs,
     stat_history_game,
 )
+from wnba_services.forecasting.challenger_types import ArtifactBacked
 from wnba_services.forecasting.challengers import CHALLENGERS, challenger_names
 from wnba_services.forecasting.gbm import record_training_example
 from wnba_services.forecasting.parameters import load_fitted_parameters
@@ -282,6 +283,12 @@ def run_walk_forward_backtest(*, now: datetime | None = None) -> BacktestBatch:
         # scored probability: the maps were fitted on settled episodes that overlap this very
         # period, so applying them here would score the model on its own answers.
         parameters = load_fitted_parameters(cur)
+        # Artifact-backed challengers are prepared once for the whole replay rather than per
+        # snapshot: the booster is the same for every row and re-reading it tens of thousands of
+        # times would measure the database instead of the model.
+        for family in CHALLENGERS.values():
+            if isinstance(family, ArtifactBacked):
+                family.ensure_loaded(cur)
 
         cur.execute(
             """SELECT q.* FROM wnba.historical_prop_quotes q

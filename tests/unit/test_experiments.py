@@ -11,10 +11,13 @@ from __future__ import annotations
 import random
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
-from typing import Any
+from typing import Any, cast
 from uuid import uuid4
 
 import pytest
+from wnba_services.forecasting.challenger_types import ArtifactBacked, ChallengerPrediction
+from wnba_services.forecasting.challengers import CHALLENGERS
+from wnba_services.forecasting.gbm import ArtifactMissing
 from wnba_services.forecasting.scoring import HistoryGame, ScoringInputs
 from wnba_services.learning_loop.experiments import (
     MATERIAL_LOG_LOSS_GAIN,
@@ -337,6 +340,74 @@ def test_shadow_predictions_are_written_for_each_running_experiment() -> None:
         assert "INSERT INTO wnba.challenger_predictions" in statement
         assert params[12] is False  # failed
         assert params[11] >= 0.0  # latency_ms
+
+
+def test_an_artifact_backed_challenger_is_prepared_before_it_is_asked_to_predict(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The shadow path owns the loading, or the family never loads at all.
+
+    A family whose weights live in the database is registered, asked to predict, and -- with no
+    caller for its loader -- raises on every episode forever. The experiment record then shows a
+    100% failure rate, which reads as "this model is broken" rather than "nobody wired it up".
+    """
+    prepared: list[Any] = []
+
+    class Fake:
+        name = "fake-artifact-backed"
+
+        def ensure_loaded(self, cur: Any) -> bool:
+            prepared.append(cur)
+            return True
+
+        def predict(self, inputs: ScoringInputs) -> ChallengerPrediction:
+            if not prepared:
+                raise ArtifactMissing("no active artifact")
+            return ChallengerPrediction(
+                name=self.name,
+                version="0.0.1",
+                mean=15.0,
+                stddev=5.0,
+                over=0.55,
+                push=0.0,
+                under=0.45,
+                pmf=(0.45, 0.55),
+                diagnostics={},
+            )
+
+    monkeypatch.setitem(CHALLENGERS, "fake-artifact-backed", cast(Any, Fake()))
+    cursor = RecordingCursor(rowcount=1)
+
+    written = record_shadow_predictions(
+        cursor,
+        [
+            {
+                "experiment_id": uuid4(),
+                "challenger_name": "fake-artifact-backed",
+                "challenger_model_version_id": uuid4(),
+            }
+        ],
+        episode_id=uuid4(),
+        inputs=_scoring_inputs(),
+        side="over",
+        at=TIP,
+    )
+
+    assert written == 1
+    assert prepared == [cursor]
+    _, params = cursor.calls[-1]
+    assert params[12] is False  # failed
+    assert params[9] == pytest.approx(0.55)
+
+
+def test_every_artifact_backed_family_in_the_registry_is_recognised_as_one() -> None:
+    """``isinstance`` against the protocol is what the wiring depends on.
+
+    ``GradientBoostedChallenger`` is the family this exists for; if its loader were renamed or
+    its signature drifted, the runtime check would quietly stop matching and the family would go
+    back to raising on every episode with nothing failing in CI.
+    """
+    assert isinstance(CHALLENGERS["gradient-boosted"], ArtifactBacked)
 
 
 def test_a_challenger_that_raises_is_recorded_as_a_failure_not_dropped() -> None:

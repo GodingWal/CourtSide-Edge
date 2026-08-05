@@ -11,11 +11,11 @@ A shared type belongs in a module that depends on neither of its users. That is 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import Any, Protocol, runtime_checkable
 
 from wnba_services.forecasting.scoring import ScoringInputs
 
-__all__ = ["Challenger", "ChallengerPrediction"]
+__all__ = ["ArtifactBacked", "Challenger", "ChallengerPrediction"]
 
 
 @dataclass(frozen=True)
@@ -48,4 +48,20 @@ class Challenger(Protocol):
 
     def predict(self, inputs: ScoringInputs) -> ChallengerPrediction:
         """Score one prop. Pure: same inputs, same output, always."""
+        ...
+
+
+@runtime_checkable
+class ArtifactBacked(Protocol):
+    """A challenger whose weights live in the database rather than in its source.
+
+    Exists so callers can prepare such a family without knowing which one it is. Without it the
+    tree challenger is registered, asked to predict, and raises on every episode forever -- the
+    experiment record would then show a 100% failure rate, which reads as "this model is broken"
+    rather than "nobody wired the loader". That is the same reader-with-no-writer shape this
+    codebase has now produced four times, and a protocol is what makes the wiring checkable.
+    """
+
+    def ensure_loaded(self, cur: Any) -> bool:
+        """Load the active artifact if it has not been loaded. Idempotent, cheap to re-call."""
         ...
