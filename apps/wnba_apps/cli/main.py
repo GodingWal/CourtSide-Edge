@@ -19,6 +19,7 @@ from wnba_services.feature_engine.roles import project_current_roles
 from wnba_services.feature_engine.teammate_effects import project_teammate_effects
 from wnba_services.forecasting.backtest import run_walk_forward_backtest
 from wnba_services.forecasting.baseline import run_baseline
+from wnba_services.forecasting.challengers import challenger_names
 from wnba_services.forecasting.fitting import fit_model_parameters
 from wnba_services.ingestion.archiver import run_archiver
 from wnba_services.ingestion.espn import backfill_espn, ingest_espn_date
@@ -27,12 +28,25 @@ from wnba_services.ingestion.identity import approve_unique_exact_names
 from wnba_services.ingestion.legacy import import_legacy_sqlite
 from wnba_services.ingestion.wnba_injuries import ingest_official_injuries
 from wnba_services.learning_loop.evaluation import evaluate_models
+from wnba_services.learning_loop.experiments import (
+    MINIMUM_INDEPENDENT_SAMPLE,
+    abandon_experiment,
+    evaluate_experiments,
+    list_experiments,
+    open_experiment,
+    promote_challenger,
+    rollback_promotion,
+)
+from wnba_services.learning_loop.hypothesis_review import review_hypotheses
 from wnba_services.learning_loop.proposals import generate_research_proposals
 from wnba_services.learning_loop.readiness import evaluate_readiness
 from wnba_services.learning_loop.rule_lifecycle import approve_rule, retire_rule, run_rule_backtests
 from wnba_services.learning_loop.rule_proposals import propose_from_measured_errors
+from wnba_services.learning_loop.rule_review import review_active_rules
 from wnba_services.learning_loop.settlement import settle_paper_episodes
 from wnba_services.monitoring.liveness import run_liveness_checks
+from wnba_services.research_agents.organization import refresh_research_memory
+from wnba_services.research_agents.pat_workflow import run_pat_research, run_triggered_research
 from wnba_services.research_agents.workflow import run_projection_research
 from wnba_store.db import connect, migrate
 
@@ -53,6 +67,9 @@ identity_app = typer.Typer(help="Audited cross-source identity review.", no_args
 learning_app = typer.Typer(
     help="Paper settlement, scoring, and learning loop.", no_args_is_help=True
 )
+experiments_app = typer.Typer(
+    help="Champion/challenger experiments. Promotion is a named human act.", no_args_is_help=True
+)
 injuries_app = typer.Typer(help="Official bitemporal WNBA injury reports.", no_args_is_help=True)
 roles_app = typer.Typer(help="Projected availability, starts, and minutes.", no_args_is_help=True)
 effects_app = typer.Typer(help="Shrunk teammate-absence role effects.", no_args_is_help=True)
@@ -69,6 +86,7 @@ app.add_typer(forecast_app, name="forecast")
 app.add_typer(backtest_app, name="backtest")
 app.add_typer(identity_app, name="identity")
 app.add_typer(learning_app, name="learning")
+learning_app.add_typer(experiments_app, name="experiments")
 app.add_typer(injuries_app, name="injuries")
 app.add_typer(roles_app, name="roles")
 app.add_typer(effects_app, name="effects")
@@ -314,8 +332,41 @@ def learning_propose_rules() -> None:
     console.print(
         f"[green]proposals complete[/green] categories={result.categories_reviewed} "
         f"hypotheses={result.hypotheses_created} rules_proposed={result.rules_proposed} "
-        f"episodes_linked={result.episodes_linked}"
+        f"model_authored={result.model_authored_rules} "
+        f"episodes_linked={result.episodes_linked} advisories={result.advisories}"
     )
+
+
+@learning_app.command("review-hypotheses")
+def learning_review_hypotheses() -> None:
+    """Re-judge open hypotheses against evidence that postdates them."""
+    result = review_hypotheses()
+    console.print(
+        f"[green]hypothesis review complete[/green] reviewed={result.reviewed} "
+        f"supported={result.supported} refuted={result.refuted} "
+        f"inconclusive={result.inconclusive} episodes_linked={result.episodes_linked} "
+        f"advisories={result.advisories}"
+    )
+
+
+@learning_app.command("review-rules")
+def learning_review_rules() -> None:
+    """Score active rules on their live firings and suspend the harmful ones.
+
+    Suspension is automatic because it is a de-escalation. Reactivation is not reachable from
+    here and still requires `wnba learning approve-rule` with a named human.
+    """
+    result = review_active_rules()
+    console.print(
+        f"[green]rule review complete[/green] reviewed={result.reviewed} "
+        f"helpful={result.helpful} harmful={result.harmful} "
+        f"inconclusive={result.inconclusive} advisories={result.advisories}"
+    )
+    if result.suspended:
+        console.print(
+            f"[yellow]{result.suspended} rule(s) suspended automatically on measured harm; "
+            "each needs a named human to return to active.[/yellow]"
+        )
 
 
 @learning_app.command("backtest-rules")
@@ -390,7 +441,110 @@ def learning_propose() -> None:
     result = generate_research_proposals()
     console.print(
         f"[green]proposal review complete[/green] proposed={result.proposed} "
-        f"categories_reviewed={result.categories_reviewed}"
+        f"categories_reviewed={result.categories_reviewed} "
+        f"model_authored={result.model_authored} advisories={result.advisories}"
+    )
+
+
+@experiments_app.command("list")
+def experiments_list() -> None:
+    """Show every champion/challenger experiment and what it has measured so far."""
+    for row in list_experiments():
+        console.print(
+            f"  {row['status']:11} {row['challenger_name'] or '-':20} "
+            f"verdict={row['verdict'] or 'pending':22} "
+            f"markets={row['independent_sample_size']}/{row['minimum_sample']} "
+            f"id={row['experiment_id']}"
+        )
+    console.print(f"[dim]known challengers: {', '.join(challenger_names())}[/dim]")
+
+
+@experiments_app.command("open")
+def experiments_open(
+    challenger: Annotated[str, typer.Argument(help="Challenger model family name.")],
+    opened_by: Annotated[str, typer.Option(help="Named human opening the experiment.")],
+    primary_metric: Annotated[
+        str, typer.Option(help="log_loss, brier, mae or line_value.")
+    ] = "log_loss",
+    minimum_sample: Annotated[
+        int, typer.Option(help="Independent markets required before promotion is considered.")
+    ] = MINIMUM_INDEPENDENT_SAMPLE,
+) -> None:
+    """Start a live shadow comparison. The challenger reaches no recommendation."""
+    experiment_id = open_experiment(
+        challenger,
+        opened_by=opened_by,
+        primary_metric=primary_metric,
+        minimum_sample=minimum_sample,
+    )
+    console.print(
+        f"[green]experiment open[/green] id={experiment_id} challenger={challenger} "
+        f"gate={minimum_sample} independent markets"
+    )
+
+
+@experiments_app.command("evaluate")
+def experiments_evaluate() -> None:
+    """Score open experiments against settled outcomes. Promotes nothing."""
+    evaluations = evaluate_experiments()
+    if not evaluations:
+        console.print("[yellow]no open experiments[/yellow]")
+        return
+    for result in evaluations:
+        champion = result.champion.log_loss
+        challenger = result.challenger.log_loss
+        console.print(
+            f"  {result.challenger_name:20} verdict={result.verdict:22} "
+            f"markets={result.independent_sample_size} "
+            f"champion_log_loss={'-' if champion is None else f'{champion:.4f}'} "
+            f"challenger_log_loss={'-' if challenger is None else f'{challenger:.4f}'}"
+        )
+        for group in result.subgroups:
+            if group["degraded"]:
+                console.print(
+                    f"    [red]degraded[/red] {group['dimension']}={group['value']} "
+                    f"n={group['sample_size']} gain={group['log_loss_gain']}"
+                )
+    console.print("[dim]promotion requires `wnba learning experiments promote`.[/dim]")
+
+
+@experiments_app.command("promote")
+def experiments_promote(
+    experiment_id: Annotated[str, typer.Argument(help="Evaluated experiment UUID.")],
+    approved_by: Annotated[str, typer.Option(help="Named human approver, stored permanently.")],
+    reason: Annotated[str, typer.Option(help="Why the evidence justifies replacing the champion.")],
+) -> None:
+    """Replace the champion with a challenger. Never called by automation."""
+    result = promote_challenger(UUID(experiment_id), approved_by=approved_by, reason=reason)
+    console.print(
+        f"[green]challenger promoted[/green] {result.challenger_name} "
+        f"approved_by={result.actor} at={result.changed_at.isoformat()}"
+    )
+
+
+@experiments_app.command("rollback")
+def experiments_rollback(
+    experiment_id: Annotated[str, typer.Argument(help="Promoted experiment UUID.")],
+    rolled_back_by: Annotated[str, typer.Option(help="Named human rolling the promotion back.")],
+    reason: Annotated[str, typer.Option(help="Why the promoted challenger is being withdrawn.")],
+) -> None:
+    """Restore the previous champion, keeping the promotion in the record."""
+    result = rollback_promotion(UUID(experiment_id), rolled_back_by=rolled_back_by, reason=reason)
+    console.print(
+        f"[yellow]promotion rolled back[/yellow] {result.challenger_name} by={result.actor}"
+    )
+
+
+@experiments_app.command("abandon")
+def experiments_abandon(
+    experiment_id: Annotated[str, typer.Argument(help="Running experiment UUID.")],
+    actor: Annotated[str, typer.Option(help="Named human closing the experiment.")],
+    reason: Annotated[str, typer.Option(help="Why the experiment is being stopped.")],
+) -> None:
+    """Stop collecting shadow predictions without reaching a verdict."""
+    result = abandon_experiment(UUID(experiment_id), actor=actor, reason=reason)
+    console.print(
+        f"[yellow]experiment abandoned[/yellow] {result.challenger_name} by={result.actor}"
     )
 
 
@@ -434,6 +588,42 @@ def research_run(
         console.print(f"    contested: {predicate}")
     for flag in verdict.risk_flags:
         console.print(f"    risk: {flag}")
+
+
+@research_app.command("pat")
+def research_pat(
+    projection_id: Annotated[UUID, typer.Argument(help="Immutable projection identifier.")],
+) -> None:
+    """Run coordinator, audit, independent debate, synthesis, and safe rule proposal."""
+    result = run_pat_research(projection_id)
+    console.print(
+        f"[green]PAT research complete[/green] run={result.research_run_id} "
+        f"status={result.status} rounds={result.round_one}/{result.round_two} "
+        f"precedents={result.precedents} rule_proposed={result.rule_proposed}"
+    )
+
+
+@research_app.command("triggered")
+def research_triggered(
+    limit: Annotated[int, typer.Option(min=1, max=20)] = 3,
+) -> None:
+    """Research material injury, role, freshness, or disagreement changes automatically."""
+    batches = run_triggered_research(limit=limit)
+    console.print(
+        f"[green]triggered PAT review complete[/green] runs={len(batches)} "
+        f"blocked={sum(item.status == 'blocked' for item in batches)}"
+    )
+
+
+@research_app.command("refresh-memory")
+def research_refresh_memory() -> None:
+    """Expire claims and update evidence, source, and domain credibility scores."""
+    result = refresh_research_memory()
+    console.print(
+        f"[green]research memory refreshed[/green] expired_claims={result.expired_claims} "
+        f"evidence_rankings={result.evidence_rankings} source_scores={result.source_scores} "
+        f"credibility_scores={result.credibility_scores}"
+    )
 
 
 @injuries_app.command("poll")

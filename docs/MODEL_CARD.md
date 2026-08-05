@@ -81,7 +81,43 @@ threshold was unconnected to any product and was applied to an unshrunk edge.
 - The market prior is only informative where the source prices both sides differently; on a flat
   pick'em board it correctly contributes nothing.
 
+## Challengers
+
+Two model families run beside the champion and reach nothing. Both are pure functions of the
+same `ScoringInputs` the champion reads, so a difference between them is a difference in
+modelling rather than in what they were allowed to see.
+
+| Challenger | Family | What it does that the champion does not |
+|---|---|---|
+| `hierarchical-bayes` 0.1.0 | Conjugate Gamma–Poisson, three levels (league → prior season → player) | Carries the *posterior variance* of the rate into the predictive distribution, and discounts the likelihood by the player's observed over-dispersion. The champion's `hierarchical` component is a point estimate at a fixed 300-minute prior strength, so it reports the same width for a rate measured over 40 minutes and one measured over 700. |
+| `state-space-role` 0.1.0 | Local-level (Kalman) filter on minutes and per-minute rate | Estimates the signal-to-noise ratio per player from the autocovariance of first differences, so the gain rises through a genuine role change and stays low through noise. The champion's `player_state` component decays the past at a fixed per-market half-life either way. A projected-minutes row still overrides the filter's minutes estimate. |
+
+Not implemented, deliberately: a gradient-boosted challenger. It needs a dependency, a training
+set assembled from the feature store, and a fitting job with its own leakage controls. A stub
+wrapping the same five components would fill the experiments table without creating anything to
+learn from.
+
 ## Promotion
 
 Only the owner may promote a model, and only after every machine readiness gate is `pass` rather
 than `provisional_pass` or `pending`.
+
+Champion/challenger promotion has the same asymmetry the analyst-rule lifecycle has, enforced in
+three places rather than one:
+
+- `evaluate_experiments` can reach at most a `challenger_better` **verdict**. It contains no code
+  path that writes `promoted`.
+- `promote_challenger` re-reads the stored evaluation under a row lock and refuses unless the
+  verdict is `challenger_better`, the *independent* market count clears the experiment's gate, and
+  no subgroup is flagged as degraded.
+- The database rejects `promoted = true` without a named `approved_by` and a stated
+  `promotion_reason`, so no scheduled job can promote a model even if the code above were wrong.
+
+Rollback (`wnba learning experiments rollback`) restores the previous champion and leaves the
+promotion in the record. A model that was promoted and then withdrawn is a more useful fact than
+a model that was never promoted.
+
+Experiments are scored **paired** on identical episodes, deduplicated to one row per market, and
+gated on the effective sample after the within-game clustering correction. An episode a challenger
+failed to score is dropped from both sides; its failure is still counted in the experiment's
+failure rate.

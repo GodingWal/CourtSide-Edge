@@ -1,0 +1,14 @@
+[Unit]
+Description=Triggered PAT-style WNBA research and memory refresh
+After=wnba-forecast.service docker.service
+OnFailure=wnba-liveness-alert.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/wnba/repo
+EnvironmentFile=/opt/wnba/repo/.env
+ExecStart=/opt/wnba/repo/.venv/bin/wnba research refresh-memory
+ExecStart=/opt/wnba/repo/.venv/bin/wnba research triggered --limit 3
+TimeoutStartSec=30m
+Nice=10
+

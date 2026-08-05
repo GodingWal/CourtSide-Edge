@@ -52,6 +52,11 @@ SKEPTIC_DIRECTIVE = (
     "not counted."
 )
 
+# The full roster. The staged workflow below deliberately does not use this -- it runs the four
+# analysts first so the skeptic has something to review. The PAT forecast rounds do, because there
+# every role is polled at once for an advisory probability and there is no conclusion to challenge.
+AGENT_QUESTIONS = {**ANALYST_QUESTIONS, SKEPTIC_ROLE: SKEPTIC_QUESTION}
+
 
 @dataclass(frozen=True)
 class ResearchBatch:
