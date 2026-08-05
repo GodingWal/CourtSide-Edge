@@ -25,6 +25,7 @@ operational. Automated wager execution remains permanently out of scope.
 | Walk-forward evaluation | Operational | Five pre-tip snapshots and benchmark comparisons |
 | PAT-style research | Organization built, awaiting API key | Coordinator, blocking data auditor, two rounds, synthesizer, credibility |
 | Agent-authored rules | Built | Closed-vocabulary proposals with leakage inspection; no self-approval |
+| Analyst feedback loop | Built, awaiting labels | Review queue, structured labels, override scoring, expertise by domain |
 | Learning loop | Operational | Calibration, drift, attribution, feedback and proposals |
 | Independent-sample accounting | Complete | Repeats collapsed; game clustering corrected |
 | Rule proposal and backtest | Operational | Weekly proposal/backtest; named CLI approval only |
@@ -164,6 +165,32 @@ makes that call, closing-line value stays a pending readiness gate.
   market, gated on the effective sample after clustering, and checked for subgroup degradation.
   The evaluation reaches a verdict and stops; promotion needs a named human, and the database
   rejects a promotion without one. A gradient-boosted family remains unbuilt rather than stubbed.
+
+### 5b. Analyst feedback and credibility
+
+- Structured labelling now collects what the schema always promised. `evidence_ids_useful` and
+  `evidence_ids_misleading` were columns the retrieval ranking read, on a request model with no
+  such fields and an INSERT that omitted the columns -- the loop's input was not sparse, it was
+  unreachable, and the ranking looked like it worked. Both are now captured per cited evidence
+  item, alongside the weakest assumption (free text *and* a closed kind, because a sentence is
+  worth more individually and only the kind can be counted), the missing evidence, and an explicit
+  would-repeat.
+- A review queue lists settled decisions nobody has labelled, candidates first. "Little structured
+  feedback has accumulated" is mostly not a code problem, but the two frictions code can remove
+  are not knowing which decisions are worth ten minutes and having no way to name the specific
+  evidence that misled you.
+- Overrides are scored after settlement, in both directions. An override is the most informative
+  label available -- a falsifiable claim that the model is wrong, made before the outcome -- and
+  `analyst_decision` has existed since migration 001 with nothing ever reading it. An override on
+  a decision the system had already declined is recorded as neutral rather than scored: both
+  parties said no in effect, and since most of the board is declined, counting those is the
+  easiest way to manufacture an impressive override record.
+- Analyst expertise is computed per domain from pre-outcome labels and override outcomes, with the
+  same partial pooling and sample-size gate agent credibility uses. Labels written after the
+  result are stored and feed error attribution but are excluded from expertise, because knowing
+  the answer makes the weak assumption obvious. The score is displayed and gates nothing: there is
+  one human here, and a score that began discounting their overrides would be a bug with a
+  statistics paper attached.
 
 ### 6. Add video intelligence as an experimental sensor
 

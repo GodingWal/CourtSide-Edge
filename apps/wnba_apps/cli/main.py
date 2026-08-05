@@ -27,6 +27,10 @@ from wnba_services.ingestion.historical_markets import normalize_historical_mark
 from wnba_services.ingestion.identity import approve_unique_exact_names
 from wnba_services.ingestion.legacy import import_legacy_sqlite
 from wnba_services.ingestion.wnba_injuries import ingest_official_injuries
+from wnba_services.learning_loop.analyst_expertise import (
+    score_analyst_expertise,
+    unlabelled_settled_episodes,
+)
 from wnba_services.learning_loop.evaluation import evaluate_models
 from wnba_services.learning_loop.experiments import (
     MINIMUM_INDEPENDENT_SAMPLE,
@@ -318,13 +322,17 @@ def learning_settle() -> None:
     # Refitting here rather than in a separate timer: settlement is the only event that adds
     # evidence, so it is the only moment at which the fitted parameters can have changed.
     fitted = fit_model_parameters()
+    # Settlement is the only event that creates outcomes, so it is the only moment an override
+    # can be scored or an analyst's label can be compared against what actually happened.
+    expertise = score_analyst_expertise()
     console.print(
         f"[green]settlement complete[/green] settled={result.settled} "
         f"voided={result.voided} pushed={result.pushed} unsupported={result.unsupported} "
         f"evaluations={evaluation.evaluations} attributions={evaluation.attributions} "
         f"drift_incidents={evaluation.drift_incidents} "
         f"calibration_fitted={fitted.fitted_calibration}/{fitted.calibration_maps} "
-        f"weights_fitted={fitted.fitted_weights}/{fitted.weight_sets}"
+        f"weights_fitted={fitted.fitted_weights}/{fitted.weight_sets} "
+        f"overrides_evaluated={expertise.overrides_evaluated}"
     )
 
 
@@ -514,6 +522,40 @@ def experiments_abandon(
     result = abandon_experiment(UUID(experiment_id), actor=actor, reason=reason)
     console.print(
         f"[yellow]experiment abandoned[/yellow] {result.challenger_name} by={result.actor}"
+    )
+
+
+@learning_app.command("score-expertise")
+def learning_score_expertise() -> None:
+    """Evaluate settled overrides and refresh analyst expertise by domain. Gates nothing."""
+    result = score_analyst_expertise()
+    console.print(
+        f"[green]expertise scored[/green] overrides_evaluated={result.overrides_evaluated} "
+        f"domains={result.domains_scored} labels={result.labels_scored} "
+        f"analysts={result.analysts}"
+    )
+
+
+@learning_app.command("label-queue")
+def learning_label_queue(
+    limit: Annotated[int, typer.Option(help="Maximum unlabelled decisions to show.")] = 20,
+) -> None:
+    """Settled decisions nobody has labelled yet, candidates first."""
+    with connect() as conn, conn.cursor() as cur:
+        rows = unlabelled_settled_episodes(cur, limit=limit)
+    if not rows:
+        console.print("[green]every settled decision has been labelled[/green]")
+        return
+    for row in rows:
+        landed = "hit " if row["hit"] else "miss"
+        console.print(
+            f"  {landed} {row['system_recommendation']:11} {row['full_name']:22} "
+            f"{row['prop_type']} {row['side']} {row['line']} "
+            f"attributed={row['primary_error'] or '-'} episode={row['episode_id']}"
+        )
+    console.print(
+        "[dim]Label these in the console: the weakest assumption and the misleading evidence "
+        "are the two fields nothing else can reconstruct.[/dim]"
     )
 
 

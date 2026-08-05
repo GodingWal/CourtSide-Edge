@@ -112,6 +112,14 @@ analysis, and synthesises a posture beside each decision. It has no path to a pr
   expiry conditions and withdrawal criteria, and must pass a leakage inspection. The database
   refuses an approval whose approver equals the proposer.
 
+## What analyst expertise is used for
+
+Reading. `wnba.analyst_expertise` scores the owner per domain from pre-outcome labels and settled
+override outcomes, pooled toward 0.5 exactly as agent credibility is. It gates nothing, weights
+nothing and reaches no forecast — there is one human here, and a score that began discounting
+their overrides would be a bug with a statistics paper attached. Its honest use is the analyst
+asking whether their instinct about rotations has earned the confidence they give it.
+
 ## Promotion
 
 Only the owner may promote a model, and only after every machine readiness gate is `pass` rather

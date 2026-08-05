@@ -25,7 +25,7 @@ from uuid import UUID, uuid4
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from wnba_domain.enums import EntryType
 from wnba_domain.market import PayoutRule, PayoutTable
 from wnba_marketmath import (
@@ -139,6 +139,14 @@ class PriceResponse(BaseModel):
 
 
 class FeedbackRequest(BaseModel):
+    """One structured label on one decision.
+
+    ``evidence_ids_useful`` and ``evidence_ids_misleading`` were columns on
+    ``wnba.analyst_feedback`` from migration 018 and the retrieval ranking reads them -- but this
+    model had no fields for them and the INSERT omitted the columns, so nothing could ever write
+    one. The ranking's input was not sparse, it was structurally empty.
+    """
+
     feedback_type: Literal[
         "accepted",
         "rejected_bad_data",
@@ -153,8 +161,37 @@ class FeedbackRequest(BaseModel):
     evidence_relevant: Annotated[float, Field(ge=0, le=1)]
     confidence_appropriate: Annotated[float, Field(ge=0, le=1)]
     weakest_assumption: Annotated[str, Field(max_length=500)] | None = None
+    weakest_assumption_kind: (
+        Literal[
+            "minutes",
+            "role",
+            "usage_rate",
+            "efficiency",
+            "matchup",
+            "market_price",
+            "availability",
+            "data_quality",
+            "sample_size",
+            "correlation",
+            "other",
+        ]
+        | None
+    ) = None
+    """Closed-vocabulary companion to the free-text note. The sentence is worth more on its own;
+    the kind is the only one of the two that can be counted across a season."""
+
     missing_context: Annotated[str, Field(max_length=1000)] | None = None
     would_repeat: bool
+    evidence_ids_useful: list[UUID] = Field(default_factory=list)
+    evidence_ids_misleading: list[UUID] = Field(default_factory=list)
+    confidence_in_label: Annotated[float, Field(ge=0, le=1)] | None = None
+
+    @model_validator(mode="after")
+    def _evidence_cannot_be_both(self) -> FeedbackRequest:
+        overlap = set(self.evidence_ids_useful) & set(self.evidence_ids_misleading)
+        if overlap:
+            raise ValueError("evidence cannot be both useful and misleading")
+        return self
 
 
 class PickLegDraft(BaseModel):
@@ -916,6 +953,7 @@ def launch_projection_research(projection_id: UUID) -> dict[str, object]:
 @app.post("/api/feedback/{episode_id}")
 def submit_feedback(episode_id: UUID, feedback: FeedbackRequest) -> dict[str, object]:
     """Store structured owner feedback as a learning label."""
+    from wnba_services.learning_loop.analyst_expertise import domain_for
     from wnba_store.db import connect
 
     feedback_id = uuid4()
@@ -923,12 +961,22 @@ def submit_feedback(episode_id: UUID, feedback: FeedbackRequest) -> dict[str, ob
         cur.execute("SELECT 1 FROM wnba.decision_episodes WHERE episode_id=%s", (episode_id,))
         if cur.fetchone() is None:
             raise HTTPException(status_code=404, detail="Unknown decision episode")
+        # Whether the outcome was already known when this label was written. Expertise scoring
+        # reads only pre-outcome labels, because knowing the answer makes the weak assumption
+        # obvious and a label written afterwards measures hindsight rather than judgement.
+        cur.execute(
+            "SELECT 1 FROM wnba.episode_outcomes WHERE episode_id=%s",
+            (episode_id,),
+        )
+        after_outcome = cur.fetchone() is not None
+        domain = domain_for(feedback.feedback_type, feedback.weakest_assumption_kind)
         cur.execute(
             """INSERT INTO wnba.analyst_feedback
                (feedback_id,episode_id,analyst,submitted_at,feedback_type,projection_useful,
                 evidence_relevant,confidence_appropriate,weakest_assumption,missing_context,
-                would_repeat)
-               VALUES (%s,%s,'owner',%s,%s,%s,%s,%s,%s,%s,%s)""",
+                would_repeat,evidence_ids_useful,evidence_ids_misleading,
+                weakest_assumption_kind,domain,labelled_after_outcome,confidence_in_label)
+               VALUES (%s,%s,'owner',%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
             (
                 feedback_id,
                 episode_id,
@@ -940,6 +988,12 @@ def submit_feedback(episode_id: UUID, feedback: FeedbackRequest) -> dict[str, ob
                 feedback.weakest_assumption,
                 feedback.missing_context,
                 feedback.would_repeat,
+                feedback.evidence_ids_useful,
+                feedback.evidence_ids_misleading,
+                feedback.weakest_assumption_kind,
+                domain,
+                after_outcome,
+                feedback.confidence_in_label,
             ),
         )
         cur.execute(
@@ -947,7 +1001,98 @@ def submit_feedback(episode_id: UUID, feedback: FeedbackRequest) -> dict[str, ob
                WHERE episode_id=%s AND analyst_decision IS NULL""",
             (feedback.feedback_type, episode_id),
         )
-    return {"feedback_id": feedback_id, "stored": True}
+    return {
+        "feedback_id": feedback_id,
+        "stored": True,
+        "domain": domain,
+        "labelled_after_outcome": after_outcome,
+        "evidence_labelled": len(feedback.evidence_ids_useful)
+        + len(feedback.evidence_ids_misleading),
+    }
+
+
+@app.get("/api/feedback/queue")
+def feedback_queue(limit: int = 25) -> dict[str, object]:
+    """Settled decisions nobody has labelled yet, with the evidence each one cited.
+
+    "Little structured feedback has accumulated" is mostly not a code problem. What code can do is
+    remove the two frictions that make labelling irregular: not knowing which decisions are worth
+    the ten minutes, and having no way to name the specific evidence that misled you.
+    """
+    from wnba_services.learning_loop.analyst_expertise import (
+        MINIMUM_DOMAIN_LABELS,
+        unlabelled_settled_episodes,
+    )
+    from wnba_store.db import connect
+
+    with connect() as conn, conn.cursor() as cur:
+        episodes = unlabelled_settled_episodes(cur, limit=max(1, min(100, limit)))
+        cur.execute(
+            """SELECT count(*) AS unlabelled FROM wnba.decision_episodes d
+               JOIN wnba.episode_outcomes o ON o.episode_id=d.episode_id
+               WHERE NOT o.was_voided AND NOT o.was_push
+                 AND NOT EXISTS (
+                     SELECT 1 FROM wnba.analyst_feedback fb WHERE fb.episode_id=d.episode_id)"""
+        )
+        pending = cur.fetchone()
+        cur.execute(
+            """SELECT count(*) AS labelled,
+                      count(*) FILTER (WHERE NOT labelled_after_outcome) AS pre_outcome,
+                      count(*) FILTER (
+                          WHERE cardinality(evidence_ids_useful)
+                              + cardinality(evidence_ids_misleading) > 0) AS with_evidence_labels
+               FROM wnba.analyst_feedback"""
+        )
+        totals = cur.fetchone()
+    return {
+        "episodes": episodes,
+        "unlabelled": 0 if pending is None else int(str(pending["unlabelled"])),
+        "totals": {} if totals is None else dict(totals),
+        "minimum_labels_per_domain": MINIMUM_DOMAIN_LABELS,
+    }
+
+
+@app.get("/api/feedback/evidence/{episode_id}")
+def feedback_evidence(episode_id: UUID) -> dict[str, object]:
+    """The evidence cited on this episode, so a label can name specific items rather than a mood."""
+    from wnba_services.learning_loop.analyst_expertise import episode_evidence
+    from wnba_store.db import connect
+
+    with connect() as conn, conn.cursor() as cur:
+        return {"evidence": episode_evidence(cur, episode_id)}
+
+
+@app.get("/api/learning/expertise")
+def analyst_expertise() -> dict[str, object]:
+    """Measured analyst expertise by domain, and the override record behind it."""
+    from wnba_store.db import connect
+
+    with connect() as conn, conn.cursor() as cur:
+        cur.execute(
+            """SELECT DISTINCT ON (analyst,domain) analyst,domain,expertise,labels,overrides,
+                      overrides_helped,override_hit_rate,label_agreement,sample_size,
+                      is_provisional,calculated_at
+               FROM wnba.analyst_expertise ORDER BY analyst,domain,calculated_at DESC"""
+        )
+        expertise = [dict(row) for row in cur.fetchall()]
+        cur.execute(
+            """SELECT verdict,count(*) AS n FROM wnba.override_evaluations
+               GROUP BY verdict ORDER BY n DESC"""
+        )
+        overrides = [dict(row) for row in cur.fetchall()]
+        cur.execute(
+            """SELECT weakest_assumption_kind,count(*) AS n FROM wnba.analyst_feedback
+               WHERE weakest_assumption_kind IS NOT NULL
+               GROUP BY weakest_assumption_kind ORDER BY n DESC"""
+        )
+        assumptions = [dict(row) for row in cur.fetchall()]
+    return {
+        "expertise": expertise,
+        "override_verdicts": overrides,
+        "weakest_assumptions": assumptions,
+        # Restated on the wire: this score is read, never applied.
+        "expertise_gates_nothing": True,
+    }
 
 
 @app.get("/api/learning/proposals")

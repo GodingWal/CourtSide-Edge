@@ -53,6 +53,21 @@ finding names and re-plan; the blocked audit stays in the record.
 failure patterns. Everything it proposes lands as `proposed`, cannot fire, and needs a backtest
 and then a named human approver who is not the proposer — the database refuses anything else.
 
+## Labelling decisions
+
+```bash
+wnba learning label-queue          # settled decisions nobody has labelled, candidates first
+wnba learning score-expertise      # score overrides, refresh expertise (also runs at settlement)
+```
+
+Label in the console (Learning → Review queue): the form collects the weakest assumption, the
+missing evidence, and a useful/misleading mark on each piece of cited evidence. Those last marks
+are the only input the retrieval ranking has, so a label that skips them improves nothing.
+
+Labels written after the result is known are stored as post-outcome and feed error attribution,
+but are excluded from the expertise score — knowing the answer makes the weak assumption obvious.
+To build a foresight record, label live decisions before tip.
+
 ## Champion/challenger experiments
 
 Opening an experiment makes the live forecast run also score the board with that challenger and
