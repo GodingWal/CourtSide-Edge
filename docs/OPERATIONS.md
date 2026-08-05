@@ -25,6 +25,10 @@ other route requires the owner credential.
 - Missing forecasts: verify roles/effects/matchups, then start `wnba-forecast.service`.
 - Failed migration: stop deployment, keep the old web process, and restore the pre-deploy dump.
 - DeepSeek failure: forecasts continue; research fails closed and may be retried manually.
+  Congestion and transport faults are already retried inside the client, so a run recorded as
+  `failed` has exhausted `DEEPSEEK_MAX_ATTEMPTS` or was rejected on validation -- read `error`
+  before retrying. A run stuck at `running` blocks further spend on that projection until the
+  provider's whole timeout budget has elapsed, after which the next attempt reclaims it.
 - Disk above 80%: inspect PostgreSQL, Docker and backup growth before deleting anything.
 
 ## Escalation

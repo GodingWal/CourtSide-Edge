@@ -410,7 +410,7 @@ def learning_readiness() -> None:
 def research_run(
     projection_id: Annotated[str, typer.Argument(help="Forecast projection UUID.")],
 ) -> None:
-    """Run cited availability, rotation, matchup, market, and skeptic analyses."""
+    """Run cited availability, rotation, matchup and market analyses, then an adversarial review."""
     try:
         parsed_id = UUID(projection_id)
     except ValueError as exc:
@@ -420,6 +420,20 @@ def research_run(
         f"[green]research complete[/green] run={result.research_run_id} "
         f"analyses={result.analyses} claims={result.claims} evidence={result.evidence}"
     )
+    verdict = result.verdict
+    if verdict is None:
+        return
+    colour = {"low": "green", "elevated": "yellow", "high": "red"}[verdict.caution]
+    console.print(
+        f"  caution=[{colour}]{verdict.caution}[/{colour}] "
+        f"agreement={verdict.agreement:.0%} "
+        f"contested={verdict.contested_claims}/{verdict.total_claims}"
+    )
+    console.print(f"  {verdict.rationale}")
+    for predicate in verdict.contested_predicates:
+        console.print(f"    contested: {predicate}")
+    for flag in verdict.risk_flags:
+        console.print(f"    risk: {flag}")
 
 
 @injuries_app.command("poll")

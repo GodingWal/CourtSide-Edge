@@ -23,7 +23,8 @@ operational. Automated wager execution remains permanently out of scope.
 | Fitted calibration and weights | Operational | Isotonic maps, stacked weights, edge shrinkage |
 | Analyst rules in the forecast path | Operational | Active and shadow firings recorded per episode |
 | Walk-forward evaluation | Operational | Five pre-tip snapshots and benchmark comparisons |
-| PAT-style research | Awaiting API key | Five DeepSeek roles with cited expiring claims |
+| PAT-style research | Awaiting API key | Four analysts, then an adversarial skeptic over their conclusions |
+| Research verdict | Complete | Contested claims and caution computed in code, never by the model |
 | Learning loop | Operational | Calibration, drift, attribution, feedback and proposals |
 | Independent-sample accounting | Complete | Repeats collapsed; game clustering corrected |
 | Rule proposal and backtest | Operational | Weekly proposal/backtest; named CLI approval only |
@@ -91,7 +92,15 @@ makes that call, closing-line value stays a pending readiness gate.
 ### 5. Add PAT-style research and the learning loop
 
 - Evidence retrieval with immutable source documents and claim expiry.
-- Availability, rotation and matchup analysts plus an independent skeptic.
+- Availability, rotation and matchup analysts plus an independent skeptic. Done, and the
+  independence is now structural rather than nominal: the four analysts read identical frozen
+  evidence concurrently, and the skeptic runs afterwards over that evidence plus their four
+  conclusions, each supplied as a citable evidence row. Until that ordering existed the skeptic
+  had nothing to point at, so its `contradicting_evidence_ids` could never name a peer's claim.
+- Reduce each run to a verdict computed from the citation graph -- how many cited claims the
+  skeptic contradicted, and how confidently -- rather than from a summarizing model call. Done.
+  A provider-written summary cannot be replayed and would be the obvious place for a probability
+  to reappear; the verdict has no field for one and no input from which to derive one.
 - Reject uncited claims; agents may propose features but never write forecast probabilities.
 - Postgame error attribution, analyst feedback, hypothesis registry and weekly proposals.
 - Champion/challenger evaluation, shadow deployment and human-only promotion.

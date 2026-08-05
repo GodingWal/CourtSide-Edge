@@ -17,6 +17,7 @@ import json
 import os
 import subprocess
 from collections.abc import Awaitable, Callable
+from dataclasses import asdict
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, Literal
@@ -769,7 +770,19 @@ def projection_research(projection_id: UUID) -> dict[str, object]:
             )
             run = cur.fetchone()
             if run is None:
-                return {"available": True, "configured": False, "run": None, "analyses": []}
+                return {
+                    "available": True,
+                    "configured": False,
+                    "run": None,
+                    "analyses": [],
+                    "verdict": None,
+                }
+            cur.execute(
+                "SELECT * FROM wnba.research_verdicts WHERE research_run_id=%s",
+                (run["research_run_id"],),
+            )
+            verdict_row = cur.fetchone()
+            verdict = dict(verdict_row) if verdict_row is not None else None
             cur.execute(
                 """SELECT a.*,
                           coalesce(jsonb_agg(jsonb_build_object(
@@ -785,7 +798,13 @@ def projection_research(projection_id: UUID) -> dict[str, object]:
             analyses = [dict(row) for row in cur.fetchall()]
     except Exception as exc:
         return {"available": False, "reason": str(exc)[:200]}
-    return {"available": True, "configured": True, "run": dict(run), "analyses": analyses}
+    return {
+        "available": True,
+        "configured": True,
+        "run": dict(run),
+        "analyses": analyses,
+        "verdict": verdict,
+    }
 
 
 @app.post("/api/research/{projection_id}/run")
@@ -804,6 +823,7 @@ def launch_projection_research(projection_id: UUID) -> dict[str, object]:
         "analyses": result.analyses,
         "claims": result.claims,
         "evidence": result.evidence,
+        "verdict": asdict(result.verdict) if result.verdict is not None else None,
     }
 
 
