@@ -14,6 +14,10 @@ packages = ["wnba_services"]
 
 [project.optional-dependencies]
 stats = ["sportsdataverse>=0.0.39", "pbpstats>=1.3"]
+# The gradient-boosted challenger. Optional because production must never depend on it: the
+# challenger is loaded only when an artifact exists, and its absence is a normal state rather
+# than a broken install.
+models = ["lightgbm>=4.5"]
 
 [tool.uv.sources]
 wnba-domain = { workspace = true }

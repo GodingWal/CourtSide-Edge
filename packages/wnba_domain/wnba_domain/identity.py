@@ -37,7 +37,12 @@ GameId = UUID
 
 
 class SourceName(StrEnum):
-    """Every external system we read. Free sources only, by design."""
+    """Every external system we read.
+
+    A name here does not enable a source. Ingestion additionally requires a current, named,
+    dated terms verification in ``wnba.source_terms_verifications`` -- adding an enum member is
+    the cheap half of adding a source and deliberately not the half that grants permission.
+    """
 
     ESPN = "espn"
     STATS_WNBA = "stats_wnba"
@@ -45,6 +50,7 @@ class SourceName(StrEnum):
     PBPSTATS = "pbpstats"
     PRIZEPICKS = "prizepicks"
     UNDERDOG = "underdog"
+    THE_ODDS_API = "the_odds_api"
     VIDEO = "video"
     MANUAL = "manual"
     DERIVED = "derived"

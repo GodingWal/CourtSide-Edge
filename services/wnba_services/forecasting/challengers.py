@@ -25,12 +25,13 @@ families clear it:
     stays still through noise. Rotation change is the error category the learning loop attributes
     most of its misses to, so a model built to track it is the challenger worth running first.
 
-What is *not* here, on purpose: a gradient-boosted challenger. CatBoost and LightGBM are on the
-plan, and a tree model over the feature snapshots is a reasonable third family -- but it needs a
-dependency, a training set assembled from the feature store, and a fitting job with its own
-leakage controls. Stubbing one that wraps the same five components would populate the experiments
-table without creating anything to learn from, which is the failure mode the roadmap already
-named. It stays unbuilt until it can be built properly.
+``gradient-boosted``
+    A LightGBM model that learns P(over | features) directly, with no count distribution anywhere
+    in its path -- the only discriminative family here. It lives in :mod:`gbm` along with the
+    training pipeline that keeps it honest: features derived from the replay's own point-in-time
+    inputs, chronological folds split on market boundaries, and the devigged market prior as the
+    baseline it has to beat. A tree model that cannot beat the price it was shown has learned the
+    price. It raises rather than guessing when no artifact has been fitted.
 
 Every challenger is a pure function of :class:`ScoringInputs`, the same frozen point-in-time
 bundle :func:`score_prop` reads. That is deliberate: a challenger that needed inputs the champion
@@ -43,8 +44,9 @@ from __future__ import annotations
 import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import Any
 
+from wnba_services.forecasting.challenger_types import Challenger, ChallengerPrediction
 from wnba_services.forecasting.distributions import (
     MAX_OUTCOME,
     count_pmf,
@@ -61,6 +63,7 @@ from wnba_services.forecasting.scoring import (
 
 __all__ = [
     "CHALLENGERS",
+    "Challenger",
     "ChallengerPrediction",
     "HierarchicalBayesChallenger",
     "StateSpaceRoleChallenger",
@@ -83,39 +86,6 @@ _MAX_GAIN = 0.60
 # anyway, and five evaluations of a count PMF is a cost that can run on the live board.
 _MINUTES_OFFSETS = (-1.6, -0.8, 0.0, 0.8, 1.6)
 _MAX_DISPERSION = 8.0
-
-
-@dataclass(frozen=True)
-class ChallengerPrediction:
-    """One challenger's answer for one prop, in the shape the champion reports."""
-
-    name: str
-    version: str
-    pmf: tuple[float, ...]
-    mean: float
-    stddev: float
-    over: float
-    push: float
-    under: float
-    diagnostics: dict[str, Any]
-
-    def probability_for(self, side: str) -> float:
-        return self.over if side == "over" else self.under
-
-
-class Challenger(Protocol):
-    """What the experiment runner needs from a model family."""
-
-    name: str
-    version: str
-
-    def specification(self) -> dict[str, Any]:
-        """The stored description of this model, for ``wnba.model_versions.specification``."""
-        ...
-
-    def predict(self, inputs: ScoringInputs) -> ChallengerPrediction:
-        """Score one prop. Pure: same inputs, same output, always."""
-        ...
 
 
 # --------------------------------------------------------------------------------------
@@ -466,10 +436,27 @@ class StateSpaceRoleChallenger:
         )
 
 
-CHALLENGERS: Mapping[str, Challenger] = {
-    challenger.name: challenger
-    for challenger in (HierarchicalBayesChallenger(), StateSpaceRoleChallenger())
-}
+def _registry() -> dict[str, Challenger]:
+    """Every challenger family the platform can offer.
+
+    The tree family is always listed. Its dependency and its fitted artifact are both loaded at
+    use rather than at import, so an environment without the ``models`` extra -- or with the
+    extra but no artifact yet -- offers the family and fails cleanly with a stated reason the
+    first time something asks it to predict. That is deliberate: a family that silently vanished
+    from the registry would make "the tree model was never compared" indistinguishable from "the
+    tree model lost".
+    """
+    families: list[Challenger] = [HierarchicalBayesChallenger(), StateSpaceRoleChallenger()]
+    try:
+        from wnba_services.forecasting.gbm import GradientBoostedChallenger
+    except ImportError:  # pragma: no cover - exercised only without the `models` extra
+        pass
+    else:
+        families.append(GradientBoostedChallenger())
+    return {family.name: family for family in families}
+
+
+CHALLENGERS: Mapping[str, Challenger] = _registry()
 
 
 def challenger_names() -> tuple[str, ...]:

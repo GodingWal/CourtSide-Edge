@@ -55,6 +55,7 @@ from wnba_services.learning_loop.independence import (
 )
 
 __all__ = [
+    "BASELINE_MODELS",
     "MINIMUM_INDEPENDENT_SAMPLE",
     "ExperimentEvaluation",
     "ExperimentPromotion",
@@ -70,6 +71,17 @@ __all__ = [
 ]
 
 PRIMARY_METRICS = ("log_loss", "brier", "mae", "line_value")
+
+# Every challenger is reported against all five, not only the champion. A model that beats the
+# production ensemble while losing to minutes x rate has found a way to be differently wrong, and
+# one that beats everything except the devigged price has learned the price.
+BASELINE_MODELS: tuple[str, ...] = (
+    "production_ensemble",
+    "minutes_rate",
+    "season_average",
+    "last_five",
+    "market_prior",
+)
 
 # The promotion gate, in independent markets rather than rows. Deliberately the same number the
 # roadmap's paper-performance gate uses: a challenger should not be held to a looser standard
@@ -485,6 +497,66 @@ def _subgroup_rows(rows: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
     return reported
 
 
+def _baseline_comparison(cur: Any, challenger_name: str) -> dict[str, Any]:
+    """Where this challenger sits against all five baselines on the latest replay.
+
+    The paired live comparison answers "is this better than the champion", which is the question
+    promotion turns on. It is not the only question worth answering: a challenger that beats the
+    champion while losing to minutes x rate has found a way to be differently wrong, and a
+    challenger that beats everything except the market prior has learned the price.
+
+    Replay evidence, labelled as such. It never satisfies a gate; it sits beside the live result
+    so the two are read together rather than confused.
+    """
+    cur.execute(
+        """SELECT backtest_run_id FROM wnba.backtest_runs WHERE status='complete'
+           ORDER BY completed_at DESC LIMIT 1"""
+    )
+    run = cur.fetchone()
+    if run is None:
+        return {"available": False, "reason": "no completed replay to compare against"}
+
+    cur.execute(
+        """SELECT model_name,count(*) AS rows,avg(log_loss) AS log_loss,avg(brier) AS brier
+           FROM wnba.backtest_results
+           WHERE backtest_run_id=%s AND model_name=ANY(%s)
+           GROUP BY model_name""",
+        (run["backtest_run_id"], [*BASELINE_MODELS, challenger_name]),
+    )
+    scores = {
+        str(row["model_name"]): {
+            "rows": int(str(row["rows"])),
+            "log_loss": float(str(row["log_loss"])),
+            "brier": float(str(row["brier"])),
+        }
+        for row in cur.fetchall()
+    }
+    challenger = scores.get(challenger_name)
+    if challenger is None:
+        return {
+            "available": False,
+            "reason": f"the latest replay carries no {challenger_name} rows",
+            "baselines_scored": sorted(scores),
+        }
+    return {
+        "available": True,
+        "backtest_run_id": str(run["backtest_run_id"]),
+        "challenger": challenger,
+        "baselines": {name: scores[name] for name in BASELINE_MODELS if name in scores},
+        "beats": {
+            name: challenger["log_loss"] < scores[name]["log_loss"]
+            for name in BASELINE_MODELS
+            if name in scores
+        },
+        "beats_every_baseline": all(
+            challenger["log_loss"] < scores[name]["log_loss"]
+            for name in BASELINE_MODELS
+            if name in scores
+        ),
+        "evidence_class": "historical_replay",
+    }
+
+
 def _operational_metrics(cur: Any, experiment_id: UUID) -> dict[str, Any]:
     """Latency and failure rate over every prediction attempt, settled or not."""
     cur.execute(
@@ -591,6 +663,9 @@ def evaluate_experiments(*, now: datetime | None = None) -> list[ExperimentEvalu
                 "sample_shape": shape.to_payload(),
                 "minimum_sample": minimum_sample,
                 "operational": _operational_metrics(cur, experiment_id),
+                "baseline_comparison": _baseline_comparison(
+                    cur, str(experiment["challenger_name"])
+                ),
                 "promotion_automatic": False,
             }
             # `status` stays 'evaluated' rather than becoming a decision. An experiment with a

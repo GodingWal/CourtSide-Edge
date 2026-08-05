@@ -32,7 +32,10 @@ operational. Automated wager execution remains permanently out of scope.
 | Incident lifecycle | Complete | Cleared conditions resolve; persisting ones refresh |
 | Cross-source consensus | Built, one source live | Consensus, dispersion, best price, closing line |
 | End-to-end pipeline tests | Complete | Quote -> forecast -> decision -> settlement |
-| Champion/challenger | Two families, shadow-ready | Hierarchical Bayes and state-space role models; promotion is human-only |
+| Champion/challenger | Three families, shadow-ready | Hierarchical Bayes, state-space role, gradient-boosted; promotion is human-only |
+| Production validation | Measured from the live record | Every gate computes from settled episodes and flips when evidence arrives |
+| Second market source | Built, gated on a dated verification | The Odds API adapter; collection requires a named terms reading |
+| Possession simulation | Built as a feature generator | Joint PRA distributions and measured same-game correlation |
 | Video intelligence | Not started | Experimental track remains isolated |
 
 ## Critical path
@@ -60,7 +63,11 @@ Exit gate: production candidates beat the simple minutes x rate baseline on held
 and calibration without material subgroup degradation.
 
 Status: the replay and the live board now share one scorer, so this comparison finally measures
-the deployed model. The comparison itself has not been re-run since the change, and the prior
+the deployed model. Every challenger is scored against all five baselines -- production ensemble,
+minutes x rate, season average, last five, market prior -- in both the replay and the experiment
+record, because a challenger that beats the champion while losing to minutes x rate has found a
+way to be differently wrong, and one that beats everything except the devigged price has learned
+the price. The comparison itself has not been re-run since the change, and the prior
 0.3.1 figures were withdrawn rather than carried forward -- they described a replay-only ensemble
 that shared a single component with production.
 
@@ -80,6 +87,21 @@ the live shadow record and the two sample counts are never added together.
 Exit gate: 500+ out-of-sample paper recommendations with stable calibration and positive line
 value. Profit alone is not a gate.
 
+Status: the gates now read the live settled record. They previously read `backtest_results` --
+historical replay -- so six of them were hard-coded `pending` with prose explaining that live
+evidence did not exist, and they would have stayed `pending` after five hundred live
+recommendations arrived because nothing in the path ever looked at a settled episode.
+`wnba learning validate` computes every requirement from settled decisions: independent markets
+after the clustering correction, stable weekly windows (a week with four decisions is a quiet
+week, not a window), calibration, closing-line value signed by the side taken, return at the
+recorded payout structure alongside the flat break-even comparison, peak-to-trough drawdown and
+daily exposure, observed voids and pushes and late line moves, and calibration stability across
+players, teams, markets and line ranges.
+
+Two things the harness refuses to do, because both manufacture a flattering number: it does not
+assume even money for an unpriced leg (it excludes it and says how many it excluded), and it does
+not score a void or a push as a loss.
+
 ### 4. Add market intelligence
 
 - Add another lawful free source if one remains stable and permitted.
@@ -92,9 +114,18 @@ best-price selection, source reliability and an explicit pre-lock closing design
 today against one source and reports itself as uncorroborated rather than presenting a lone quote
 as agreement.
 
-What remains is not code. Choosing the second source means checking that operator's terms,
-confirming the collection is lawful and permitted, and dating that verification. Until an owner
-makes that call, closing-line value stays a pending readiness gate.
+The second source is now built: a keyed adapter for The Odds API, plus timestamp synchronisation,
+which is the failure that makes naive multi-source data worse than single-source data. Quotes an
+hour apart are not a disagreement, they are two moments, and the staler source is always the one
+that has not seen the news -- so every consensus records the window its sources were observed
+within.
+
+Choosing to *enable* it remains an owner decision, and that decision is now a database row rather
+than a runbook line. `wnba lines verify-source` records that a named person read the operator's
+terms on a date and what they concluded; ingestion refuses to poll a source without a current
+`permitted` verification, and `unclear` is a real outcome that does not grant permission. The row
+is not legal advice and does not claim the collection is lawful -- it records who decided, when,
+and on the basis of what, which is the part that can be audited afterwards.
 
 ### 5. Add PAT-style research and the learning loop
 
@@ -155,6 +186,25 @@ makes that call, closing-line value stays a pending readiness gate.
   mechanism, confounders, expiry conditions and withdrawal criteria attached. The database
   enforces that provenance for agent-authored rules and refuses any approval whose approver is
   the proposer, so no agent can activate its own rule even by naming itself.
+- The gradient-boosted challenger is built. It was previously left out on the grounds that a tree
+  model needs a dependency, a training set and its own leakage controls -- which was an argument
+  about how to build it, not whether. It is the only discriminative family here: it learns
+  P(over | features) directly with no count distribution in its path. Four leakage controls carry
+  it. The training rows are written by the walk-forward replay from its own point-in-time
+  `ScoringInputs`, so there is no second reconstruction of history that could see further than
+  the replay did. Folds are chronological and cut on *market* boundaries, so the five snapshots of
+  one event never straddle the wall. The devigged market prior is a feature, so it is also the
+  baseline the model must beat -- one that cannot beat the price it was shown has learned the
+  price. And the artifact serialises to plain text rather than a pickle, because loading a model
+  from a database column should not be an arbitrary-code-execution path in a codebase that
+  refuses to let a language model emit Python.
+- Possession-level simulation, joint points/rebounds/assists distributions and player-to-player
+  correlation are built as a feature generator rather than as a scorer. Measured at 60,000
+  iterations, the two mechanisms separate: pace alone correlates a starter pair at +0.013 and a
+  starter/bench pair at +0.014 -- weak and uniform -- while 45% blowout risk moves them to +0.100
+  and **-0.044**. The sign flip is the finding. A single scalar correlation applied to every pair,
+  which is what the copula entry pricing has always received, cannot represent it and gets the
+  bench pairing backwards.
 - Champion/challenger experiments are implemented. What was blocking them was never the schema:
   an experiment row requires two model versions and only one existed, and a synthetic challenger
   wrapping the same five components would have satisfied the table while teaching nothing. Two

@@ -74,8 +74,8 @@ threshold was unconnected to any product and was applied to an unshrunk edge.
 - Only 38 historical games are represented in the market replay.
 - No production video features.
 - Live calibration and void/late-news evidence remain immature.
-- Payout tables are unverified, so the break-even the gate uses is only as good as the bundled
-  numbers.
+- Payout tables are unverified until a dated `wnba.payout_verifications` row exists, so the
+  break-even the gate uses is only as good as the bundled numbers until then.
 - Rest-day adjustments are stated priors, not fitted coefficients. They are now recorded as
   features on every forecast, which is what will eventually make fitting them possible.
 - The market prior is only informative where the source prices both sides differently; on a flat
@@ -83,19 +83,21 @@ threshold was unconnected to any product and was applied to an unshrunk edge.
 
 ## Challengers
 
-Two model families run beside the champion and reach nothing. Both are pure functions of the
-same `ScoringInputs` the champion reads, so a difference between them is a difference in
-modelling rather than in what they were allowed to see.
+Three model families run beside the champion and reach nothing. All three read the same
+`ScoringInputs` the champion reads, so a difference between them is a difference in modelling
+rather than in what they were allowed to see.
 
 | Challenger | Family | What it does that the champion does not |
 |---|---|---|
 | `hierarchical-bayes` 0.1.0 | Conjugate Gamma–Poisson, three levels (league → prior season → player) | Carries the *posterior variance* of the rate into the predictive distribution, and discounts the likelihood by the player's observed over-dispersion. The champion's `hierarchical` component is a point estimate at a fixed 300-minute prior strength, so it reports the same width for a rate measured over 40 minutes and one measured over 700. |
 | `state-space-role` 0.1.0 | Local-level (Kalman) filter on minutes and per-minute rate | Estimates the signal-to-noise ratio per player from the autocovariance of first differences, so the gain rises through a genuine role change and stays low through noise. The champion's `player_state` component decays the past at a fixed per-market half-life either way. A projected-minutes row still overrides the filter's minutes estimate. |
+| `gradient-boosted` 0.1.0 | LightGBM, discriminative | Learns P(over) directly with no count distribution in its path, so it can represent interactions the generative family structurally cannot. Trained on the replay's own point-in-time inputs, with chronological folds cut on market boundaries and the devigged market prior as the baseline it must beat. Raises rather than guessing when unfitted. |
 
-Not implemented, deliberately: a gradient-boosted challenger. It needs a dependency, a training
-set assembled from the feature store, and a fitting job with its own leakage controls. A stub
-wrapping the same five components would fill the experiments table without creating anything to
-learn from.
+Every challenger is scored against all five baselines — production ensemble, minutes × rate,
+season average, last five, market prior — in both the replay and the experiment record. A model
+that beats the champion while losing to minutes × rate has found a way to be differently wrong,
+and one that beats everything except the devigged price has learned the price. No challenger is
+promoted automatically.
 
 ## What research can and cannot do
 

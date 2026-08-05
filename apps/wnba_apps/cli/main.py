@@ -21,11 +21,13 @@ from wnba_services.forecasting.backtest import run_walk_forward_backtest
 from wnba_services.forecasting.baseline import run_baseline
 from wnba_services.forecasting.challengers import challenger_names
 from wnba_services.forecasting.fitting import fit_model_parameters
+from wnba_services.forecasting.gbm import train_gradient_boosted
 from wnba_services.ingestion.archiver import run_archiver
 from wnba_services.ingestion.espn import backfill_espn, ingest_espn_date
 from wnba_services.ingestion.historical_markets import normalize_historical_markets
 from wnba_services.ingestion.identity import approve_unique_exact_names
 from wnba_services.ingestion.legacy import import_legacy_sqlite
+from wnba_services.ingestion.source_permissions import record_terms_verification
 from wnba_services.ingestion.wnba_injuries import ingest_official_injuries
 from wnba_services.learning_loop.analyst_expertise import (
     score_analyst_expertise,
@@ -47,6 +49,7 @@ from wnba_services.learning_loop.rule_authoring import author_rules_from_finding
 from wnba_services.learning_loop.rule_lifecycle import approve_rule, retire_rule, run_rule_backtests
 from wnba_services.learning_loop.rule_proposals import propose_from_measured_errors
 from wnba_services.learning_loop.settlement import settle_paper_episodes
+from wnba_services.learning_loop.validation import validate_live_performance
 from wnba_services.monitoring.liveness import run_liveness_checks
 from wnba_services.research_agents.coordinator import pending_plans, plan_investigations
 from wnba_services.research_agents.credibility import score_research_credibility
@@ -235,6 +238,44 @@ def lines_poll(
         sys.exit(1)
 
 
+@lines_app.command("verify-source")
+def lines_verify_source(
+    source: Annotated[str, typer.Argument(help="Source name, e.g. the_odds_api.")],
+    verified_by: Annotated[str, typer.Option(help="Named human who read the terms.")],
+    terms_url: Annotated[str, typer.Option(help="URL of the terms that were read.")],
+    conclusion: Annotated[str, typer.Option(help="permitted | prohibited | unclear")],
+    permitted_use: Annotated[str, typer.Option(help="What the terms allow, in your words.")],
+    days_valid: Annotated[int, typer.Option(help="How long before this must be re-checked.")] = 180,
+    rate_limit: Annotated[str, typer.Option(help="Documented rate limit, if any.")] = "",
+) -> None:
+    """Record that a named human read a source's terms on a date. Only this enables collection.
+
+    Not legal advice and not a claim that collection is lawful: a dated record of who decided,
+    on the basis of what text. Nothing in this system can determine whether the conclusion was
+    right, and pretending otherwise would be worse than not recording it at all.
+    """
+    if conclusion not in {"permitted", "prohibited", "unclear"}:
+        raise typer.BadParameter("conclusion must be permitted, prohibited or unclear")
+    if len(permitted_use.strip()) < 20:
+        raise typer.BadParameter("describe the permitted use in at least 20 characters")
+    result = record_terms_verification(
+        source=source,
+        verified_by=verified_by,
+        terms_url=terms_url,
+        conclusion=conclusion,
+        permitted_use=permitted_use,
+        days_valid=days_valid,
+        rate_limit=rate_limit,
+    )
+    colour = "green" if conclusion == "permitted" else "yellow"
+    console.print(
+        f"[{colour}]terms verification recorded[/{colour}] source={source} "
+        f"conclusion={conclusion} by={verified_by} expires={result['expires_at']:%Y-%m-%d}"
+    )
+    if conclusion != "permitted":
+        console.print("[yellow]Collection stays disabled: only 'permitted' enables it.[/yellow]")
+
+
 @lines_app.command("coverage")
 def lines_coverage() -> None:
     """What the archive currently holds. The honest picture of our evaluation runway."""
@@ -290,6 +331,63 @@ def forecast_run() -> None:
         f"candidates={result.candidates} rule_firings={result.rule_firings} "
         f"skipped={result.skipped}"
     )
+
+
+@forecast_app.command("train-gbm")
+def forecast_train_gbm(
+    activate: Annotated[
+        bool, typer.Option(help="Serve this artifact, if it beats the market prior.")
+    ] = False,
+) -> None:
+    """Fit the gradient-boosted challenger on replay-derived point-in-time training rows."""
+    result = train_gradient_boosted(activate=activate)
+    console.print(
+        f"[green]training complete[/green] rows={result.rows} markets={result.markets} "
+        f"activated={result.activated}"
+    )
+    console.print(f"  {result.detail}")
+    for fold in result.folds:
+        verdict = "beats prior" if fold["beats_market_prior"] else "[red]loses to prior[/red]"
+        console.print(
+            f"  fold {fold['fold']}: train={fold['train_rows']} val={fold['validate_rows']} "
+            f"log_loss={fold['log_loss']:.5f} prior={fold['market_prior_log_loss']:.5f} {verdict}"
+        )
+    if result.artifact_id and not result.activated:
+        console.print(
+            "[yellow]Artifact stored but not serving. A fitted challenger is still a "
+            "challenger; promotion to champion needs the named-human path.[/yellow]"
+        )
+
+
+@learning_app.command("validate")
+def learning_validate() -> None:
+    """Measure every production-validation requirement against the settled live record."""
+    live = validate_live_performance()
+    console.print(
+        f"[green]live validation[/green] recommendations={live.recommendations} "
+        f"effective={live.effective_sample:.0f}/500 stable_weeks={live.stable_weeks}/8"
+    )
+    rows = [
+        ("calibration error", live.calibration_error, "<= 0.08"),
+        ("mean closing-line value", live.mean_line_value, "> 0"),
+        ("return after real pricing", live.payout_return, "> 0"),
+        ("max drawdown", live.max_drawdown, "<= 0.35"),
+        ("peak daily exposure", live.peak_exposure, "informational"),
+    ]
+    for label, value, target in rows:
+        shown = "not yet measurable" if value is None else f"{value:.4f}"
+        console.print(f"  {label:26} {shown:>18}   {target}")
+    console.print(
+        f"  {'voids / pushes / late moves':26} "
+        f"{live.voids} / {live.pushes} / {live.late_line_moves}"
+    )
+    for group in live.degraded_subgroups:
+        console.print(
+            f"  [red]degraded[/red] {group.dimension}={group.value} n={group.markets} "
+            f"ECE={group.calibration_error:.3f}"
+        )
+    for note in live.notes:
+        console.print(f"  [yellow]{note}[/yellow]")
 
 
 @backtest_app.command("run")

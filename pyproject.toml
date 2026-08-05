@@ -20,6 +20,11 @@ dependencies = [
 [project.scripts]
 wnba = "wnba_apps.cli.main:app"
 
+[project.optional-dependencies]
+models = [
+    "lightgbm>=4.5",
+]
+
 [tool.uv.workspace]
 members = ["packages/*", "services", "apps"]
 exclude = ["services/video_intelligence"]

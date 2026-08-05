@@ -34,6 +34,7 @@ from wnba_services.forecasting.baseline import (
     stat_history_game,
 )
 from wnba_services.forecasting.challengers import CHALLENGERS, challenger_names
+from wnba_services.forecasting.gbm import record_training_example
 from wnba_services.forecasting.parameters import load_fitted_parameters
 from wnba_services.forecasting.recency import MARKET_HALF_LIFE, weighted_mean, weighted_ratio
 from wnba_services.forecasting.scoring import (
@@ -353,6 +354,22 @@ def run_walk_forward_backtest(*, now: datetime | None = None) -> BacktestBatch:
                 if not inputs.has_sufficient_history:
                     skipped += 1
                     continue
+
+                # The replay is the only code that knows how to see the world as it looked at a
+                # past moment, so it is the only place a training row may be built. A second
+                # reconstruction elsewhere is how a training set quietly starts seeing further
+                # than the replay did.
+                record_training_example(
+                    cur,
+                    backtest_run_id=run_id,
+                    historical_quote_id=quote["historical_quote_id"],
+                    snapshot_label=snapshot_label,
+                    as_of=as_of,
+                    game_id=game_id,
+                    player_id=player_id,
+                    inputs=inputs,
+                    actual=actual,
+                )
 
                 predictions = dict(benchmark_predictions(inputs))
                 forecast = score_prop(inputs)

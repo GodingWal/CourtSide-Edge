@@ -61,7 +61,14 @@ def _steady(count: int, minutes: float = 30.0, points: float = 15.0) -> tuple[Hi
     return tuple(_game(minutes, points) for _ in range(count))
 
 
-@pytest.mark.parametrize("name", challenger_names())
+# Families that fit an artifact are excluded from the purity sweep and covered in
+# `test_gbm_challenger.py` instead: an unfitted one correctly raises, and asserting it returns a
+# distribution would be asserting that it silently guesses.
+_FITTED_FAMILIES = {"gradient-boosted"}
+_PURE_FAMILIES = tuple(name for name in challenger_names() if name not in _FITTED_FAMILIES)
+
+
+@pytest.mark.parametrize("name", _PURE_FAMILIES)
 def test_every_challenger_is_a_pure_function_returning_a_proper_distribution(name: str) -> None:
     inputs = _inputs(_steady(20))
     challenger = challenger_by_name(name)
@@ -82,9 +89,10 @@ def test_challengers_are_not_the_champion_wearing_a_new_name() -> None:
     champion = score_prop(inputs)
 
     differences = [
-        abs(challenger.predict(inputs).over - champion.over) for challenger in CHALLENGERS.values()
+        abs(CHALLENGERS[name].predict(inputs).over - champion.over) for name in _PURE_FAMILIES
     ]
 
+    assert differences
     assert all(difference > 0.001 for difference in differences)
 
 
