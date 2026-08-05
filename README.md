@@ -87,7 +87,9 @@ uv run wnba lines coverage
 **Phase 3—private shadow analysis.** PostgreSQL ingestion, historical market normalization,
 five-component shadow forecasts, point-in-time replay, paper settlement, calibration, drift,
 error attribution, structured analyst feedback and evidence-constrained DeepSeek research are
-implemented. DeepSeek calls and single-owner authentication activate only when their secrets
-are configured on the VPS. See [docs/ROADMAP.md](docs/ROADMAP.md).
+implemented. The console prices entries against fitted leg correlation, suggests which
+candidates belong on one ticket, and settles the owner's own slips so they feed the same
+learning loop everything else does. DeepSeek calls and single-owner authentication activate
+only when their secrets are configured on the VPS. See [docs/ROADMAP.md](docs/ROADMAP.md).
 
 A profitable backtest is not evidence. It is a suspect awaiting questioning.

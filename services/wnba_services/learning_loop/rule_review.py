@@ -232,9 +232,7 @@ def review_active_rules(
                 hits.append(float(hit))
 
             blocked_hit_rate = (
-                round(math.fsum(hits) / len(hits), 4)
-                if action_kind == "block" and hits
-                else None
+                round(math.fsum(hits) / len(hits), 4) if action_kind == "block" and hits else None
             )
             verdict, detail = judge_live_rule(
                 action_kind=action_kind,

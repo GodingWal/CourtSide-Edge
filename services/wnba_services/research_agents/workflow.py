@@ -3,16 +3,24 @@
 from __future__ import annotations
 
 import hashlib
-import json
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
+from typing import Any
+from uuid import NAMESPACE_URL as _DOCUMENT_NAMESPACE
+from uuid import UUID, uuid4, uuid5
 
 from psycopg.types.json import Jsonb
 from wnba_store.db import connect
 
+from wnba_services.research_agents.advisor import Advisor
 from wnba_services.research_agents.deepseek import DeepSeekResearchClient
+from wnba_services.research_agents.evidence import build_evidence_document
+
+# The one role that does not forecast. It reviews on its own schema (`SkepticReview`) and its
+# output never enters the consensus average -- see `deepseek.SkepticReview` for why a skeptic
+# forced to emit a probability stops being a skeptic.
+SKEPTIC_ROLE = "skeptic"
 
 AGENT_QUESTIONS = {
     "availability": "Assess availability evidence and identify unresolved status risk.",
@@ -31,70 +39,6 @@ class ResearchBatch:
     evidence: int
 
 
-def _snapshot_evidence(
-    projection: dict[str, object],
-) -> tuple[str, dict[UUID, str]]:
-    features = projection["features"]
-    if not isinstance(features, dict):
-        raise ValueError("feature snapshot is not an object")
-    groups = {
-        "availability": {
-            key: features.get(key)
-            for key in (
-                "injury_designation",
-                "injury_detail",
-                "expected_minutes",
-                "start_probability",
-                "closing_lineup_probability",
-            )
-        },
-        "role_effects": {
-            key: features.get(key)
-            for key in (
-                "history_games",
-                "teammate_effect_count",
-                "teammate_rate_multiplier",
-                "teammate_effect_confidence",
-            )
-        },
-        "matchup": {
-            key: features.get(key)
-            for key in (
-                "expected_possessions",
-                "pace_multiplier",
-                "defense_multiplier",
-                "expected_margin",
-                "blowout_probability",
-                "team_rest_days",
-                "opponent_rest_days",
-            )
-        },
-        "market": {
-            "source": projection["source"],
-            "line": projection["line"],
-            "observed_at": str(projection["observed_at"]),
-            "locks_at": str(projection["locks_at"]),
-            "prop_type": projection["prop_type"],
-        },
-        "forecast_audit": {
-            "model_mean": projection["mean"],
-            "model_median": projection["median"],
-            "model_stddev": projection["stddev"],
-            "model_disagreement": projection["model_disagreement"],
-            "data_quality_score": projection["data_quality_score"],
-        },
-    }
-    document = json.dumps(groups, sort_keys=True, default=str)
-    document_hash = hashlib.sha256(document.encode()).hexdigest()
-    evidence = {
-        uuid5(NAMESPACE_URL, f"courtside-edge:evidence:{document_hash}:{name}"): json.dumps(
-            values, sort_keys=True, default=str
-        )
-        for name, values in groups.items()
-    }
-    return document, evidence
-
-
 def run_projection_research(
     projection_id: UUID,
     *,
@@ -107,6 +51,7 @@ def run_projection_research(
     with connect() as conn, conn.cursor() as cur:
         cur.execute(
             """SELECT f.*,fs.features,q.source,q.system_from AS observed_at,q.locks_at,
+                      q.over_multiplier,q.under_multiplier,
                       d.model_disagreement,
                       p.full_name
                FROM wnba.stat_forecasts f
@@ -149,9 +94,9 @@ def run_projection_research(
                 int(str(counts["claims"])),
                 0,
             )
-        document, evidence = _snapshot_evidence(dict(projection))
+        document, evidence = build_evidence_document(cur, dict(projection), now=at)
         document_hash = hashlib.sha256(document.encode()).hexdigest()
-        document_id = uuid5(NAMESPACE_URL, f"courtside-edge:document:{document_hash}")
+        document_id = uuid5(_DOCUMENT_NAMESPACE, f"courtside-edge:document:{document_hash}")
         cur.execute(
             """INSERT INTO wnba.source_documents
                (document_id,source,title,content_sha256,content_excerpt,retrieved_at)
@@ -193,6 +138,10 @@ def run_projection_research(
             f"Player: {projection['full_name']}; market: {projection['prop_type']}; "
             f"line: {projection['line']}. "
         )
+        # `enabled=True` because a provider was supplied: the Advisor's usual key check answers
+        # "should we call at all", and that question is already settled by the time a client is
+        # in hand. A missing key still fails every call, and is recorded as such.
+        advisor = Advisor(cur, client=provider, enabled=True)
         try:
             with ThreadPoolExecutor(max_workers=len(AGENT_QUESTIONS)) as executor:
                 futures = {
@@ -204,8 +153,22 @@ def run_projection_research(
                     )
                     for role, question in AGENT_QUESTIONS.items()
                 }
-                generated = {role: future.result() for role, future in futures.items()}
-            for role in AGENT_QUESTIONS:
+                # One role failing is a missing voice, not a lost run. Each result is collected
+                # separately and its failure recorded as an advisory fallback, so a provider
+                # hiccup during the fourth of five calls no longer discards the other four.
+                generated: dict[str, Any] = {}
+                for role, future in futures.items():
+                    result = advisor.attempt(
+                        task="research_analysis",
+                        subject=f"{projection['full_name']} {projection['prop_type']} {role}",
+                        call=future.result,
+                        now=at,
+                    )
+                    if result is not None:
+                        generated[role] = result
+            if not generated:
+                raise RuntimeError("every research agent failed; nothing to record")
+            for role in generated:
                 analysis, _, response_hash = generated[role]
                 analysis_id = uuid4()
                 cited = sorted(
