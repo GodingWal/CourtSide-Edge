@@ -124,7 +124,18 @@ makes that call, closing-line value stays a pending readiness gate.
   agreement statistic only -- it never gates a claim.
 - Evidence ranking now reads the analyst usefulness labels that `analyst_feedback` has carried
   since migration 018 and that nothing had ever read, and source reliability is scored per source
-  and domain from those labels plus how often a source's evidence ends up contradicted.
+  and domain from those labels plus how often a source's evidence ends up contradicted. Both are
+  *consumed*, not merely stored: the bundle handed to the analysts is ordered by learned
+  usefulness, and an evidence row's reliability is the weaker of the snapshot's completeness and
+  the source's measured track record.
+- Ranking is per evidence *kind*, not per evidence id. Ids are content-hashed per prop and are
+  seen exactly once, so a per-id ranking could never accumulate a sample -- it was an elaborate
+  way of storing the prior. Kinds recur on every prop of every slate. Ordering is the only
+  consequence: no kind is ever withheld because analysts disliked it, since a feedback loop that
+  could hide evidence would quietly narrow what the next investigation is allowed to see.
+- Investigations run automatically as well as queue automatically. `wnba-research.timer` plans and
+  then drains the top of the queue under a hard cap, so a trigger storm cannot run away and the
+  overflow either waits for the next pass or expires with the market.
 - Postgame error attribution, analyst feedback, hypothesis registry and weekly proposals.
 - Champion/challenger evaluation, shadow deployment and human-only promotion.
 - Feed measured miscalibration back into the forecast rather than only recording it. Done:

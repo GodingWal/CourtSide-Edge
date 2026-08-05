@@ -46,7 +46,11 @@ from wnba_services.learning_loop.settlement import settle_paper_episodes
 from wnba_services.monitoring.liveness import run_liveness_checks
 from wnba_services.research_agents.coordinator import pending_plans, plan_investigations
 from wnba_services.research_agents.credibility import score_research_credibility
-from wnba_services.research_agents.workflow import execute_plan, run_projection_research
+from wnba_services.research_agents.workflow import (
+    execute_plan,
+    run_projection_research,
+    run_queue,
+)
 from wnba_store.db import connect, migrate
 
 app = typer.Typer(
@@ -602,6 +606,25 @@ def research_execute(
         f"[green]investigation complete[/green] run={result.research_run_id} "
         f"analyses={result.analyses} claims={result.claims} posture={result.posture}"
     )
+
+
+@research_app.command("run-queue")
+def research_run_queue(
+    limit: Annotated[int, typer.Option(help="Hard cap on investigations run this pass.")] = 5,
+) -> None:
+    """Run the highest-priority queued investigations, up to a cap.
+
+    Planning is free and running is not, so the cap is deliberate: a trigger storm should not
+    turn one unusual evening into a provider bill.
+    """
+    result = run_queue(limit=limit)
+    console.print(
+        f"[green]queue run complete[/green] attempted={result.attempted} "
+        f"completed={result.completed} blocked={result.blocked} failed={result.failed} "
+        f"remaining={result.remaining}"
+    )
+    for posture in result.postures:
+        console.print(f"  posture={posture}")
 
 
 @research_app.command("score-credibility")

@@ -33,11 +33,17 @@ The coordinator queues investigations from measured changes and calls no model, 
 free. Executing a plan spends provider tokens and is a separate command deliberately.
 
 ```bash
-wnba research plan --limit 15     # also runs every half hour in wnba-research.service
+wnba research plan --limit 15     # queue: free, calls no model
+wnba research run-queue --limit 4 # run the top of the queue, capped
 wnba research queue               # what the coordinator wants investigated, and why
-wnba research execute <plan-id>   # audit, two rounds, synthesis
+wnba research execute <plan-id>   # one specific plan: audit, two rounds, synthesis
 wnba research score-credibility   # agent credibility, evidence ranking, source reliability
 ```
+
+`wnba-research.timer` runs `plan` then `run-queue --limit 4` every half hour. The cap is the
+point: an injury report landing for a whole team twenty minutes before tip would otherwise turn
+one evening into a provider bill, and those investigations would arrive too late to inform
+anything. Whatever is left stays queued for the next pass or expires with the market.
 
 A plan that comes back `blocked` is a correct outcome, not a failure: the data auditor found the
 inputs contradictory or archival and stopped before any model was called. Fix the input the

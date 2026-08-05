@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Mapping
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -40,7 +41,11 @@ from psycopg.types.json import Jsonb
 from wnba_store.db import connect
 
 from wnba_services.research_agents.auditor import audit_plan_inputs, record_audit
-from wnba_services.research_agents.coordinator import PLAN_ROLES
+from wnba_services.research_agents.coordinator import PLAN_ROLES, pending_plans
+from wnba_services.research_agents.credibility import (
+    evidence_kind_ranking,
+    source_reliability_for,
+)
 from wnba_services.research_agents.deepseek import DeepSeekResearchClient
 from wnba_services.research_agents.precedents import find_precedents, load_candidate_episodes
 from wnba_services.research_agents.synthesis import (
@@ -54,10 +59,12 @@ __all__ = [
     "AGENT_QUESTIONS",
     "CLAIM_REFRESH",
     "ROLE_DOMAIN",
+    "QueueRun",
     "ResearchBatch",
     "execute_plan",
     "refresh_due_claims",
     "run_projection_research",
+    "run_queue",
 ]
 
 AGENT_QUESTIONS = {
@@ -109,7 +116,8 @@ def _snapshot_evidence(
     *,
     audit_context: list[dict[str, Any]],
     precedents: dict[str, Any] | None,
-) -> tuple[str, dict[UUID, str]]:
+    ranking: Mapping[str, float],
+) -> tuple[str, dict[UUID, tuple[str, str]]]:
     """Freeze everything the analysts are allowed to see into cited, hashed evidence.
 
     The audit's non-blocking findings and the precedent set are evidence groups like any other,
@@ -173,11 +181,17 @@ def _snapshot_evidence(
 
     document = json.dumps(groups, sort_keys=True, default=str)
     document_hash = hashlib.sha256(document.encode()).hexdigest()
+    # Ordered by what analysts have actually found useful, most useful first. Ordering is the
+    # only thing the feedback changes: every kind is still handed over, because evidence somebody
+    # marked unhelpful last week is still evidence about this prop and dropping it would let the
+    # loop quietly narrow what the analysts can see.
+    ordered = sorted(groups.items(), key=lambda item: (-ranking.get(item[0], 0.5), item[0]))
     evidence = {
-        uuid5(NAMESPACE_URL, f"courtside-edge:evidence:{document_hash}:{name}"): json.dumps(
-            values, sort_keys=True, default=str
+        uuid5(NAMESPACE_URL, f"courtside-edge:evidence:{document_hash}:{name}"): (
+            name,
+            json.dumps(values, sort_keys=True, default=str),
         )
-        for name, values in groups.items()
+        for name, values in ordered
     }
     return document, evidence
 
@@ -384,6 +398,7 @@ def execute_plan(
             dict(plan),
             audit_context=report.context_for_agents(),
             precedents=precedent_set.to_payload() if precedent_set.count else None,
+            ranking=evidence_kind_ranking(cur),
         )
         document_hash = hashlib.sha256(document.encode()).hexdigest()
         document_id = uuid5(NAMESPACE_URL, f"courtside-edge:document:{document_hash}")
@@ -399,18 +414,25 @@ def execute_plan(
                 at,
             ),
         )
-        for evidence_id, excerpt in evidence.items():
+        # Reliability is the weaker of the snapshot's completeness and the source's measured
+        # track record. It used to be the snapshot's score alone, so a source that had repeatedly
+        # been contradicted still stamped its evidence as reliable as the pipeline's best day.
+        reliability = source_reliability_for(
+            cur, "derived", default=float(str(plan["data_quality_score"]))
+        )
+        for evidence_id, (kind, excerpt) in evidence.items():
             cur.execute(
                 """INSERT INTO wnba.evidence
-                   (evidence_id,document_id,subject_id,excerpt,observed_at,reliability)
-                   VALUES (%s,%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING""",
+                   (evidence_id,document_id,subject_id,excerpt,observed_at,reliability,kind)
+                   VALUES (%s,%s,%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING""",
                 (
                     evidence_id,
                     document_id,
                     plan["player_id"],
                     excerpt,
                     at,
-                    plan["data_quality_score"],
+                    reliability,
+                    kind,
                 ),
             )
 
@@ -440,6 +462,8 @@ def execute_plan(
             (run_id, plan_id),
         )
 
+        # What the provider sees: id -> text, in the ranked order the bundle was built in.
+        texts = {evidence_id: text for evidence_id, (_, text) in evidence.items()}
         context = (
             f"Player: {plan['full_name']}; market: {plan['prop_type']}; line: {plan['line']}. "
         )
@@ -452,7 +476,7 @@ def execute_plan(
                         provider.analyze,
                         role=role,
                         question=context + AGENT_QUESTIONS[role],
-                        evidence=evidence,
+                        evidence=texts,
                     )
                     for role in roles
                 }
@@ -530,7 +554,7 @@ def execute_plan(
                             provider.revise,
                             role=role,
                             question=context + AGENT_QUESTIONS[role],
-                            evidence=evidence,
+                            evidence=texts,
                             own_conclusion=first_round[role][0].conclusion,
                             own_confidence=first_round[role][0].confidence,
                             peer_positions=peer_view[role],
@@ -680,6 +704,76 @@ def execute_plan(
         claims=claims,
         evidence=len(evidence),
         posture=synthesis.posture,
+    )
+
+
+@dataclass(frozen=True)
+class QueueRun:
+    """What draining the queue actually did, including what it declined to do."""
+
+    attempted: int = 0
+    completed: int = 0
+    blocked: int = 0
+    failed: int = 0
+    remaining: int = 0
+    postures: tuple[str, ...] = ()
+
+
+def run_queue(
+    *,
+    limit: int = 5,
+    client: DeepSeekResearchClient | None = None,
+    now: datetime | None = None,
+) -> QueueRun:
+    """Execute the highest-priority queued investigations, up to a hard cap.
+
+    Planning is free and running is not, so the two are separate commands and this one takes a
+    bounded ``limit`` rather than draining whatever the coordinator queued. A trigger storm -- an
+    injury report landing for a whole team twenty minutes before tip -- would otherwise turn one
+    unusual evening into a provider bill, and the resulting investigations would arrive too late
+    to inform anything anyway.
+
+    Failures do not stop the run. A plan that raises is recorded as ``failed`` and the next one
+    proceeds: one prop with a malformed feature snapshot should not silently cost the rest of the
+    slate its research.
+    """
+    at = now or datetime.now(UTC)
+    provider = client or DeepSeekResearchClient()
+    attempted = completed = blocked = failed = 0
+    postures: list[str] = []
+
+    with connect() as conn, conn.cursor() as cur:
+        queued = pending_plans(cur, limit=max(1, limit), now=at)
+        cur.execute(
+            """SELECT count(*) AS waiting FROM wnba.research_plans
+               WHERE status='planned' AND locks_at>%s""",
+            (at,),
+        )
+        row = cur.fetchone()
+        remaining = 0 if row is None else int(str(row["waiting"]))
+
+    for plan in queued:
+        plan_id = UUID(str(plan["plan_id"]))
+        attempted += 1
+        try:
+            result = execute_plan(plan_id, client=provider, now=datetime.now(UTC))
+        except Exception:
+            failed += 1
+            continue
+        if result.status == "blocked":
+            blocked += 1
+            continue
+        completed += 1
+        if result.posture is not None:
+            postures.append(result.posture)
+
+    return QueueRun(
+        attempted=attempted,
+        completed=completed,
+        blocked=blocked,
+        failed=failed,
+        remaining=max(0, remaining - attempted),
+        postures=tuple(postures),
     )
 
 

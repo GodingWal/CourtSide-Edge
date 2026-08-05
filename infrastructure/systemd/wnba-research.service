@@ -9,5 +9,10 @@ EnvironmentFile=/opt/wnba/repo/.env
 # The coordinator queues investigations; it calls no model and spends nothing. Executing a plan
 # is a separate command so that queue depth and provider spend are two decisions, not one.
 ExecStart=/opt/wnba/repo/.venv/bin/wnba research plan --limit 15
+# Then run the top of the queue, capped. The cap is the whole point: an injury report landing for
+# a whole team twenty minutes before tip would otherwise turn one evening into a provider bill,
+# and those investigations would arrive too late to inform anything. Whatever is left stays
+# queued for the next pass or expires with the market, which the record shows either way.
+ExecStart=/opt/wnba/repo/.venv/bin/wnba research run-queue --limit 4
 TimeoutStartSec=10m
 Nice=10

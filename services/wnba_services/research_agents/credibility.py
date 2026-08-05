@@ -42,7 +42,6 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
-from uuid import UUID
 
 from psycopg.types.json import Jsonb
 from wnba_store.db import connect
@@ -51,9 +50,11 @@ __all__ = [
     "CREDIBILITY_PRIOR",
     "POOLING_STRENGTH",
     "CredibilityBatch",
+    "evidence_kind_ranking",
     "expected_calibration",
     "pooled_score",
     "score_research_credibility",
+    "source_reliability_for",
 ]
 
 # Everything starts at "no reason to trust or distrust". 0.5 rather than a flattering default,
@@ -75,6 +76,7 @@ class CredibilityBatch:
     evidence_ranked: int
     source_scores: int
     claims_scored: int
+    kinds_ranked: int = 0
 
 
 def pooled_score(
@@ -236,6 +238,68 @@ def _rank_evidence(cur: Any, at: datetime) -> int:
     return written
 
 
+def _rank_evidence_kinds(cur: Any, at: datetime) -> int:
+    """The ranking retrieval can actually learn from.
+
+    Per-``evidence_id`` scores exist and are worth keeping, but they cannot accumulate: an id is
+    the hash of one prop's snapshot and is seen once. A *kind* recurs on every prop of every
+    slate, so "analysts keep calling the matchup block misleading" is a statement with a sample
+    behind it and a consequence retrieval can act on.
+    """
+    cur.execute(
+        """WITH labelled AS (
+               SELECT e.kind,
+                      count(*) FILTER (
+                          WHERE e.evidence_id = ANY(fb.evidence_ids_useful)) AS useful,
+                      count(*) FILTER (
+                          WHERE e.evidence_id = ANY(fb.evidence_ids_misleading)) AS misleading
+               FROM wnba.evidence e
+               JOIN wnba.analyst_feedback fb
+                 ON e.evidence_id = ANY(fb.evidence_ids_useful)
+                 OR e.evidence_id = ANY(fb.evidence_ids_misleading)
+               WHERE e.kind IS NOT NULL
+               GROUP BY e.kind
+           ), cited AS (
+               SELECT e.kind,count(*) AS citations
+               FROM wnba.agent_analyses a
+               JOIN wnba.evidence e ON e.evidence_id = ANY(a.evidence_ids)
+               WHERE e.kind IS NOT NULL
+               GROUP BY e.kind
+           )
+           SELECT k.kind,
+                  coalesce(l.useful,0) AS useful,
+                  coalesce(l.misleading,0) AS misleading,
+                  coalesce(c.citations,0) AS citations
+           FROM (SELECT DISTINCT kind FROM wnba.evidence WHERE kind IS NOT NULL) k
+           LEFT JOIN labelled l ON l.kind=k.kind
+           LEFT JOIN cited c ON c.kind=k.kind"""
+    )
+    written = 0
+    for raw in cur.fetchall():
+        row = dict(raw)
+        useful = int(str(row["useful"]))
+        misleading = int(str(row["misleading"]))
+        citations = int(str(row["citations"]))
+        labels = useful + misleading
+        usefulness = pooled_score(useful, labels)
+        cur.execute(
+            """INSERT INTO wnba.evidence_kind_rankings
+               (kind,calculated_at,useful_labels,misleading_labels,citation_count,usefulness,
+                sample_size)
+               VALUES (%s,%s,%s,%s,%s,%s,%s)
+               ON CONFLICT (kind) DO UPDATE SET
+                 calculated_at=EXCLUDED.calculated_at,
+                 useful_labels=EXCLUDED.useful_labels,
+                 misleading_labels=EXCLUDED.misleading_labels,
+                 citation_count=EXCLUDED.citation_count,
+                 usefulness=EXCLUDED.usefulness,
+                 sample_size=EXCLUDED.sample_size""",
+            (str(row["kind"]), at, useful, misleading, citations, usefulness, labels),
+        )
+        written += 1
+    return written
+
+
 def _score_sources(cur: Any, at: datetime) -> int:
     """Reliability per source and domain, from labels and contradiction rate."""
     cur.execute(
@@ -303,24 +367,46 @@ def score_research_credibility(*, now: datetime | None = None) -> CredibilityBat
     with connect() as conn, conn.cursor() as cur:
         agent_scores, claims_scored = _score_agents(cur, at)
         evidence_ranked = _rank_evidence(cur, at)
+        kinds_ranked = _rank_evidence_kinds(cur, at)
         source_scores = _score_sources(cur, at)
     return CredibilityBatch(
         agent_scores=agent_scores,
         evidence_ranked=evidence_ranked,
+        kinds_ranked=kinds_ranked,
         source_scores=source_scores,
         claims_scored=claims_scored,
     )
 
 
-def evidence_ranking(cur: Any, evidence_ids: Sequence[UUID]) -> dict[UUID, float]:
-    """Current usefulness for a set of evidence ids, defaulting to the prior when unscored."""
-    if not evidence_ids:
-        return {}
+def evidence_kind_ranking(cur: Any) -> dict[str, float]:
+    """Current usefulness per evidence kind. Unscored kinds sit at the prior.
+
+    Read by the investigation runner to order the bundle. Ordering is the *only* consequence:
+    no kind is ever withheld because analysts disliked it, since evidence somebody found
+    unhelpful last week is still evidence about this prop, and dropping it would let a feedback
+    loop quietly narrow what the analysts are allowed to see.
+    """
+    cur.execute("SELECT kind,usefulness FROM wnba.evidence_kind_rankings")
+    return {str(row["kind"]): float(str(row["usefulness"])) for row in cur.fetchall()}
+
+
+def source_reliability_for(cur: Any, source: str, *, default: float) -> float:
+    """The measured reliability of a source, or ``default`` when it has no track record.
+
+    ``default`` is the forecast's data-quality score, which is what every evidence row used to be
+    stamped with unconditionally. That was a statement about the *snapshot*, not about where the
+    snapshot came from -- so a source that had repeatedly been contradicted still produced
+    evidence marked as reliable as the pipeline's best day.
+    """
     cur.execute(
-        "SELECT evidence_id,usefulness FROM wnba.evidence_rankings WHERE evidence_id = ANY(%s)",
-        (list(evidence_ids),),
+        """SELECT reliability,sample_size FROM wnba.source_reliability
+           WHERE source=%s ORDER BY calculated_at DESC LIMIT 1""",
+        (source,),
     )
-    scored = {
-        UUID(str(row["evidence_id"])): float(str(row["usefulness"])) for row in cur.fetchall()
-    }
-    return {evidence_id: scored.get(evidence_id, CREDIBILITY_PRIOR) for evidence_id in evidence_ids}
+    row = cur.fetchone()
+    if row is None:
+        return default
+    measured = float(str(row["reliability"]))
+    # Blend rather than replace: the snapshot's completeness and the source's track record are
+    # both true, and an evidence row is only as good as the weaker of them.
+    return min(default, measured) if int(str(row["sample_size"])) > 0 else default

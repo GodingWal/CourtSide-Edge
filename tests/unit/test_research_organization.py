@@ -24,6 +24,7 @@ from wnba_services.research_agents.credibility import (
     CREDIBILITY_PRIOR,
     expected_calibration,
     pooled_score,
+    source_reliability_for,
 )
 from wnba_services.research_agents.deepseek import (
     AgentAnalysis,
@@ -40,7 +41,11 @@ from wnba_services.research_agents.synthesis import (
     SynthesisInputs,
     synthesize,
 )
-from wnba_services.research_agents.workflow import CLAIM_REFRESH, ROLE_DOMAIN
+from wnba_services.research_agents.workflow import (
+    CLAIM_REFRESH,
+    ROLE_DOMAIN,
+    _snapshot_evidence,
+)
 
 NOW = datetime(2026, 8, 5, 18, tzinfo=UTC)
 LOCKS = NOW + timedelta(hours=3)
@@ -389,3 +394,109 @@ def test_confident_and_wrong_produces_a_large_gap() -> None:
 
     assert gap is not None
     assert gap > 0.9
+
+
+# --------------------------------------------------------------------------------------
+# The evidence feedback loop actually closes
+# --------------------------------------------------------------------------------------
+def test_evidence_is_ordered_by_learned_usefulness() -> None:
+    """Ordering is the only thing analyst labels change, and it has to change something."""
+    projection = {
+        "features": {"injury_designation": "available", "expected_minutes": 30.0},
+        "source": "underdog",
+        "line": 14.5,
+        "observed_at": NOW,
+        "locks_at": LOCKS,
+        "prop_type": "points",
+        "mean": 15.0,
+        "median": 15,
+        "stddev": 6.0,
+        "model_disagreement": 0.04,
+        "data_quality_score": 0.9,
+    }
+    ranking = {"matchup": 0.9, "availability": 0.1, "market": 0.5}
+
+    _, evidence = _snapshot_evidence(projection, audit_context=[], precedents=None, ranking=ranking)
+    kinds = [kind for kind, _ in evidence.values()]
+
+    assert kinds.index("matchup") < kinds.index("market") < kinds.index("availability")
+
+
+def test_a_disliked_evidence_kind_is_demoted_but_never_withheld() -> None:
+    """A feedback loop that could hide evidence would quietly narrow what analysts can see."""
+    projection = {
+        "features": {},
+        "source": "underdog",
+        "line": 14.5,
+        "observed_at": NOW,
+        "locks_at": LOCKS,
+        "prop_type": "points",
+        "mean": 15.0,
+        "median": 15,
+        "stddev": 6.0,
+        "model_disagreement": 0.04,
+        "data_quality_score": 0.9,
+    }
+
+    _, evidence = _snapshot_evidence(
+        projection, audit_context=[], precedents=None, ranking={"matchup": 0.0}
+    )
+    kinds = [kind for kind, _ in evidence.values()]
+
+    assert "matchup" in kinds
+    assert kinds[-1] == "matchup"
+
+
+def test_evidence_kinds_recur_across_props_so_feedback_can_accumulate() -> None:
+    """The defect the kind ranking exists to fix: evidence ids are content-hashed per prop.
+
+    Two different props produce disjoint evidence *ids* and identical evidence *kinds*. Ranking
+    by id could therefore never accumulate a sample; ranking by kind can.
+    """
+    base = {
+        "features": {},
+        "source": "underdog",
+        "observed_at": NOW,
+        "locks_at": LOCKS,
+        "prop_type": "points",
+        "mean": 15.0,
+        "median": 15,
+        "stddev": 6.0,
+        "model_disagreement": 0.04,
+        "data_quality_score": 0.9,
+    }
+    _, first = _snapshot_evidence(
+        {**base, "line": 14.5}, audit_context=[], precedents=None, ranking={}
+    )
+    _, second = _snapshot_evidence(
+        {**base, "line": 22.5}, audit_context=[], precedents=None, ranking={}
+    )
+
+    assert set(first).isdisjoint(second)
+    assert {kind for kind, _ in first.values()} == {kind for kind, _ in second.values()}
+
+
+def test_source_reliability_never_flatters_a_thin_snapshot() -> None:
+    """Reliability is the weaker of snapshot completeness and the source's track record."""
+
+    class _Cursor:
+        def __init__(self, row: dict[str, object] | None) -> None:
+            self.row = row
+
+        def execute(self, query: str, params: object = ()) -> None:
+            return None
+
+        def fetchone(self) -> dict[str, object] | None:
+            return self.row
+
+    untracked = source_reliability_for(_Cursor(None), "derived", default=0.9)
+    contradicted = source_reliability_for(
+        _Cursor({"reliability": 0.3, "sample_size": 40}), "derived", default=0.9
+    )
+    unmeasured = source_reliability_for(
+        _Cursor({"reliability": 0.99, "sample_size": 0}), "derived", default=0.6
+    )
+
+    assert untracked == 0.9
+    assert contradicted == 0.3
+    assert unmeasured == 0.6
