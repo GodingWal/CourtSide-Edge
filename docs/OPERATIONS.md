@@ -24,7 +24,14 @@ other route requires the owner credential.
 - Stale market archive: run `sudo systemctl start wnba-archiver.service`, then inspect its log.
 - Missing forecasts: verify roles/effects/matchups, then start `wnba-forecast.service`.
 - Failed migration: stop deployment, keep the old web process, and restore the pre-deploy dump.
-- DeepSeek failure: forecasts continue; research fails closed and may be retried manually.
+- DeepSeek failure: forecasts continue. Individual agents now fail open — a run completes with
+  the roles that answered, and each missing one is a `fallback` row in `wnba.model_advisories`.
+  A run only fails when every role failed. Check `disposition` and `failure_reason` there before
+  suspecting the pipeline.
+- Owner picks stuck on `pending`: `wnba learning settle` settles them alongside paper episodes.
+  Legs whose `player_id` is null were confirmed under a name that matched no player, or matched
+  more than one; they never settle, and that is deliberate. Re-enter them with a name from the
+  board rather than relaxing the match.
 - Disk above 80%: inspect PostgreSQL, Docker and backup growth before deleting anything.
 
 ## Champion/challenger experiments

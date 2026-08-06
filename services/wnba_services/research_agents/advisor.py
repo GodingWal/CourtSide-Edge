@@ -29,6 +29,7 @@ import hashlib
 import json
 import logging
 import os
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, TypeVar
@@ -45,6 +46,7 @@ logger = logging.getLogger(__name__)
 __all__ = ["Advisor", "AdvisoryOutcome", "advisory_summary", "deepseek_is_configured"]
 
 Schema = TypeVar("Schema", bound=BaseModel)
+Result = TypeVar("Result")
 
 # Any exception the provider path can legitimately raise. Anything outside this set is a bug in
 # our own code and should not be swallowed into a quiet fallback.
@@ -174,6 +176,55 @@ class Advisor:
         assert isinstance(result, schema)
         return result
 
+    def attempt(
+        self,
+        *,
+        task: str,
+        subject: str,
+        call: Callable[[], tuple[Result, str, str]],
+        now: datetime | None = None,
+    ) -> Result | None:
+        """Run one already-composed provider call under the same fail-open contract.
+
+        :meth:`advise` owns the prompt; this owns nothing but the failure handling, which is what
+        the research workflow needs. Its calls encode a specific research question and police
+        evidence citation inside the client, so the prompt cannot move here -- but the guarantee
+        should be identical, and before this it was the opposite: a single failed role raised and
+        took the whole run's other nine calls with it.
+
+        Returns ``None`` on any provider failure, having recorded it. The caller decides what a
+        missing agent means; the usual answer is "the run continues with fewer voices, and says
+        so".
+        """
+        at = now or datetime.now(UTC)
+        if not self._enabled:
+            self._record(
+                task=task,
+                subject=subject,
+                at=at,
+                disposition="fallback",
+                failure_reason="DEEPSEEK_API_KEY is not configured",
+            )
+            return None
+        try:
+            result, prompt_hash, response_hash = call()
+        except _PROVIDER_FAILURES as error:
+            reason = f"{type(error).__name__}: {error}"[:500]
+            logger.warning("advisory task %s fell back to deterministic path: %s", task, reason)
+            self._record(
+                task=task, subject=subject, at=at, disposition="fallback", failure_reason=reason
+            )
+            return None
+        self._record(
+            task=task,
+            subject=subject,
+            at=at,
+            disposition="used",
+            prompt_hash=prompt_hash,
+            response_hash=response_hash,
+        )
+        return result
+
     def reject(self, *, task: str, subject: str, reason: str, now: datetime | None = None) -> None:
         """Record advice that arrived intact but failed a downstream check.
 
@@ -205,11 +256,15 @@ class Advisor:
     ) -> None:
         self.outcomes.append(AdvisoryOutcome(task, subject, disposition, failure_reason))
         model = os.getenv("DEEPSEEK_MODEL", "deepseek-v4-pro") if self._enabled else "none"
+        # Cost travels with the call. A client that was never constructed reports nothing rather
+        # than zero: "no key configured" and "a free call" are different facts.
+        usage = self._client.usage if self._client is not None else None
         self._cur.execute(
             """INSERT INTO wnba.model_advisories
                (advisory_id,task,subject,requested_at,model,prompt_hash,response_hash,
-                disposition,detail,failure_reason)
-               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                disposition,detail,failure_reason,latency_ms,prompt_tokens,completion_tokens,
+                attempts)
+               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
             (
                 uuid4(),
                 task,
@@ -219,8 +274,21 @@ class Advisor:
                 prompt_hash,
                 response_hash,
                 disposition,
-                Jsonb(detail or {}),
+                Jsonb(
+                    {
+                        **(detail or {}),
+                        **(
+                            {"retry_reasons": usage.retry_reasons}
+                            if usage is not None and usage.retry_reasons
+                            else {}
+                        ),
+                    }
+                ),
                 failure_reason,
+                None if usage is None else usage.latency_ms,
+                None if usage is None else usage.prompt_tokens,
+                None if usage is None else usage.completion_tokens,
+                None if usage is None or usage.attempts == 0 else usage.attempts,
             ),
         )
 

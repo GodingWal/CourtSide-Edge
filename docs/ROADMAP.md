@@ -1,6 +1,6 @@
 # Delivery roadmap
 
-Updated: 2026-08-04
+Updated: 2026-08-05
 
 The platform is in **Phase 3: private shadow analysis**. Live and rescued historical markets,
 five-component forecasts, rolling-origin replay, paper settlement and the learning memory are
@@ -13,20 +13,20 @@ operational. Automated wager execution remains permanently out of scope.
 | Strict domain and ontology | Complete | Pydantic models, ontology YAML, drift tests |
 | Bitemporal PostgreSQL core | Complete | `wnba` schema and point-in-time leakage tests |
 | Market archive | Live | Underdog poll every 15 minutes; changed states only |
-| Correlated entry pricing | Complete as a library | Copula simulation and payout tests |
+| Correlated entry pricing | Wired into the console | Copula simulation, fitted leg correlation with priors where unmeasured, and entry construction over tonight's candidates |
 | VPS web console | Live | `https://courtside-edge.com` |
 | PostgreSQL backup | Nightly local backup | Restore-list and checksum verification; 14-day retention |
 | Historical statistical data | Canonical | More than 16,000 player lines with ESPN lineage |
 | Historical market data | Partially normalized | 4,571 quotes mapped to 46 games; ambiguous rows retained |
-| Forecasts and recommendations | Shadow/live | Five components and immutable paper episodes |
+| Forecasts and recommendations | Shadow/live | Five components and immutable paper episodes; the board ranks on shrunk edge over the payout table's break-even |
 | Shared production/replay scorer | Complete | `score_prop` is the only forecasting code path |
 | Fitted calibration and weights | Operational | Isotonic maps, stacked weights, edge shrinkage |
 | Analyst rules in the forecast path | Operational | Active and shadow firings recorded per episode |
 | Walk-forward evaluation | Operational | Five pre-tip snapshots and benchmark comparisons |
-| PAT-style research | Built, not yet deployed | Five DeepSeek roles with cited expiring claims; migration 026 and its modules are uncommitted, so the VPS does not have them |
+| PAT-style research | Built, not yet deployed | Five DeepSeek roles with cited expiring claims over a corpus that now carries recent form, line movement, the de-vigged market price, teammate availability and settled precedents; a failed role costs one voice rather than the run; one round-two seat is held blind as a herding control |
 | Learning loop | Closed | Hypotheses reviewed against post-creation evidence; active rules re-scored on live firings and auto-suspended when harmful; measured drift widens forecasts |
 | Error attribution | Scored, two causes | Ordered if-chain replaced by ranked causes over the minutes-residual; `data_quality` and `modeling` added |
-| Model participation in learning | Advisory, audited | DeepSeek drafts rules, proposal designs, hypothesis critiques and withdrawal rationales; every call recorded in `model_advisories` with used/fallback/rejected |
+| Model participation in learning | Advisory, audited | DeepSeek drafts rules, proposal designs, hypothesis critiques and withdrawal rationales; every call recorded in `model_advisories` with used/fallback/rejected plus tokens, latency and retries |
 | Independent-sample accounting | Complete | Repeats collapsed; game clustering corrected |
 | Rule proposal and backtest | Operational | Weekly proposal/backtest; named CLI approval only |
 | Rule withdrawal | Automatic, one-way | Harmful active rules suspend without a human; reactivation still needs a named one |
@@ -34,6 +34,8 @@ operational. Automated wager execution remains permanently out of scope.
 | Cross-source consensus | Built, one source live | Consensus, dispersion, best price, closing line |
 | End-to-end pipeline tests | Complete | Quote -> forecast -> decision -> settlement |
 | Champion/challenger | Two families, shadow-ready | Hierarchical Bayes and state-space role models; promotion is human-only |
+| Owner pick settlement | Operational | Confirmed slips settle against their own lines from settled episodes; unresolved players stay pending rather than being fuzzy-matched |
+| Agent measurement | Proper scoring | Brier and skill against the model probability per role and per round; the consensus is credibility-weighted with a floor |
 | Video intelligence | Not started | Experimental track remains isolated |
 
 ## Critical path

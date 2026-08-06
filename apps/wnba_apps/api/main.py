@@ -39,6 +39,7 @@ from wnba_marketmath import (
     staked_fraction,
     underdog_payout_table,
 )
+from wnba_services.market_engine.correlation import EntryCorrelation
 from wnba_sim import correct_count_pmf, effective_leg_correlation
 
 from wnba_apps.api.auth import configured_owner, decode_basic_authorization, verify_password
@@ -112,15 +113,39 @@ class PayoutTableView(BaseModel):
     rules: list[RuleView]
 
 
+class LegDescriptor(BaseModel):
+    """What a leg is, as far as correlation is concerned."""
+
+    prop_type: Annotated[str, Field(min_length=1, max_length=80)]
+    side: Literal["over", "under"]
+    player_id: UUID | None = None
+    team: Annotated[str, Field(max_length=10)] | None = None
+    game_id: UUID | None = None
+
+
 class PriceRequest(BaseModel):
     source: Literal["prizepicks", "underdog"] = "prizepicks"
     entry_type: Literal["power", "flex"] = "power"
     leg_probabilities: Annotated[list[float], Field(min_length=2, max_length=8)]
-    correlation: Annotated[float, Field(gt=-1.0, lt=1.0)] = 0.0
+    correlation: Annotated[float, Field(gt=-1.0, lt=1.0)] | None = None
+    """Left unset, correlation is estimated from ``legs`` and the fitted table rather than
+    assumed to be zero. Zero is the one value that is definitely wrong for a same-player pair,
+    and it was the old default."""
+
+    legs: Annotated[list[LegDescriptor], Field(max_length=8)] = Field(default_factory=list)
     simulations: Annotated[int, Field(ge=1_000, le=500_000)] = 100_000
     seed: Annotated[int, Field(ge=0)] = 0
     already_staked_this_game: Annotated[float, Field(ge=0.0, le=1.0)] = 0.0
     already_staked_today: Annotated[float, Field(ge=0.0, le=1.0)] = 0.0
+
+
+class EntrySuggestionRequest(BaseModel):
+    source: Literal["prizepicks", "underdog"] = "prizepicks"
+    max_legs: Annotated[int, Field(ge=2, le=6)] = 5
+    max_per_game: Annotated[int, Field(ge=1, le=6)] = 2
+    limit: Annotated[int, Field(ge=1, le=10)] = 5
+    pool: Annotated[int, Field(ge=2, le=20)] = 12
+    seed: Annotated[int, Field(ge=0)] = 0
 
 
 class PriceResponse(BaseModel):
@@ -136,6 +161,14 @@ class PriceResponse(BaseModel):
     verdict: Literal["recommend", "decline"]
     seed: int
     simulations: int
+    correlation_used: float
+    correlation_source: Literal["supplied", "fitted", "prior", "assumed_zero"]
+    correlation_low: float
+    correlation_high: float
+    expected_value_low: float
+    expected_value_high: float
+    worst_case_expected_value: float
+    correlation_pairs: list[dict[str, object]]
 
 
 class FeedbackRequest(BaseModel):
@@ -245,6 +278,46 @@ def _parse_pick_text(text: str, source: str) -> PickSlipDraft:
     return draft.model_copy(update={"source": source})
 
 
+def _edge_over_breakeven(row: dict[str, object]) -> float | None:
+    """Shrunk probability less the break-even the payout table demanded, or ``None``.
+
+    The board used to rank on ``predicted_probability``, which is the number before shrinkage
+    and before any payout rule is consulted. Both corrections already exist and were already
+    stored per episode; this is the arithmetic that puts them on screen.
+    """
+    shrunk, breakeven = row.get("shrunk_probability"), row.get("breakeven_probability")
+    if shrunk is None or breakeven is None:
+        return None
+    return float(str(shrunk)) - float(str(breakeven))
+
+
+def _entry_correlation_for(request: PriceRequest) -> EntryCorrelation:
+    """Estimate the entry's correlation from its leg descriptors and the fitted table."""
+    from wnba_services.market_engine.correlation import LegKey, entry_correlation, load_correlations
+    from wnba_store.db import connect
+
+    if not request.legs:
+        return EntryCorrelation(0.0, 0.0, 0.0, (), 0)
+    try:
+        with connect() as conn, conn.cursor() as cur:
+            fitted = load_correlations(cur)
+    except Exception:
+        # An unreachable table means the priors apply, and the response says so through
+        # `correlation_source`. It does not mean the entry is uncorrelated.
+        fitted = {}
+    keys = [
+        LegKey(
+            prop_type=leg.prop_type,
+            side=leg.side,
+            player_id=None if leg.player_id is None else str(leg.player_id),
+            team=leg.team,
+            game_id=None if leg.game_id is None else str(leg.game_id),
+        )
+        for leg in request.legs
+    ]
+    return entry_correlation(keys, fitted)
+
+
 # --------------------------------------------------------------------------------------
 # Routes
 # --------------------------------------------------------------------------------------
@@ -306,7 +379,23 @@ def price(request: PriceRequest) -> PriceResponse:
     except LookupError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
-    if request.correlation < 0.0 and leg_count > 2:
+    if request.legs and len(request.legs) != leg_count:
+        raise HTTPException(
+            status_code=422,
+            detail="legs must describe exactly one entry per supplied probability",
+        )
+
+    estimate = _entry_correlation_for(request)
+    correlation = request.correlation if request.correlation is not None else estimate.mean
+    source: Literal["supplied", "fitted", "prior", "assumed_zero"]
+    if request.correlation is not None:
+        source = "supplied"
+    elif not request.legs:
+        source = "assumed_zero"
+    else:
+        source = "fitted" if estimate.is_fitted else "prior"
+
+    if request.correlation is not None and request.correlation < 0.0 and leg_count > 2:
         raise HTTPException(
             status_code=422,
             detail=(
@@ -314,10 +403,20 @@ def price(request: PriceRequest) -> PriceResponse:
                 "two legs -- the implied joint distribution does not exist"
             ),
         )
+    # An estimated band may reach below zero where a supplied value may not. The estimate is not
+    # a user error to reject, so the unrepresentable part of the band is clipped and the entry is
+    # priced across what the one-factor model can actually express.
+    floor = 0.0 if leg_count > 2 else -0.99
+    correlation = max(floor, correlation)
+    band = sorted(
+        {max(floor, value) for value in (correlation, estimate.low, estimate.high)}
+        if request.legs
+        else {correlation}
+    )
 
     correlated = correct_count_pmf(
         request.leg_probabilities,
-        correlation=request.correlation,
+        correlation=correlation,
         simulations=request.simulations,
         seed=request.seed,
     )
@@ -325,23 +424,54 @@ def price(request: PriceRequest) -> PriceResponse:
 
     ev = entry_expected_value(correlated, rule)
     ev_independent = entry_expected_value(independent, rule)
+    band_values = [
+        entry_expected_value(
+            correct_count_pmf(
+                request.leg_probabilities,
+                correlation=value,
+                simulations=request.simulations,
+                seed=request.seed,
+            ),
+            rule,
+        )
+        for value in band
+    ]
+    ev_low, ev_high = min(band_values), max(band_values)
+    # Sizing and gating both take the least favourable end of the band. Being wrong about
+    # correlation is the expected case here, not the tail: most pairs still price off a prior.
+    worst = min(ev, ev_low)
 
     policy = RiskPolicy()
     stake = staked_fraction(
         correlated,
         rule,
         policy,
-        expected_value=ev,
+        expected_value=worst,
         already_staked_this_game=request.already_staked_this_game,
         already_staked_today=request.already_staked_today,
     )
 
     breakeven = breakeven_uniform_leg_probability(rule)
     gates: list[str] = []
-    if ev < policy.min_expected_value:
+    if source == "assumed_zero" and leg_count > 1:
         gates.append(
-            f"edge {ev:.1%} is below the {policy.min_expected_value:.0%} minimum -- thin edges "
-            "on unvalidated probabilities are noise wearing a decimal point"
+            "no leg descriptors supplied, so correlation is assumed zero -- describe the legs "
+            "to price the structure instead"
+        )
+    if source == "prior":
+        gates.append(
+            f"{len(estimate.pairs) - estimate.fitted_pairs} of {len(estimate.pairs)} leg pairs "
+            "use a stated prior rather than a measured correlation"
+        )
+    if ev_low < 0 <= ev_high:
+        gates.append(
+            "expected value changes sign inside the correlation band -- unpriced, not an "
+            "opportunity"
+        )
+    if worst < policy.min_expected_value:
+        gates.append(
+            f"worst-case edge {worst:.1%} is below the {policy.min_expected_value:.0%} minimum "
+            "-- thin edges on unvalidated probabilities are noise wearing a decimal point"
         )
     if min(request.leg_probabilities) < breakeven:
         gates.append(
@@ -352,7 +482,6 @@ def price(request: PriceRequest) -> PriceResponse:
             "the sign of this edge depends on the correlation assumption -- unpriced, not an "
             "opportunity"
         )
-    gates.append("market data is live, but these probabilities are hand-entered—not model output")
 
     return PriceResponse(
         rule=_rule_view(rule),
@@ -367,7 +496,91 @@ def price(request: PriceRequest) -> PriceResponse:
         verdict="recommend" if stake > 0 else "decline",
         seed=request.seed,
         simulations=request.simulations,
+        correlation_used=correlation,
+        correlation_source=source,
+        correlation_low=min(band),
+        correlation_high=max(band),
+        expected_value_low=ev_low,
+        expected_value_high=ev_high,
+        worst_case_expected_value=worst,
+        correlation_pairs=[pair.to_payload() for pair in estimate.pairs],
     )
+
+
+@app.post("/api/entries/suggest")
+def suggest_entries(request: EntrySuggestionRequest) -> dict[str, object]:
+    """Search the live candidate board for entries worth a human's attention.
+
+    This is the question the console never answered. Every screen up to now ranked legs; the
+    decision is which legs go on one ticket, and that depends on the payout table's leg-count
+    curve and on how correlated the legs are -- neither of which a per-leg ranking can express.
+
+    Suggestions inherit every upstream restriction: only forecasts the gate already called
+    candidates are eligible, probabilities are the shrunk ones, and an entry with any open gate
+    is returned as a decline with its reasons rather than withheld or promoted.
+    """
+    from wnba_services.market_engine.correlation import load_correlations
+    from wnba_services.market_engine.entries import CandidateLeg, construct_entries
+    from wnba_store.db import connect
+
+    board = forecasts()
+    if not board.get("available"):
+        return {
+            "available": False,
+            "reason": board.get("reason", "board unavailable"),
+            "entries": [],
+        }
+    board_rows = board.get("forecasts", [])
+    rows: list[dict[str, object]] = [
+        row
+        for row in (board_rows if isinstance(board_rows, list) else [])
+        if isinstance(row, dict) and str(row.get("system_recommendation")) == "candidate"
+    ]
+    candidates = [
+        CandidateLeg(
+            projection_id=str(row["projection_id"]),
+            player_name=str(row["full_name"]),
+            prop_type=str(row["prop_type"]),
+            side=str(row["side"]),
+            line=float(str(row["line"])),
+            # The shrunk probability where the gate recorded one. Falling back to the raw
+            # probability would compound selection bias once per leg, so a row without a shrunk
+            # value is skipped instead.
+            probability=float(str(row["shrunk_probability"])),
+            player_id=None if row.get("player_id") is None else str(row["player_id"]),
+            team=None if row.get("team") is None else str(row["team"]),
+            game_id=None if row.get("game_id") is None else str(row["game_id"]),
+            breakeven=(
+                None
+                if row.get("breakeven_probability") is None
+                else float(str(row["breakeven_probability"]))
+            ),
+        )
+        for row in rows
+        if row.get("shrunk_probability") is not None
+    ]
+    try:
+        with connect() as conn, conn.cursor() as cur:
+            fitted = load_correlations(cur)
+    except Exception:  # pragma: no cover - a missing table must not hide the suggestions
+        fitted = {}
+    entries = construct_entries(
+        candidates,
+        _table_for(request.source),
+        fitted=fitted,
+        max_legs=request.max_legs,
+        max_per_game=request.max_per_game,
+        limit=request.limit,
+        pool=request.pool,
+        seed=request.seed,
+    )
+    return {
+        "available": True,
+        "analysis_only": True,
+        "source": request.source,
+        "candidates_considered": len(candidates),
+        "entries": [entry.to_payload() for entry in entries],
+    }
 
 
 @app.get("/api/archive")
@@ -471,11 +684,13 @@ def forecasts() -> dict[str, object]:
         with connect() as conn, conn.cursor() as cur:
             cur.execute(
                 """SELECT DISTINCT ON (f.quote_id) f.projection_id,p.full_name,f.prop_type,
+                          f.player_id,f.game_id,
                           f.line,f.mean,f.median,f.stddev,f.probability_over,
                           f.probability_under,f.projected_minutes,f.sample_size,
                           f.data_quality_score,f.confidence,f.generated_at,f.expires_at,
                           d.episode_id,d.side,d.predicted_probability,d.model_disagreement,
-                          d.system_recommendation,q.source,
+                          d.system_recommendation,d.shrunk_probability,d.breakeven_probability,
+                          d.decision_reason,q.source,
                           g.scheduled_tipoff,i.designation AS injury_designation,
                           i.detail AS injury_detail,r.availability_probability,
                           r.start_probability,r.closing_lineup_probability,
@@ -559,7 +774,20 @@ def forecasts() -> dict[str, object]:
             rows = [dict(row) for row in cur.fetchall()]
     except Exception as exc:
         return {"available": False, "reason": str(exc)[:200], "forecasts": []}
-    rows.sort(key=lambda row: float(str(row["predicted_probability"])), reverse=True)
+    for row in rows:
+        row["edge"] = _edge_over_breakeven(row)
+    # Ranked by edge over the payout table's break-even, not by raw probability. The two orders
+    # disagree constantly and only one of them is a ranking by value: a 0.72 on a product that
+    # needs three legs correct and a 0.61 on one that needs two are not comparable quantities.
+    # Rows the gate never priced (no shrunk probability yet) sort last rather than first.
+    rows.sort(
+        key=lambda row: (
+            row["edge"] is not None,
+            row["edge"] if row["edge"] is not None else 0.0,
+            float(str(row["predicted_probability"])),
+        ),
+        reverse=True,
+    )
     return {
         "available": True,
         "analysis_only": True,
@@ -1174,18 +1402,44 @@ def picks() -> dict[str, object]:
                         'player_name',l.player_name,'prop_type',l.prop_type,'side',l.side,
                         'line',l.line,'offered_odds',l.offered_odds,
                         'model_probability',l.model_probability,'result',l.result,
-                        'extraction_confidence',l.extraction_confidence
+                        'extraction_confidence',l.extraction_confidence,
+                        'player_id',l.player_id,'settled_at',l.settled_at,
+                        'actual_stat',l.actual_stat,'episode_id',l.episode_id
                       ) ORDER BY l.created_at) FILTER (WHERE l.pick_leg_id IS NOT NULL),'[]') legs
                FROM wnba.pick_slips s LEFT JOIN wnba.pick_legs l USING (pick_slip_id)
                GROUP BY s.pick_slip_id ORDER BY s.created_at DESC LIMIT 200"""
         )
         slips = [dict(row) for row in cur.fetchall()]
-    return {"picks": slips, "analysis_only": True, "automatic_wagering": False}
+        # Settled paper record, which is the only part of this surface that carries information
+        # about whether the owner's judgement was any good. Legs that never matched a settled
+        # episode are counted separately rather than folded into losses.
+        cur.execute(
+            """SELECT count(*) FILTER (WHERE result='win') AS won,
+                      count(*) FILTER (WHERE result='loss') AS lost,
+                      count(*) FILTER (WHERE result IN ('push','void')) AS no_action,
+                      count(*) FILTER (WHERE result='pending') AS pending,
+                      avg(model_probability) FILTER (WHERE result='win') AS mean_probability_won,
+                      avg(model_probability) FILTER (WHERE result='loss') AS mean_probability_lost
+               FROM wnba.pick_legs"""
+        )
+        record = cur.fetchone()
+    return {
+        "picks": slips,
+        "record": {} if record is None else dict(record),
+        "analysis_only": True,
+        "automatic_wagering": False,
+    }
 
 
 @app.post("/api/picks")
 def create_pick(draft: PickSlipDraft) -> dict[str, object]:
-    """Save an owner-confirmed pick slip; all entries remain paper records."""
+    """Save an owner-confirmed pick slip; all entries remain paper records.
+
+    Player names are resolved to identifiers here, while the person who typed the name is still
+    present. An unresolved name is stored as-is with a null identifier: the leg is recorded, it
+    simply will not settle, and the console shows which ones those are.
+    """
+    from wnba_services.learning_loop.pick_settlement import resolve_player_id
     from wnba_store.db import connect
 
     slip_id = uuid4()
@@ -1209,12 +1463,16 @@ def create_pick(draft: PickSlipDraft) -> dict[str, object]:
                 now,
             ),
         )
+        unresolved: list[str] = []
         for leg in draft.legs:
+            player_id = resolve_player_id(cur, leg.player_name)
+            if player_id is None:
+                unresolved.append(leg.player_name)
             cur.execute(
                 """INSERT INTO wnba.pick_legs
                    (pick_leg_id,pick_slip_id,projection_id,player_name,prop_type,side,line,
-                    offered_odds,model_probability,extraction_confidence)
-                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                    offered_odds,model_probability,extraction_confidence,player_id)
+                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
                 (
                     uuid4(),
                     slip_id,
@@ -1226,9 +1484,15 @@ def create_pick(draft: PickSlipDraft) -> dict[str, object]:
                     leg.offered_odds,
                     leg.model_probability,
                     leg.extraction_confidence,
+                    player_id,
                 ),
             )
-    return {"pick_slip_id": slip_id, "stored": True, "is_paper": True}
+    return {
+        "pick_slip_id": slip_id,
+        "stored": True,
+        "is_paper": True,
+        "unresolved_players": unresolved,
+    }
 
 
 @app.post("/api/picks/parse-text")

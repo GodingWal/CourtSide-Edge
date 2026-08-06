@@ -102,9 +102,7 @@ def generate_research_proposals(
             failures = int(str(row["failures"]))
             raw_secondary = row["secondary_causes"]
             secondary = (
-                [str(value) for value in raw_secondary]
-                if isinstance(raw_secondary, list)
-                else []
+                [str(value) for value in raw_secondary] if isinstance(raw_secondary, list) else []
             )
 
             design = _design(
