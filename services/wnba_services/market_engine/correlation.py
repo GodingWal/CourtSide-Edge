@@ -38,12 +38,16 @@ __all__ = [
     "EntryCorrelation",
     "LegKey",
     "PairObservation",
+    "ResidualPair",
     "classify_relation",
     "entry_correlation",
     "fit_pair_correlations",
+    "fit_residual_correlations",
     "load_correlations",
+    "merge_correlation_estimates",
     "outcome_correlation",
     "refresh_leg_correlations",
+    "residual_pair_observations",
 ]
 
 # Below this many settled pairs the sample says more about which markets we happened to price
@@ -414,6 +418,7 @@ class CorrelationBatch:
     observations: int
     written: int
     fitted: int
+    residual_fitted: int = 0
 
 
 def refresh_leg_correlations(
@@ -425,7 +430,12 @@ def refresh_leg_correlations(
     at = now or datetime.now(UTC)
     with connect() as conn, conn.cursor() as cur:
         observations = _settled_pair_observations(cur)
-        estimates = fit_pair_correlations(observations, minimum_pairs=minimum_pairs)
+        episode_estimates = fit_pair_correlations(observations, minimum_pairs=minimum_pairs)
+        residual_estimates = fit_residual_correlations(
+            residual_pair_observations(_boxscore_residual_rows(cur)),
+            minimum_pairs=minimum_pairs,
+        )
+        estimates = merge_correlation_estimates(episode_estimates, residual_estimates)
         for estimate in estimates:
             cur.execute(
                 """INSERT INTO wnba.leg_correlations
@@ -448,5 +458,204 @@ def refresh_leg_correlations(
                 ),
             )
     return CorrelationBatch(
-        len(observations), len(estimates), sum(1 for item in estimates if item.is_fitted)
+        len(observations),
+        len(estimates),
+        sum(1 for item in estimates if item.is_fitted),
+        sum(1 for item in residual_estimates if item.is_fitted),
     )
+
+
+# --------------------------------------------------------------------------------------
+# Box-score residual correlations
+# --------------------------------------------------------------------------------------
+# The episode-based fit above measures correlation on *settled bets* -- which is sparse (a
+# market only settles when we forecast it) and entangled with where the lines happened to sit.
+# Box scores are neither: every played game is an observation, and a residual against the
+# player's own rolling baseline isolates exactly the co-movement a parlay cares about. A
+# same-player points/rebounds pair shares a minutes draw; two teammates share possessions;
+# opponents share pace. Measured on the full archive: minutes residual vs points residual
+# r=0.46, points/rebounds r=0.22, points/assists r=0.13 -- the prior table's ordering, now
+# with numbers behind it.
+RESIDUAL_STATS: tuple[str, ...] = ("points", "rebounds", "assists")
+RESIDUAL_MIN_MINUTES = 15.0
+RESIDUAL_BASELINE_GAMES = 10
+RESIDUAL_MIN_BASELINE = 5
+
+
+@dataclass(frozen=True)
+class ResidualPair:
+    """One co-movement observation: two residuals from the same game slice."""
+
+    relation: str
+    prop_a: str
+    prop_b: str
+    residual_a: float
+    residual_b: float
+
+
+def residual_pair_observations(rows: Iterable[dict[str, Any]]) -> list[ResidualPair]:
+    """Pair residuals against each player's rolling prior-game baseline.
+
+    The baseline for a game is the player's mean over up to the previous
+    ``RESIDUAL_BASELINE_GAMES`` appearances, never including the game itself -- a residual
+    computed against a baseline that contains the outcome is leakage wearing a lab coat. A
+    player needs ``RESIDUAL_MIN_BASELINE`` prior appearances before their residual counts at
+    all, and games below ``RESIDUAL_MIN_MINUTES`` are excluded both as observations and as
+    baseline evidence (garbage-time and injury-shortened rows teach nothing about rotation
+    co-movement).
+    """
+    by_player: dict[str, list[dict[str, Any]]] = {}
+    for row in rows:
+        if float(row["minutes"]) < RESIDUAL_MIN_MINUTES:
+            continue
+        by_player.setdefault(str(row["player_id"]), []).append(row)
+
+    residuals: dict[str, dict[str, dict[str, float]]] = {}  # game -> player -> stat -> residual
+    teams: dict[str, dict[str, str]] = {}  # game -> player -> team
+    for player_id, games in by_player.items():
+        games.sort(key=lambda r: r["tipoff"])
+        history: list[dict[str, float]] = []
+        for row in games:
+            stats = {stat: float(row[stat]) for stat in RESIDUAL_STATS}
+            if len(history) >= RESIDUAL_MIN_BASELINE:
+                window = history[-RESIDUAL_BASELINE_GAMES:]
+                game_residuals = residuals.setdefault(str(row["game_id"]), {})
+                game_residuals[player_id] = {
+                    stat: stats[stat]
+                    - math.fsum(prior[stat] for prior in window) / len(window)
+                    for stat in RESIDUAL_STATS
+                }
+                teams.setdefault(str(row["game_id"]), {})[player_id] = str(row["team_id"])
+            history.append(stats)
+
+    pairs: list[ResidualPair] = []
+    for game_id, players in residuals.items():
+        player_ids = sorted(players)
+        game_teams = teams.get(game_id, {})
+        for index, first in enumerate(player_ids):
+            for second in player_ids[index + 1 :]:
+                relation = (
+                    "same_team"
+                    if game_teams.get(first) is not None
+                    and game_teams.get(first) == game_teams.get(second)
+                    else "opposing_team"
+                )
+                for stat_a in RESIDUAL_STATS:
+                    for stat_b in RESIDUAL_STATS:
+                        prop_a, prop_b = _ordered(stat_a, stat_b)
+                        ra = players[first][stat_a]
+                        rb = players[second][stat_b]
+                        pairs.append(
+                            ResidualPair(
+                                relation, prop_a, prop_b,
+                                ra if (prop_a, prop_b) == (stat_a, stat_b) else rb,
+                                rb if (prop_a, prop_b) == (stat_a, stat_b) else ra,
+                            )
+                        )
+        for stat_a, stat_b in (
+            ("points", "rebounds"),
+            ("points", "assists"),
+            ("assists", "rebounds"),
+        ):
+            prop_a, prop_b = _ordered(stat_a, stat_b)
+            for player_id in player_ids:
+                values = players[player_id]
+                pairs.append(
+                    ResidualPair(
+                        "same_player",
+                        prop_a,
+                        prop_b,
+                        values[prop_a],
+                        values[prop_b],
+                    )
+                )
+    return pairs
+
+
+def fit_residual_correlations(
+    pairs: Iterable[ResidualPair],
+    *,
+    minimum_pairs: int = DEFAULT_MINIMUM_PAIRS,
+) -> list[CorrelationEstimate]:
+    """Pearson correlation of residuals per (relation, market pair).
+
+    Same sample gate and clamp as the episode fit. Cells below ``minimum_pairs`` are simply
+    absent from the result -- the caller falls back to the episode fit or the prior rather
+    than trusting a handful of games.
+    """
+    buckets: dict[tuple[str, str, str], list[tuple[float, float]]] = {}
+    for pair in pairs:
+        buckets.setdefault((pair.relation, pair.prop_a, pair.prop_b), []).append(
+            (pair.residual_a, pair.residual_b)
+        )
+
+    estimates: list[CorrelationEstimate] = []
+    for (relation, prop_a, prop_b), points in sorted(buckets.items()):
+        count = len(points)
+        if count < minimum_pairs:
+            continue
+        correlation = _pearson(points)
+        if correlation is None:
+            continue
+        standard_error = math.sqrt(max(0.0, 1.0 - correlation**2) / max(1, count - 2))
+        estimates.append(
+            CorrelationEstimate(
+                relation,
+                prop_a,
+                prop_b,
+                max(-_MAX_ABS_CORRELATION, min(_MAX_ABS_CORRELATION, correlation)),
+                standard_error,
+                count,
+                True,
+            )
+        )
+    return estimates
+
+
+def _pearson(points: Sequence[tuple[float, float]]) -> float | None:
+    """Pearson r, or ``None`` when either series has no variance."""
+    count = len(points)
+    mean_a = math.fsum(a for a, _ in points) / count
+    mean_b = math.fsum(b for _, b in points) / count
+    cov = math.fsum((a - mean_a) * (b - mean_b) for a, b in points)
+    var_a = math.fsum((a - mean_a) ** 2 for a, _ in points)
+    var_b = math.fsum((b - mean_b) ** 2 for _, b in points)
+    if var_a <= 0.0 or var_b <= 0.0:
+        return None
+    return cov / math.sqrt(var_a * var_b)
+
+
+def _boxscore_residual_rows(cur: Any) -> list[dict[str, Any]]:
+    """Every final box-score row with enough minutes to carry rotation information."""
+    cur.execute(
+        """SELECT l.player_id,l.game_id,l.team_id,g.scheduled_tipoff AS tipoff,
+                  l.minutes,l.points,
+                  l.rebounds_offensive+l.rebounds_defensive AS rebounds,l.assists
+           FROM wnba.player_game_lines l
+           JOIN wnba.games g ON g.game_id=l.game_id
+           WHERE l.system_to IS NULL AND g.status='final' AND l.minutes>=%s
+           ORDER BY l.player_id,g.scheduled_tipoff""",
+        (RESIDUAL_MIN_MINUTES,),
+    )
+    return [dict(row) for row in cur.fetchall()]
+
+
+def merge_correlation_estimates(
+    episode: Iterable[CorrelationEstimate],
+    residual: Iterable[CorrelationEstimate],
+) -> list[CorrelationEstimate]:
+    """Residual measurement wins where it exists; episode measurement fills the rest.
+
+    The residual fit sees every played game and isolates co-movement from where the line sat,
+    so where both fits exist the residual number is the better estimate of the physical
+    relationship. Where the box scores cannot speak -- a relation or market pair with too few
+    overlapping games -- the settled-episode phi or the stated prior stands, labelled as
+    unfitted exactly as before.
+    """
+    merged: dict[tuple[str, str, str], CorrelationEstimate] = {}
+    for estimate in episode:
+        merged[(estimate.relation, estimate.prop_a, estimate.prop_b)] = estimate
+    for estimate in residual:
+        if estimate.is_fitted:
+            merged[(estimate.relation, estimate.prop_a, estimate.prop_b)] = estimate
+    return [merged[key] for key in sorted(merged)]
