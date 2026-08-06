@@ -683,8 +683,11 @@ def forecasts() -> dict[str, object]:
 
         with connect() as conn, conn.cursor() as cur:
             cur.execute(
-                """SELECT DISTINCT ON (f.quote_id) f.projection_id,p.full_name,f.prop_type,
-                          f.player_id,f.game_id,
+                # One row per player/game/market/line. prop_quotes snapshot on every poll,
+                # so deduping on quote_id repeated the same pick once per afternoon snapshot;
+                # the freshest generated forecast stands for the market.
+                """SELECT DISTINCT ON (f.player_id,f.game_id,f.prop_type,f.line)
+                          f.projection_id,p.full_name,f.prop_type,f.player_id,f.game_id,
                           f.line,f.mean,f.median,f.stddev,f.probability_over,
                           f.probability_under,f.projected_minutes,f.sample_size,
                           f.data_quality_score,f.confidence,f.generated_at,f.expires_at,
@@ -769,7 +772,7 @@ def forecasts() -> dict[str, object]:
                      WHERE projection_id=f.projection_id
                    ) fc ON true
                    WHERE f.expires_at>now() AND coalesce(i.designation,'available')<>'out'
-                   ORDER BY f.quote_id,f.generated_at DESC"""
+                   ORDER BY f.player_id,f.game_id,f.prop_type,f.line,f.generated_at DESC"""
             )
             rows = [dict(row) for row in cur.fetchall()]
     except Exception as exc:
@@ -1017,8 +1020,7 @@ def projection_research(projection_id: UUID) -> dict[str, object]:
                           coalesce(jsonb_agg(jsonb_build_object(
                             'claim_id',c.claim_id,'predicate',c.predicate,'value',c.value,
                             'confidence',c.confidence,'evidence_ids',c.evidence_ids,
-                            'expires_at',c.expires_at,'status',c.status
-                          )) FILTER (WHERE c.claim_id IS NOT NULL),'[]') AS claims
+                            'expires_at',c.expires_at,'status',c.status)) FILTER (WHERE c.claim_id IS NOT NULL),'[]') AS claims
                    FROM wnba.agent_analyses a
                    LEFT JOIN wnba.research_claims c ON c.analysis_id=a.analysis_id
                    WHERE a.research_run_id=%s GROUP BY a.analysis_id ORDER BY a.created_at""",
