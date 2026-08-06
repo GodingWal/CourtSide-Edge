@@ -1020,7 +1020,8 @@ def projection_research(projection_id: UUID) -> dict[str, object]:
                           coalesce(jsonb_agg(jsonb_build_object(
                             'claim_id',c.claim_id,'predicate',c.predicate,'value',c.value,
                             'confidence',c.confidence,'evidence_ids',c.evidence_ids,
-                            'expires_at',c.expires_at,'status',c.status)) FILTER (WHERE c.claim_id IS NOT NULL),'[]') AS claims
+                            'expires_at',c.expires_at,'status',c.status
+                          )) FILTER (WHERE c.claim_id IS NOT NULL),'[]') AS claims
                    FROM wnba.agent_analyses a
                    LEFT JOIN wnba.research_claims c ON c.analysis_id=a.analysis_id
                    WHERE a.research_run_id=%s GROUP BY a.analysis_id ORDER BY a.created_at""",
