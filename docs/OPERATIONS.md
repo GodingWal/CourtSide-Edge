@@ -30,10 +30,14 @@ other route requires the owner credential.
   spend on that projection until the provider's whole timeout budget has elapsed, after which the
   next attempt reclaims it.
   A single analyst failing is not a failed run: stage one keeps whatever answered, and each lost
-  role is a `fallback` row in `wnba.model_advisories` with its reason. A run fails when every
-  analyst failed, or when the skeptic did -- without the skeptic there is no verdict to record,
-  only four agents agreeing with each other. Read `disposition` and `failure_reason` there before
-  suspecting the pipeline.
+  role is a `fallback` row in `wnba.model_advisories` with its reason. A run fails only when
+  *every* analyst failed. Read `disposition` and `failure_reason` there before suspecting the
+  pipeline.
+- A completed run with no row in `wnba.research_verdicts` is not a bug. It means the skeptic
+  failed: the analyses are kept, and no verdict is synthesised from an unreviewed file, because
+  one computed without the review would report every claim as uncontested and read exactly like
+  a file nobody could fault. Look for a `fallback` advisory naming the `skeptic` role, and re-run
+  the projection if the market has not locked.
 - Owner picks stuck on `pending`: `wnba learning settle` settles them alongside paper episodes.
   Legs whose `player_id` is null were confirmed under a name that matched no player, or matched
   more than one; they never settle, and that is deliberate. Re-enter them with a name from the

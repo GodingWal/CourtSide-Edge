@@ -109,6 +109,11 @@ class ScriptedProvider:
         )
 
 
+def _stored_roles(db: FakeDatabase) -> set[str]:
+    """Which roles actually reached ``agent_analyses``, read off the recorded parameters."""
+    return {str(params[2]) for params in db.params_for("INSERT INTO wnba.agent_analyses") if params}
+
+
 def run(db: FakeDatabase, provider: Any, monkeypatch: pytest.MonkeyPatch) -> Any:
     monkeypatch.setattr(workflow, "connect", db.connect)
     return run_projection_research(PROJECTION_ID, client=provider, now=NOW)
@@ -211,6 +216,58 @@ def test_a_provider_failure_marks_the_run_failed(monkeypatch: pytest.MonkeyPatch
     failed = db.params_for("SET status='failed'")
     assert failed and "did not respond" in str(failed[-1][1])
     assert not db.ran("SET status='complete'")
+
+
+def test_one_failed_analyst_costs_a_voice_rather_than_the_round(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The other three answers are already paid for. Discarding them buys nothing."""
+
+    class OneDown(ScriptedProvider):
+        def analyze(self, **kwargs: Any) -> AgentResponse:
+            if kwargs["role"] == "rotation":
+                raise RuntimeError("DeepSeek did not respond after 3 attempts")
+            return super().analyze(**kwargs)
+
+    db = database()
+    batch = run(db, OneDown(), monkeypatch)
+
+    assert db.ran("SET status='complete'")
+    stored = _stored_roles(db)
+    assert stored == {"availability", "matchup", "market", SKEPTIC_ROLE}
+    assert "rotation" not in stored
+    assert batch.verdict is not None, "three analysts and a review is still a reviewed file"
+    advisories = db.params_for("INSERT INTO wnba.model_advisories")
+    assert any("rotation" in str(params) and "fallback" in str(params) for params in advisories), (
+        "an absent analyst must be recorded, not silently dropped"
+    )
+
+
+def test_a_failed_skeptic_leaves_no_verdict_rather_than_a_flattering_one(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An unreviewed file and an uncontested one are indistinguishable once a verdict is written.
+
+    So the run completes, keeps its analyses, and stores nothing in `research_verdicts`. A
+    missing verdict is legible as missing; a synthesised one would report every claim as
+    uncontested and read exactly like a file nobody could fault.
+    """
+
+    class NoSkeptic(ScriptedProvider):
+        def analyze(self, **kwargs: Any) -> AgentResponse:
+            if kwargs["role"] == SKEPTIC_ROLE:
+                raise RuntimeError("DeepSeek did not respond after 3 attempts")
+            return super().analyze(**kwargs)
+
+    db = database()
+    batch = run(db, NoSkeptic(), monkeypatch)
+
+    assert db.ran("SET status='complete'"), "the analysts answered; the run is not a failure"
+    assert batch.verdict is None
+    assert not db.ran("INSERT INTO wnba.research_verdicts")
+    assert _stored_roles(db) == set(ANALYST_QUESTIONS), "every analyst kept, no skeptic row"
+    advisories = db.params_for("INSERT INTO wnba.model_advisories")
+    assert any(SKEPTIC_ROLE in str(params) and "fallback" in str(params) for params in advisories)
 
 
 def test_research_is_refused_once_the_market_has_locked(monkeypatch: pytest.MonkeyPatch) -> None:
