@@ -8,7 +8,6 @@ import os
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
-from dataclasses import dataclass, field
 from typing import Annotated, Any
 from uuid import UUID
 
@@ -72,13 +71,17 @@ class FailureMode(BaseModel):
 
 
 class SkepticReview(BaseModel):
-    """The skeptic's output, deliberately without a probability.
+    """The skeptic's output in the PAT forecast rounds, deliberately without a probability.
 
-    The skeptic used to answer on the same schema as everybody else, which meant its job -- find
-    the reasons this is fragile -- was expressed as a number that then went into the consensus
-    average. An agent required to produce a probability is pulled toward the other agents'
-    probabilities, and the one seat whose value is disagreement was the seat most punished for
-    it. It now returns failure modes and nothing that can be averaged.
+    The staged workflow gives the skeptic a genuine review job: it reads the analysts'
+    conclusions as citable evidence and contradicts them by id. The *forecast* rounds had no
+    such job for it -- every role was polled for an advisory probability, including this one --
+    which quietly turned the desk's one dissenting seat into a fifth number to be averaged. An
+    agent required to produce a probability is pulled toward the other agents' probabilities.
+
+    So in those rounds the skeptic answers on this schema instead: failure modes with severities
+    and, for each, the observation that would settle it. Nothing here can be averaged, and
+    nothing here reaches a forecast.
     """
 
     model_config = ConfigDict(strict=True, extra="forbid")
@@ -159,25 +162,6 @@ def _retry_after(response: httpx.Response, fallback: float) -> float:
     if requested <= 0:
         return fallback
     return min(requested, MAX_RETRY_AFTER_SECONDS)
-@dataclass
-class Usage:
-    """What the last call cost. Mutable by design: the client fills it in as calls complete.
-
-    Recorded because "what does a research run cost per projection" was previously unanswerable,
-    and it is the number that decides how many projections the trigger should select. Latency is
-    wall clock including retries, which is what the operator experiences.
-    """
-
-    prompt_tokens: int | None = None
-    completion_tokens: int | None = None
-    latency_ms: int | None = None
-    attempts: int = 0
-    retry_reasons: list[str] = field(default_factory=list)
-
-
-# Status codes worth a second attempt. A 400 means the request is wrong and will be wrong again;
-# a 429 or a 5xx means the provider is busy or broken, which is a condition that passes.
-_RETRYABLE_STATUS = frozenset({408, 409, 425, 429, 500, 502, 503, 504})
 
 
 class DeepSeekResearchClient:
@@ -194,8 +178,6 @@ class DeepSeekResearchClient:
         backoff_seconds: float | None = None,
         transport: httpx.BaseTransport | None = None,
         sleep: Callable[[float], None] | None = None,
-        max_attempts: int | None = None,
-        sleep: Any = time.sleep,
     ) -> None:
         self.api_key = api_key or os.getenv("DEEPSEEK_API_KEY", "")
         configured_base_url = (
@@ -210,9 +192,13 @@ class DeepSeekResearchClient:
         )
         self.transport = transport
         self._sleep = sleep or time.sleep
-        self.max_attempts = max_attempts or int(os.getenv("DEEPSEEK_MAX_ATTEMPTS", "3"))
-        self._sleep = sleep
-        self.usage = Usage()
+        # What the most recent call cost. The per-call `_Completion` carries the same figures to
+        # callers that want them structurally; these exist for the ones that do not thread a
+        # return value all the way to where the audit row is written -- `Advisor`, above all,
+        # which records the cost of a call it made through a lambda it was handed.
+        self.last_usage: TokenUsage | None = None
+        self.last_latency_ms: int | None = None
+        self.last_attempts: int = 0
 
     def analyze(
         self,
@@ -355,10 +341,11 @@ class DeepSeekResearchClient:
             sort_keys=True,
         )
         prompt_hash = hashlib.sha256(f"{system}\n{user}".encode()).hexdigest()
-        result, response_hash = self._request_json(system, user, SkepticReview)
-        cited = {evidence_id for mode in result.failure_modes for evidence_id in mode.evidence_ids}
+        completion = self._complete(system, user, SkepticReview)
+        review: SkepticReview = completion.value
+        cited = {evidence_id for mode in review.failure_modes for evidence_id in mode.evidence_ids}
         self._reject_unknown(cited, set(evidence))
-        return result, prompt_hash, response_hash
+        return review, prompt_hash, completion.response_sha256
 
     def propose_rule(
         self,
@@ -436,39 +423,6 @@ class DeepSeekResearchClient:
             raise ValueError(f"DeepSeek cited unknown evidence ids: {sorted(map(str, unknown))}")
 
     def _complete(self, system: str, user: str, model_type: type[BaseModel]) -> _Completion:
-    def _post(self, payload: dict[str, Any]) -> httpx.Response:
-        """One request, retried on the failures that pass on their own.
-
-        Exponential backoff, capped attempts, and every retry reason kept on :attr:`usage` so a
-        run that succeeded on its third try is distinguishable from one that succeeded outright.
-        A provider having a bad minute should not lose an evening's research, and it should also
-        not be invisible.
-        """
-        last: Exception | None = None
-        with httpx.Client(
-            timeout=self.timeout_seconds,
-            transport=self.transport,
-            headers={"Authorization": f"Bearer {self.api_key}"},
-        ) as client:
-            for attempt in range(1, self.max_attempts + 1):
-                self.usage.attempts = attempt
-                try:
-                    response = client.post(f"{self.base_url}/chat/completions", json=payload)
-                    if response.status_code in _RETRYABLE_STATUS and attempt < self.max_attempts:
-                        self.usage.retry_reasons.append(f"HTTP {response.status_code}")
-                        self._sleep(2.0 ** (attempt - 1))
-                        continue
-                    response.raise_for_status()
-                    return response
-                except (httpx.TimeoutException, httpx.TransportError) as error:
-                    last = error
-                    if attempt >= self.max_attempts:
-                        break
-                    self.usage.retry_reasons.append(type(error).__name__)
-                    self._sleep(2.0 ** (attempt - 1))
-        raise last if last is not None else RuntimeError("DeepSeek request failed without a cause")
-
-    def _request_json(self, system: str, user: str, model_type: type[BaseModel]) -> tuple[Any, str]:
         if not self.api_key:
             raise RuntimeError("DEEPSEEK_API_KEY is not configured")
         payload: dict[str, Any] = {
@@ -487,26 +441,16 @@ class DeepSeekResearchClient:
             "max_tokens": 4000,
             "stream": False,
         }
-        envelope, attempts = self._post(payload)
-        self.usage = Usage()
         started = time.monotonic()
         try:
-            response = self._post(payload)
+            envelope, attempts = self._post(payload)
         finally:
-            self.usage.latency_ms = int((time.monotonic() - started) * 1000)
-        envelope = response.json()
+            # Recorded even on the failing path, because "the call that cost us four minutes and
+            # then raised" is the one an operator most needs to find later.
+            self.last_latency_ms = int((time.monotonic() - started) * 1000)
+        self.last_attempts = attempts
         if not isinstance(envelope, dict):
             raise ValueError("DeepSeek returned a non-object response")
-        usage = envelope.get("usage")
-        if isinstance(usage, dict):
-            prompt_tokens, completion_tokens = (
-                usage.get("prompt_tokens"),
-                usage.get("completion_tokens"),
-            )
-            self.usage.prompt_tokens = prompt_tokens if isinstance(prompt_tokens, int) else None
-            self.usage.completion_tokens = (
-                completion_tokens if isinstance(completion_tokens, int) else None
-            )
         choices = envelope.get("choices")
         if not isinstance(choices, list) or not choices:
             raise ValueError("DeepSeek returned no choices")
@@ -518,10 +462,11 @@ class DeepSeekResearchClient:
         if not isinstance(content, str) or not content.strip():
             raise ValueError("DeepSeek returned empty content")
         response_hash = hashlib.sha256(content.encode()).hexdigest()
+        self.last_usage = _parse_usage(envelope)
         return _Completion(
             value=model_type.model_validate_json(content),
             response_sha256=response_hash,
-            usage=_parse_usage(envelope),
+            usage=self.last_usage,
             attempts=attempts,
         )
 

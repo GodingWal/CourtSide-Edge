@@ -24,14 +24,15 @@ other route requires the owner credential.
 - Stale market archive: run `sudo systemctl start wnba-archiver.service`, then inspect its log.
 - Missing forecasts: verify roles/effects/matchups, then start `wnba-forecast.service`.
 - Failed migration: stop deployment, keep the old web process, and restore the pre-deploy dump.
-- DeepSeek failure: forecasts continue; research fails closed and may be retried manually.
-  Congestion and transport faults are already retried inside the client, so a run recorded as
-  `failed` has exhausted `DEEPSEEK_MAX_ATTEMPTS` or was rejected on validation -- read `error`
-  before retrying. A run stuck at `running` blocks further spend on that projection until the
-  provider's whole timeout budget has elapsed, after which the next attempt reclaims it.
-- DeepSeek failure: forecasts continue. Individual agents now fail open — a run completes with
-  the roles that answered, and each missing one is a `fallback` row in `wnba.model_advisories`.
-  A run only fails when every role failed. Check `disposition` and `failure_reason` there before
+- DeepSeek failure: forecasts continue. Congestion and transport faults are already retried
+  inside the client, so a run recorded as `failed` has exhausted `DEEPSEEK_MAX_ATTEMPTS` or was
+  rejected on validation -- read `error` before retrying. A run stuck at `running` blocks further
+  spend on that projection until the provider's whole timeout budget has elapsed, after which the
+  next attempt reclaims it.
+  A single analyst failing is not a failed run: stage one keeps whatever answered, and each lost
+  role is a `fallback` row in `wnba.model_advisories` with its reason. A run fails when every
+  analyst failed, or when the skeptic did -- without the skeptic there is no verdict to record,
+  only four agents agreeing with each other. Read `disposition` and `failure_reason` there before
   suspecting the pipeline.
 - Owner picks stuck on `pending`: `wnba learning settle` settles them alongside paper episodes.
   Legs whose `player_id` is null were confirmed under a name that matched no player, or matched

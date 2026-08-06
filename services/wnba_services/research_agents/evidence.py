@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Callable, Mapping, Sequence
 from datetime import datetime
 from typing import Any
 from uuid import NAMESPACE_URL, UUID, uuid5
@@ -294,6 +295,22 @@ def _precedents(cur: Any, projection: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _safely(
+    name: str, build: Callable[[], dict[str, Any]], required: Sequence[str], have: Mapping[str, Any]
+) -> dict[str, Any]:
+    """Build one group, or report why it could not be built.
+
+    The five snapshot groups are derived from a payload the caller already holds; these five are
+    queried, and a query needs identifiers and timestamps that a given caller may not have
+    selected. A missing column is a reason the group is unavailable, not a reason the research
+    run dies -- and saying which column was missing turns a silent gap into a fixable one.
+    """
+    missing = [field for field in required if field not in have]
+    if missing:
+        return {"available": False, "reason": f"projection lacks {', '.join(sorted(missing))}"}
+    return build()
+
+
 def build_evidence_document(
     cur: Any, projection: dict[str, Any], *, now: datetime | None = None
 ) -> tuple[str, dict[UUID, str]]:
@@ -306,12 +323,32 @@ def build_evidence_document(
     """
     _ = now  # groups are bounded by the projection's own timestamp, not by wall clock
     groups: dict[str, Any] = _snapshot_groups(projection)
-    movement = _line_movement(cur, projection)
-    groups["recent_form"] = _recent_form(cur, projection)
+    movement = _safely(
+        "line_movement",
+        lambda: _line_movement(cur, projection),
+        ("player_id", "game_id", "prop_type", "generated_at"),
+        projection,
+    )
+    groups["recent_form"] = _safely(
+        "recent_form",
+        lambda: _recent_form(cur, projection),
+        ("player_id", "prop_type", "generated_at", "line"),
+        projection,
+    )
     groups["line_movement"] = movement
     groups["market_implied"] = _market_implied(projection, movement)
-    groups["teammate_availability"] = _teammate_availability(cur, projection)
-    groups["precedents"] = _precedents(cur, projection)
+    groups["teammate_availability"] = _safely(
+        "teammate_availability",
+        lambda: _teammate_availability(cur, projection),
+        ("player_id", "game_id", "generated_at"),
+        projection,
+    )
+    groups["precedents"] = _safely(
+        "precedents",
+        lambda: _precedents(cur, projection),
+        ("player_id", "prop_type", "generated_at", "line"),
+        projection,
+    )
 
     document = json.dumps(groups, sort_keys=True, default=str)
     document_hash = hashlib.sha256(document.encode()).hexdigest()
