@@ -6,10 +6,11 @@ The primary interface for Phase 0/1. Deliberately boring: poll, migrate, report.
 from __future__ import annotations
 
 import sys
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 from typing import Annotated
 from uuid import UUID
+from zoneinfo import ZoneInfo
 
 import typer
 from rich.console import Console
@@ -22,7 +23,7 @@ from wnba_services.forecasting.baseline import run_baseline
 from wnba_services.forecasting.challengers import challenger_names
 from wnba_services.forecasting.fitting import fit_model_parameters
 from wnba_services.ingestion.archiver import run_archiver
-from wnba_services.ingestion.espn import backfill_espn, ingest_espn_date
+from wnba_services.ingestion.espn import backfill_espn, ingest_espn_date, snapshot_game_odds
 from wnba_services.ingestion.historical_markets import normalize_historical_markets
 from wnba_services.ingestion.identity import approve_unique_exact_names
 from wnba_services.ingestion.legacy import import_legacy_sqlite
@@ -185,6 +186,29 @@ def stats_ingest_date(
         f"[green]{state}[/green] date={result.game_date} games={result.games} "
         f"player_lines={result.player_lines}"
     )
+
+
+@stats_app.command("snapshot-odds")
+def stats_snapshot_odds(
+    game_date: Annotated[
+        str | None,
+        typer.Argument(help="WNBA calendar date (YYYY-MM-DD); defaults to today, Eastern."),
+    ] = None,
+    quiet: Annotated[bool, typer.Option("--quiet", "-q", help="One line of output.")] = False,
+) -> None:
+    """Record one snapshot of the game spreads and totals ESPN shows for a date.
+
+    Closing spreads are the raw material a blowout refit needs and cannot be recovered
+    retroactively, so the CLV timer runs this every five minutes. Record-only.
+    """
+    day = (
+        _iso_date(game_date)
+        if game_date is not None
+        else datetime.now(ZoneInfo("America/New_York")).date()
+    )
+    result = snapshot_game_odds(day)
+    line = f"date={result.game_date} games={result.games_seen} snapshots={result.snapshots_written}"
+    console.print(line if quiet else f"[green]odds snapshot[/green] {line}")
 
 
 @stats_app.command("backfill")
