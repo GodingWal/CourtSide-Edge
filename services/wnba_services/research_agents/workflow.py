@@ -91,7 +91,10 @@ class _AgentRound:
     """
 
     stage_one: dict[str, AgentResponse]
-    skeptic: AgentResponse
+    skeptic: AgentResponse | None
+    """``None`` when the review did not happen. The run still completes and still records its
+    analyses; what it does not do is synthesise a verdict out of an unreviewed file."""
+
     peer_ids: dict[str, UUID]
     peer_excerpts: dict[UUID, str]
     peer_document: str
@@ -307,10 +310,14 @@ def _run_agents(
     failed with nothing recorded -- which is the wrong trade for a desk: three conclusions and a
     note about the fourth is worth more than silence.
 
-    The skeptic is the exception, and deliberately so. It is not a fourth opinion, it is the
-    review, and the verdict is computed from what it contradicted. A run that lost its skeptic
-    has no verdict to record, so it fails rather than quietly downgrading itself to four agents
-    agreeing with each other.
+    The skeptic is different, but not because it can fail the run -- it cannot. It is the review
+    rather than a fourth opinion, and the verdict is computed from what it contradicted, so a run
+    that lost it stores **no verdict at all**. That is the point: a verdict synthesised without a
+    review would report every claim as uncontested, which on the page is indistinguishable from a
+    file nobody could fault. A missing verdict is legible as missing. A flattering one is not.
+
+    Discarding the analyses too, which is what failing the run would do, buys nothing -- they are
+    already paid for, they are still evidence, and the absent review is recorded next to them.
     """
     projection = prepared.projection
     context = (
@@ -340,26 +347,32 @@ def _run_agents(
         )
 
     peer_document, peer_ids, peer_excerpts = _peer_evidence(prepared.run_id, stage_one)
-    skeptic = provider.analyze(
-        role=SKEPTIC_ROLE,
-        question=context + SKEPTIC_QUESTION,
-        evidence={**prepared.evidence, **peer_excerpts},
-        directive=SKEPTIC_DIRECTIVE,
-    )
+    skeptic: AgentResponse | None = None
+    try:
+        skeptic = provider.analyze(
+            role=SKEPTIC_ROLE,
+            question=context + SKEPTIC_QUESTION,
+            evidence={**prepared.evidence, **peer_excerpts},
+            directive=SKEPTIC_DIRECTIVE,
+        )
+    except PROVIDER_FAILURES as error:
+        failures[SKEPTIC_ROLE] = f"{type(error).__name__}: {error}"[:500]
     return _AgentRound(stage_one, skeptic, peer_ids, peer_excerpts, peer_document, failures)
 
 
 def _persist(
     prepared: _PreparedRun,
     round_result: _AgentRound,
-    verdict: ResearchVerdict,
+    verdict: ResearchVerdict | None,
     at: datetime,
 ) -> tuple[int, int]:
     projection = prepared.projection
     stage_one = round_result.stage_one
     peer_ids, peer_excerpts = round_result.peer_ids, round_result.peer_excerpts
     peer_document = round_result.peer_document
-    responses: dict[str, AgentResponse] = {**stage_one, SKEPTIC_ROLE: round_result.skeptic}
+    responses: dict[str, AgentResponse] = dict(stage_one)
+    if round_result.skeptic is not None:
+        responses[SKEPTIC_ROLE] = round_result.skeptic
     with connect() as conn, conn.cursor() as cur:
         advisor = Advisor(cur, enabled=True)
         for role, reason in sorted(round_result.failures.items()):
@@ -400,7 +413,12 @@ def _persist(
             )
 
         analyses = claims = 0
-        for role, response in [*sorted(stage_one.items()), (SKEPTIC_ROLE, round_result.skeptic)]:
+        # Analysts first, then the skeptic if it answered -- the order the round happened in, so
+        # the stored `analysis_id` sequence reads the same way the debate did.
+        ordered = [*sorted(stage_one.items())]
+        if round_result.skeptic is not None:
+            ordered.append((SKEPTIC_ROLE, round_result.skeptic))
+        for role, response in ordered:
             analysis = response.analysis
             analysis_id = uuid4()
             cited = sorted(
@@ -450,24 +468,27 @@ def _persist(
                 )
                 claims += 1
 
-        cur.execute(
-            """INSERT INTO wnba.research_verdicts
-               (verdict_id,research_run_id,caution,agreement,total_claims,contested_claims,
-                contested_predicates,risk_flags,skeptic_confidence,rationale)
-               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
-            (
-                uuid4(),
-                prepared.run_id,
-                verdict.caution,
-                verdict.agreement,
-                verdict.total_claims,
-                verdict.contested_claims,
-                Jsonb(list(verdict.contested_predicates)),
-                Jsonb(list(verdict.risk_flags)),
-                verdict.skeptic_confidence,
-                verdict.rationale,
-            ),
-        )
+        # No review, no verdict. The absence is the honest record: `research_verdicts` has one
+        # row per reviewed run, so a run without one cannot be mistaken for a run nobody faulted.
+        if verdict is not None:
+            cur.execute(
+                """INSERT INTO wnba.research_verdicts
+                   (verdict_id,research_run_id,caution,agreement,total_claims,contested_claims,
+                    contested_predicates,risk_flags,skeptic_confidence,rationale)
+                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                (
+                    uuid4(),
+                    prepared.run_id,
+                    verdict.caution,
+                    verdict.agreement,
+                    verdict.total_claims,
+                    verdict.contested_claims,
+                    Jsonb(list(verdict.contested_predicates)),
+                    Jsonb(list(verdict.risk_flags)),
+                    verdict.skeptic_confidence,
+                    verdict.rationale,
+                ),
+            )
 
         usages = [response.usage for response in responses.values()]
         complete = all(usage is not None for usage in usages)
@@ -520,10 +541,14 @@ def run_projection_research(
         stage_one_analyses: dict[str, AgentAnalysis] = {
             role: response.analysis for role, response in round_result.stage_one.items()
         }
-        verdict = synthesize(
-            analyses=stage_one_analyses,
-            skeptic=round_result.skeptic.analysis,
-            peer_evidence=round_result.peer_ids,
+        verdict = (
+            synthesize(
+                analyses=stage_one_analyses,
+                skeptic=round_result.skeptic.analysis,
+                peer_evidence=round_result.peer_ids,
+            )
+            if round_result.skeptic is not None
+            else None
         )
         analyses, claims = _persist(prepared, round_result, verdict, at)
     except Exception as exc:
