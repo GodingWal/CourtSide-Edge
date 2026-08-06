@@ -13,7 +13,14 @@ from typing import Any
 
 from wnba_services.ingestion.http import PoliteClient
 
-__all__ = ["ESPN_BASE", "EspnGame", "EspnPlayerLine", "EspnTeam", "EspnWnbaAdapter"]
+__all__ = [
+    "ESPN_BASE",
+    "EspnGame",
+    "EspnGameOdds",
+    "EspnPlayerLine",
+    "EspnTeam",
+    "EspnWnbaAdapter",
+]
 
 ESPN_BASE = "https://site.api.espn.com/apis/site/v2/sports/basketball/wnba"
 
@@ -27,6 +34,21 @@ class EspnTeam:
 
 
 @dataclass(frozen=True)
+class EspnGameOdds:
+    """The game-market block ESPN carries beside the scoreboard, when it carries one.
+
+    This is the only game-spread feed the platform can reach today, and closing spreads are
+    the raw material a blowout refit (issue #68) needs. Absent on some events and absent
+    entirely once a game goes final on some days, so ``None`` fields are normal, not an error.
+    """
+
+    provider: str
+    details: str | None
+    home_spread: float | None
+    over_under: float | None
+
+
+@dataclass(frozen=True)
 class EspnGame:
     source_id: str
     scheduled_tipoff: datetime
@@ -36,6 +58,7 @@ class EspnGame:
     period: int
     home_points: int | None
     away_points: int | None
+    odds: EspnGameOdds | None = None
 
 
 @dataclass(frozen=True)
@@ -139,9 +162,34 @@ class EspnWnbaAdapter:
                     away_points=_integer(away_raw["score"], field="away score")
                     if away_raw.get("score") not in (None, "")
                     else None,
+                    odds=self._odds(competition),
                 )
             )
         return games
+
+    @staticmethod
+    def _odds(competition: dict[str, Any]) -> EspnGameOdds | None:
+        """The first listed provider's game markets, or ``None`` when ESPN shows none."""
+        entries = competition.get("odds")
+        if not isinstance(entries, list) or not entries:
+            return None
+        entry = entries[0]
+        if not isinstance(entry, dict):
+            return None
+        provider = entry.get("provider", {})
+        name = provider.get("displayName") if isinstance(provider, dict) else None
+        spread_raw = entry.get("spread")
+        total_raw = entry.get("overUnder")
+        return EspnGameOdds(
+            provider=str(name) if name else "unknown",
+            details=str(entry["details"]) if entry.get("details") else None,
+            home_spread=_number(spread_raw, field="spread")
+            if spread_raw not in (None, "")
+            else None,
+            over_under=_number(total_raw, field="overUnder")
+            if total_raw not in (None, "")
+            else None,
+        )
 
     @staticmethod
     def _team(raw: dict[str, Any]) -> EspnTeam:

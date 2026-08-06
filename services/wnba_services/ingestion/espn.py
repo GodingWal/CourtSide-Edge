@@ -17,7 +17,13 @@ from wnba_store.repositories import quarantine_payload, register_player
 
 from wnba_services.ingestion.adapters.espn import EspnGame, EspnTeam, EspnWnbaAdapter
 
-__all__ = ["EspnIngestResult", "backfill_espn", "ingest_espn_date"]
+__all__ = [
+    "EspnIngestResult",
+    "EspnOddsSnapshotResult",
+    "backfill_espn",
+    "ingest_espn_date",
+    "snapshot_game_odds",
+]
 
 _TEAM_ZONES: dict[str, str] = {
     "ATL": "America/New_York",
@@ -51,6 +57,13 @@ class EspnIngestResult:
     games: int
     player_lines: int
     skipped: bool = False
+
+
+@dataclass(frozen=True)
+class EspnOddsSnapshotResult:
+    game_date: date
+    games_seen: int
+    snapshots_written: int
 
 
 def _team_id(source_id: str) -> UUID:
@@ -217,6 +230,95 @@ def _write_line(
     return True
 
 
+def _record_odds(
+    conn: psycopg.Connection[Any], game: EspnGame, game_id: UUID, observed_at: datetime
+) -> bool:
+    """Append one game-market snapshot when it says something new.
+
+    Same discipline as the quote archiver: the feed's own changes, not our polling cadence,
+    define a new row. A re-poll that finds the spread and total untouched writes nothing.
+    """
+    odds = game.odds
+    if odds is None or (odds.home_spread is None and odds.over_under is None):
+        return False
+    with conn.cursor() as cur:
+        cur.execute(
+            """SELECT home_spread,over_under,details FROM wnba.game_market_lines
+               WHERE game_id=%s AND source='espn' AND provider=%s
+               ORDER BY observed_at DESC LIMIT 1""",
+            (game_id, odds.provider),
+        )
+        latest = cur.fetchone()
+        if latest is not None:
+            # numeric comes back as Decimal; compare as floats with None handled explicitly.
+            same_spread = (latest["home_spread"] is None and odds.home_spread is None) or (
+                latest["home_spread"] is not None
+                and odds.home_spread is not None
+                and float(latest["home_spread"]) == odds.home_spread
+            )
+            same_total = (latest["over_under"] is None and odds.over_under is None) or (
+                latest["over_under"] is not None
+                and odds.over_under is not None
+                and float(latest["over_under"]) == odds.over_under
+            )
+            if same_spread and same_total and latest["details"] == odds.details:
+                return False
+        cur.execute(
+            """INSERT INTO wnba.game_market_lines
+               (line_id,game_id,source,provider,home_spread,over_under,details,observed_at)
+               VALUES (%s,%s,'espn',%s,%s,%s,%s,%s)""",
+            (
+                uuid4(),
+                game_id,
+                odds.provider,
+                odds.home_spread,
+                odds.over_under,
+                odds.details,
+                observed_at,
+            ),
+        )
+    return True
+
+
+def snapshot_game_odds(
+    game_date: date,
+    database_url: str | None = None,
+    *,
+    adapter: EspnWnbaAdapter | None = None,
+) -> EspnOddsSnapshotResult:
+    """Record one snapshot of every game market ESPN shows for ``game_date``.
+
+    Runs on the 5-minute CLV timer: closing spreads and totals are the raw material a
+    blowout refit (issue #68) needs, and like closing player-prop lines they cannot be
+    recovered retroactively. Record-only -- this forecasts nothing and recommends nothing.
+    """
+    feed = adapter or EspnWnbaAdapter()
+    observed_at = datetime.now(UTC)
+    scoreboard = feed.fetch_scoreboard(game_date)
+    parsed = list(feed.parse_scoreboard(scoreboard))
+    # The same exhibition filter as box-score ingestion: pseudo-teams have no verified home
+    # zone and do not belong in franchise training data.
+    games = [
+        game
+        for game in parsed
+        if game.home.abbreviation in _TEAM_ZONES and game.away.abbreviation in _TEAM_ZONES
+    ]
+    written = 0
+    with connect(database_url) as conn:
+        _store_payload(
+            conn,
+            endpoint="scoreboard",
+            entity_id=f"odds:{game_date.isoformat()}",
+            payload=scoreboard,
+            observed_at=observed_at,
+        )
+        for game in games:
+            game_id, _ = _register_game(conn, game, observed_at)
+            written += _record_odds(conn, game, game_id, observed_at)
+        conn.commit()
+    return EspnOddsSnapshotResult(game_date, len(games), written)
+
+
 def _date_is_settled(statuses: list[str]) -> bool:
     """True only when ESPN shows at least one game and every one of them is final.
 
@@ -286,6 +388,7 @@ def ingest_espn_date(
                     observed_at=observed_at,
                 )
                 game_id, team_ids = _register_game(conn, game, observed_at)
+                _record_odds(conn, game, game_id, observed_at)
                 for raw in feed.parse_summary(summary):
                     player_id = register_player(
                         conn,
