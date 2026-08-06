@@ -349,6 +349,10 @@ def resolve_adjustments(inputs: ScoringInputs) -> Adjustments:
 
     matchup = inputs.matchup
     matchup_multiplier = 1.0
+    # Rest days are deliberately not read here. Measured against settled outcomes (deep dive,
+    # Aug 2026), rest and home/away carried no signal, so the identity adjustment is what the
+    # evidence supports. `rest_adjustment` stays in minutes.py as a documented hypothesis,
+    # not a scored feature.
     rest = rest_adjustment(None, None)
     if matchup is not None:
         matchup_multiplier = max(
@@ -358,11 +362,10 @@ def resolve_adjustments(inputs: ScoringInputs) -> Adjustments:
                 matchup.pace_multiplier * matchup.defense_multiplier,
             ),
         )
-        rest = rest_adjustment(matchup.team_rest_days, matchup.opponent_rest_days)
-        if expected_minutes is not None:
-            expected_minutes = max(
-                0.0, min(MAX_MINUTES, expected_minutes - 1.5 * matchup.blowout_probability)
-            )
+        # The blowout minutes haircut is likewise gated to zero: blowout_probability is
+        # quantized and confounded with pace (r = -0.80), so the haircut mostly re-applied the
+        # pace multiplier under another name. Tracked in issue #68; re-enable only behind a
+        # refit that separates the two.
 
     model = build_minutes_model(
         history_minutes,

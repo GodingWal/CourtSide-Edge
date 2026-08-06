@@ -176,21 +176,99 @@ def test_a_client_error_is_not_retried() -> None:
     assert recorder.calls == 1
 
 
-def test_a_rejected_response_is_not_retried() -> None:
-    """Asking again after a hallucinated citation is rolling dice until one comes up compliant."""
+def test_a_rejected_response_earns_one_feedback_reask_then_fails_closed() -> None:
+    """The re-ask shows the model exactly why it was refused; repeating the sin still fails."""
     supplied = uuid4()
     recorder = Recorder(response(analysis_body(uuid4())))
     with pytest.raises(ValueError, match="unknown evidence"):
         client(recorder).analyze(role="rotation", question="Role?", evidence={supplied: "Bench."})
-    assert recorder.calls == 1
+    assert recorder.calls == 2
 
 
-def test_a_truncated_response_is_not_retried() -> None:
+def test_a_truncated_response_earns_one_feedback_reask_then_fails_closed() -> None:
     evidence_id = uuid4()
     recorder = Recorder(response(analysis_body(evidence_id), finish_reason="length"))
     with pytest.raises(ValueError, match="did not finish cleanly"):
         client(recorder).analyze(role="rotation", question="Role?", evidence={evidence_id: "x"})
+    assert recorder.calls == 2
+
+
+def test_feedback_retries_can_be_disabled() -> None:
+    """The old fail-closed-once behaviour remains available per deployment."""
+    evidence_id = uuid4()
+    recorder = Recorder(response(analysis_body(evidence_id), finish_reason="length"))
+    with pytest.raises(ValueError, match="did not finish cleanly"):
+        client(recorder, feedback_retries=0).analyze(
+            role="rotation", question="Role?", evidence={evidence_id: "x"}
+        )
     assert recorder.calls == 1
+
+
+def test_a_corrected_answer_after_feedback_is_accepted() -> None:
+    """The common production case: one hallucinated citation, fixed when it is pointed out."""
+    supplied = uuid4()
+    recorder = CapturingRecorder(
+        response(analysis_body(uuid4())),
+        response(analysis_body(supplied)),
+    )
+    result = client(recorder).analyze(
+        role="rotation", question="Role?", evidence={supplied: "Bench usage."}
+    )
+    assert recorder.calls == 2
+    assert result.attempts == 2
+    assert result.analysis.claims[0].evidence_ids == [supplied]
+
+
+def test_the_feedback_reask_shows_the_rejection_and_its_reason() -> None:
+    """Without the reason in the prompt the re-ask would be a blind re-roll, which is forbidden."""
+    supplied = uuid4()
+    rejected = analysis_body(uuid4())
+    recorder = CapturingRecorder(
+        response(rejected),
+        response(analysis_body(supplied)),
+    )
+    client(recorder).analyze(role="rotation", question="Role?", evidence={supplied: "Bench."})
+    assert len(recorder.payloads) == 2
+    messages = recorder.payloads[1]["messages"]
+    assert [message["role"] for message in messages] == [
+        "system",
+        "user",
+        "assistant",
+        "user",
+    ]
+    assert json.loads(messages[2]["content"]) == rejected
+    assert "rejected" in messages[3]["content"]
+    assert "unknown evidence ids" in messages[3]["content"]
+
+
+def test_a_schema_violation_is_fed_back_with_the_validation_error() -> None:
+    """A draft one field away from valid should not cost the desk a deterministic fallback."""
+    evidence_id = uuid4()
+    broken = analysis_body(evidence_id)
+    broken["confidence"] = 1.7
+    recorder = CapturingRecorder(
+        response(broken),
+        response(analysis_body(evidence_id)),
+    )
+    result = client(recorder).analyze(
+        role="availability", question="Known?", evidence={evidence_id: "Report."}
+    )
+    assert result.analysis.confidence == 0.7
+    messages = recorder.payloads[1]["messages"]
+    assert "rejected" in messages[3]["content"]
+
+
+def test_a_truncation_then_a_finished_answer_is_accepted() -> None:
+    evidence_id = uuid4()
+    recorder = Recorder(
+        response(analysis_body(evidence_id), finish_reason="length"),
+        response(analysis_body(evidence_id)),
+    )
+    result = client(recorder).analyze(
+        role="rotation", question="Role?", evidence={evidence_id: "x"}
+    )
+    assert recorder.calls == 2
+    assert result.attempts == 2
 
 
 def test_retry_after_is_honoured_but_capped() -> None:
