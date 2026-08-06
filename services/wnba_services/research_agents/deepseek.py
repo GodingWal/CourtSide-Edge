@@ -20,10 +20,18 @@ MAX_RETRY_AFTER_SECONDS = 30.0
 RETRYABLE_STATUS = frozenset({408, 409, 425, 429, 500, 502, 503, 504})
 
 # Completion budgets per task. The skeptic reads every peer view plus the full corpus, so a
-# shared budget truncates it first -- and a truncated response fails closed (never retried),
-# which made the most complex call the most fragile one. Both are env-overridable.
+# shared budget truncates it first -- and a truncated response fails closed, which made the
+# most complex call the most fragile one. Both are env-overridable.
 DEFAULT_MAX_TOKENS = 4000
 SKEPTIC_MAX_TOKENS = 6000
+
+# A rejected response -- truncated, unparseable, schema-invalid, citing evidence it was never
+# given -- earns one bounded re-ask that shows the model exactly why its answer was refused.
+# That is not rolling the dice until a compliant-looking answer appears: the rejection reason
+# is fed back verbatim, the retry budget is fixed and small, and a second refusal still fails
+# closed. What it fixes is the common case in production, where the fallback journal showed
+# the model one token budget or one field name away from a valid answer.
+DEFAULT_FEEDBACK_RETRIES = 1
 
 
 class ClaimDraft(BaseModel):
@@ -200,6 +208,7 @@ class DeepSeekResearchClient:
         backoff_seconds: float | None = None,
         max_tokens: int | None = None,
         skeptic_max_tokens: int | None = None,
+        feedback_retries: int | None = None,
         transport: httpx.BaseTransport | None = None,
         sleep: Callable[[float], None] | None = None,
     ) -> None:
@@ -219,6 +228,12 @@ class DeepSeekResearchClient:
         )
         self.skeptic_max_tokens = skeptic_max_tokens or int(
             os.getenv("DEEPSEEK_SKEPTIC_MAX_TOKENS", str(SKEPTIC_MAX_TOKENS))
+        )
+        self.feedback_retries = max(
+            0,
+            feedback_retries
+            if feedback_retries is not None
+            else int(os.getenv("DEEPSEEK_FEEDBACK_RETRIES", str(DEFAULT_FEEDBACK_RETRIES))),
         )
         self.transport = transport
         self._sleep = sleep or time.sleep
@@ -273,15 +288,18 @@ class DeepSeekResearchClient:
             sort_keys=True,
         )
         prompt_hash = hashlib.sha256(f"{system}\n{user}".encode()).hexdigest()
-        completion = self._complete(system, user, AgentAnalysis)
-        analysis: AgentAnalysis = completion.value
         allowed = set(evidence)
-        cited = {
-            evidence_id
-            for claim in analysis.claims
-            for evidence_id in claim.evidence_ids + claim.contradicting_evidence_ids
-        }
-        self._reject_unknown(cited, allowed)
+
+        def check_citations(analysis: AgentAnalysis) -> None:
+            cited = {
+                evidence_id
+                for claim in analysis.claims
+                for evidence_id in claim.evidence_ids + claim.contradicting_evidence_ids
+            }
+            self._reject_unknown(cited, allowed)
+
+        completion = self._complete(system, user, AgentAnalysis, validate=check_citations)
+        analysis: AgentAnalysis = completion.value
         return AgentResponse(
             analysis=analysis,
             prompt_sha256=prompt_hash,
@@ -325,9 +343,13 @@ class DeepSeekResearchClient:
             sort_keys=True,
         )
         prompt_hash = hashlib.sha256(f"{system}\n{user}".encode()).hexdigest()
-        completion = self._complete(system, user, AgentForecastDraft)
+        allowed = set(evidence)
+
+        def check_citations(draft: AgentForecastDraft) -> None:
+            self._reject_unknown(set(draft.evidence_ids), allowed)
+
+        completion = self._complete(system, user, AgentForecastDraft, validate=check_citations)
         result: AgentForecastDraft = completion.value
-        self._reject_unknown(set(result.evidence_ids), set(evidence))
         return result, prompt_hash, completion.response_sha256
 
     def challenge(
@@ -371,10 +393,21 @@ class DeepSeekResearchClient:
             sort_keys=True,
         )
         prompt_hash = hashlib.sha256(f"{system}\n{user}".encode()).hexdigest()
-        completion = self._complete(system, user, SkepticReview, max_tokens=self.skeptic_max_tokens)
+        allowed = set(evidence)
+
+        def check_citations(review: SkepticReview) -> None:
+            cited = {
+                evidence_id
+                for mode in review.failure_modes
+                for evidence_id in mode.evidence_ids
+            }
+            self._reject_unknown(cited, allowed)
+
+        completion = self._complete(
+            system, user, SkepticReview, max_tokens=self.skeptic_max_tokens,
+            validate=check_citations,
+        )
         review: SkepticReview = completion.value
-        cited = {evidence_id for mode in review.failure_modes for evidence_id in mode.evidence_ids}
-        self._reject_unknown(cited, set(evidence))
         return review, prompt_hash, completion.response_sha256
 
     def propose_rule(
@@ -424,9 +457,13 @@ class DeepSeekResearchClient:
             sort_keys=True,
         )
         prompt_hash = hashlib.sha256(f"{system}\n{user}".encode()).hexdigest()
-        completion = self._complete(system, user, RuleProposalDraft)
+        allowed = set(evidence)
+
+        def check_citations(draft: RuleProposalDraft) -> None:
+            self._reject_unknown(set(draft.evidence_ids), allowed)
+
+        completion = self._complete(system, user, RuleProposalDraft, validate=check_citations)
         result: RuleProposalDraft = completion.value
-        self._reject_unknown(set(result.evidence_ids), set(evidence))
         return result, prompt_hash, completion.response_sha256
 
     def complete_structured(
@@ -456,33 +493,98 @@ class DeepSeekResearchClient:
         model_type: type[BaseModel],
         *,
         max_tokens: int | None = None,
+        validate: Callable[[Any], None] | None = None,
     ) -> _Completion:
+        """One validated structured response, with a bounded feedback re-ask on rejection.
+
+        Every refusal -- truncation, empty content, unparseable JSON, a schema violation, a
+        hallucinated citation raised by ``validate`` -- appends the rejected answer and the
+        exact rejection reason to the conversation and asks again, at most
+        ``self.feedback_retries`` times. A second refusal raises the original error. Blind
+        re-rolls remain forbidden: the model always sees why its answer was refused, and the
+        audit trail (``attempts``) counts every round the re-ask cost.
+        """
         if not self.api_key:
             raise RuntimeError("DEEPSEEK_API_KEY is not configured")
-        payload: dict[str, Any] = {
-            "model": self.model,
-            "messages": [
-                {"role": "system", "content": system},
-                {"role": "user", "content": user},
-            ],
-            "response_format": {"type": "json_object"},
-            "thinking": {"type": "enabled"},
-            "reasoning_effort": "high",
-            # Zero temperature is not a quality choice, it is a measurement one: agent
-            # credibility is scored across runs, and a sampling temperature would put run-to-run
-            # variance into a number we intend to read as skill.
-            "temperature": 0.0,
-            "max_tokens": max_tokens or self.max_tokens,
-            "stream": False,
-        }
-        started = time.monotonic()
-        try:
-            envelope, attempts = self._post(payload)
-        finally:
-            # Recorded even on the failing path, because "the call that cost us four minutes and
-            # then raised" is the one an operator most needs to find later.
-            self.last_latency_ms = int((time.monotonic() - started) * 1000)
-        self.last_attempts = attempts
+        messages: list[dict[str, str]] = [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ]
+        attempts = 0
+        latency_ms = 0
+        for feedback_round in range(self.feedback_retries + 1):
+            payload: dict[str, Any] = {
+                "model": self.model,
+                "messages": messages,
+                "response_format": {"type": "json_object"},
+                "thinking": {"type": "enabled"},
+                "reasoning_effort": "high",
+                # Zero temperature is not a quality choice, it is a measurement one: agent
+                # credibility is scored across runs, and a sampling temperature would put
+                # run-to-run variance into a number we intend to read as skill.
+                "temperature": 0.0,
+                "max_tokens": max_tokens or self.max_tokens,
+                "stream": False,
+            }
+            started = time.monotonic()
+            try:
+                envelope, round_attempts = self._post(payload)
+            finally:
+                # Recorded even on the failing path, because "the call that cost us four
+                # minutes and then raised" is the one an operator most needs to find later.
+                latency_ms += int((time.monotonic() - started) * 1000)
+                self.last_latency_ms = latency_ms
+            attempts += round_attempts
+            self.last_attempts = attempts
+            try:
+                value, content = self._parse_response(envelope, model_type)
+                if validate is not None:
+                    validate(value)
+            except ValueError as exc:
+                if feedback_round >= self.feedback_retries:
+                    raise
+                rejected = self._response_content(envelope)
+                if rejected:
+                    messages.append({"role": "assistant", "content": rejected})
+                messages.append(
+                    {
+                        "role": "user",
+                        "content": (
+                            f"Your previous response was rejected: {exc}. "
+                            "Return a corrected response as JSON only."
+                        ),
+                    }
+                )
+                continue
+            response_hash = hashlib.sha256(content.encode()).hexdigest()
+            self.last_usage = _parse_usage(envelope)
+            return _Completion(
+                value=value,
+                response_sha256=response_hash,
+                usage=self.last_usage,
+                attempts=attempts,
+            )
+        raise AssertionError("unreachable: the feedback loop either returns or raises")
+
+    @staticmethod
+    def _response_content(envelope: Any) -> str | None:
+        """The assistant text of a rejected response, when one exists to show back."""
+        if not isinstance(envelope, dict):
+            return None
+        choices = envelope.get("choices")
+        if not isinstance(choices, list) or not choices:
+            return None
+        choice = choices[0]
+        if not isinstance(choice, dict):
+            return None
+        message = choice.get("message")
+        content = message.get("content") if isinstance(message, dict) else None
+        return content if isinstance(content, str) and content.strip() else None
+
+    def _parse_response(
+        self, envelope: Any, model_type: type[BaseModel]
+    ) -> tuple[BaseModel, str]:
+        """The validated value and the raw content it was parsed from, or a refusal."""
         if not isinstance(envelope, dict):
             raise ValueError("DeepSeek returned a non-object response")
         choices = envelope.get("choices")
@@ -492,25 +594,18 @@ class DeepSeekResearchClient:
         if not isinstance(choice, dict) or choice.get("finish_reason") != "stop":
             reason = choice.get("finish_reason") if isinstance(choice, dict) else None
             raise ValueError(f"DeepSeek response did not finish cleanly: {reason!r}")
-        message = choice.get("message")
-        content = message.get("content") if isinstance(message, dict) else None
-        if not isinstance(content, str) or not content.strip():
+        content = self._response_content(envelope)
+        if content is None:
             raise ValueError("DeepSeek returned empty content")
-        response_hash = hashlib.sha256(content.encode()).hexdigest()
-        self.last_usage = _parse_usage(envelope)
-        return _Completion(
-            value=model_type.model_validate_json(content),
-            response_sha256=response_hash,
-            usage=self.last_usage,
-            attempts=attempts,
-        )
+        return model_type.model_validate_json(content), content
 
     def _post(self, payload: dict[str, Any]) -> tuple[Any, int]:
         """Retry congestion and transport faults only.
 
         A rejected response -- malformed JSON, a hallucinated citation, a truncated answer -- is
-        never retried. Those are not bad luck; asking again would either burn the budget on the
-        same refusal or, worse, roll the dice until a compliant-looking answer appears.
+        never blind-retried here. That decision belongs to `_complete`, which may re-ask once
+        with the exact rejection reason shown to the model; what must never happen is rolling
+        the dice on an identical prompt until a compliant-looking answer appears.
         """
         last_error: Exception | None = None
         for attempt in range(1, self.max_attempts + 1):
