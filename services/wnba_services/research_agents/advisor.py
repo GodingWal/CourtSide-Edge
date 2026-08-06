@@ -43,14 +43,22 @@ from wnba_services.research_agents.deepseek import DeepSeekResearchClient
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["Advisor", "AdvisoryOutcome", "advisory_summary", "deepseek_is_configured"]
+__all__ = [
+    "PROVIDER_FAILURES",
+    "Advisor",
+    "AdvisoryOutcome",
+    "advisory_summary",
+    "deepseek_is_configured",
+]
 
 Schema = TypeVar("Schema", bound=BaseModel)
 Result = TypeVar("Result")
 
 # Any exception the provider path can legitimately raise. Anything outside this set is a bug in
-# our own code and should not be swallowed into a quiet fallback.
-_PROVIDER_FAILURES = (
+# our own code and should not be swallowed into a quiet fallback. Public because the research
+# workflow catches the same set around its own provider calls, and two definitions of "a provider
+# failure" would drift into disagreeing about which errors get quietly swallowed.
+PROVIDER_FAILURES = (
     httpx.HTTPError,
     ValidationError,
     ValueError,
@@ -150,7 +158,7 @@ class Advisor:
             result, response_hash = self.client.complete_structured(
                 system=system, user=payload, schema=schema
             )
-        except _PROVIDER_FAILURES as error:
+        except PROVIDER_FAILURES as error:
             reason = f"{type(error).__name__}: {error}"[:500]
             logger.warning("advisory task %s fell back to deterministic path: %s", task, reason)
             self._record(
@@ -208,7 +216,7 @@ class Advisor:
             return None
         try:
             result, prompt_hash, response_hash = call()
-        except _PROVIDER_FAILURES as error:
+        except PROVIDER_FAILURES as error:
             reason = f"{type(error).__name__}: {error}"[:500]
             logger.warning("advisory task %s fell back to deterministic path: %s", task, reason)
             self._record(
@@ -224,6 +232,27 @@ class Advisor:
             response_hash=response_hash,
         )
         return result
+
+    def record_fallback(
+        self, *, task: str, subject: str, reason: str, now: datetime | None = None
+    ) -> None:
+        """Record a provider failure that happened outside this Advisor's own call.
+
+        The research workflow calls the provider with no transaction open -- deliberately, so a
+        run that dies mid-flight does not hold a connection -- and reopens a cursor afterwards to
+        persist what came back. The failures have therefore already happened by the time there is
+        somewhere to write them. This is that write. It carries the same meaning as a fallback
+        from :meth:`advise`: the provider did not produce a usable answer and the caller carried
+        on without one.
+        """
+        logger.warning("advisory task %s fell back to the deterministic path: %s", task, reason)
+        self._record(
+            task=task,
+            subject=subject,
+            at=now or datetime.now(UTC),
+            disposition="fallback",
+            failure_reason=reason[:500],
+        )
 
     def reject(self, *, task: str, subject: str, reason: str, now: datetime | None = None) -> None:
         """Record advice that arrived intact but failed a downstream check.
@@ -256,9 +285,11 @@ class Advisor:
     ) -> None:
         self.outcomes.append(AdvisoryOutcome(task, subject, disposition, failure_reason))
         model = os.getenv("DEEPSEEK_MODEL", "deepseek-v4-pro") if self._enabled else "none"
-        # Cost travels with the call. A client that was never constructed reports nothing rather
-        # than zero: "no key configured" and "a free call" are different facts.
-        usage = self._client.usage if self._client is not None else None
+        # Cost travels with the call, read off the client's most recent one. A client that was
+        # never constructed reports nothing rather than zero: "no key configured" and "a call
+        # that cost nothing" are different facts, and a zero would merge them.
+        client = self._client
+        tokens = None if client is None else client.last_usage
         self._cur.execute(
             """INSERT INTO wnba.model_advisories
                (advisory_id,task,subject,requested_at,model,prompt_hash,response_hash,
@@ -274,21 +305,12 @@ class Advisor:
                 prompt_hash,
                 response_hash,
                 disposition,
-                Jsonb(
-                    {
-                        **(detail or {}),
-                        **(
-                            {"retry_reasons": usage.retry_reasons}
-                            if usage is not None and usage.retry_reasons
-                            else {}
-                        ),
-                    }
-                ),
+                Jsonb(detail or {}),
                 failure_reason,
-                None if usage is None else usage.latency_ms,
-                None if usage is None else usage.prompt_tokens,
-                None if usage is None else usage.completion_tokens,
-                None if usage is None or usage.attempts == 0 else usage.attempts,
+                None if client is None else client.last_latency_ms,
+                None if tokens is None else tokens.prompt_tokens,
+                None if tokens is None else tokens.completion_tokens,
+                None if client is None or client.last_attempts == 0 else client.last_attempts,
             ),
         )
 

@@ -244,10 +244,13 @@ def test_a_retryable_status_is_retried_and_the_reason_kept() -> None:
 
     assert isinstance(review, SkepticReview)
     assert len(attempts) == 2
-    assert client.usage.attempts == 2
-    assert client.usage.retry_reasons == ["HTTP 429"]
-    assert client.usage.prompt_tokens == 120
-    assert client.usage.latency_ms is not None
+    # The cost of the call that eventually worked, including the attempt that did not. An
+    # advisory row that reported one attempt here would understate what the desk spends when the
+    # provider is busy, which is exactly when the number matters.
+    assert client.last_attempts == 2
+    assert client.last_usage is not None
+    assert client.last_usage.prompt_tokens == 120
+    assert client.last_latency_ms is not None
 
 
 def test_a_client_error_is_not_retried() -> None:
