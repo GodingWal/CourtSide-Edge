@@ -1,114 +1,99 @@
-"""Measured projection bias by line band, applied to model-side scoring.
+"""Measured projection bias by market and line band.
 
-Backtest evidence shows the pooled model systematically under-projects
-high-usage players and over-projects low lines, with the sign and size of
-the error depending on where the betting line sits (a proxy for usage
-tier).  Calibration fixes probability mapping but cannot move the mean of
-the projection; this module shifts the model-side component means by the
-measured, shrinkage-discounted bias for the band containing the line.
+Settled outcomes keep saying the same thing: actual minus projected runs positive for the
+high lines -- the shrinkage that protects the model from small samples pulls star projections
+toward the pack. A probability calibration map cannot fix that, because the bias lives in the
+mean, not in the mapping from mean to probability: a +2-point bias at a 15-point line and the
+same bias at a 30-point line are different probability errors, and one knot per probability
+bucket sees them mixed.
 
-Design rules:
-
-* Market-derived components are never touched - the bias is a property of
-  our model, not of the market price.
-* Bands with thin samples (< ``MIN_BAND_SAMPLE``) contribute nothing.
-* Raw band bias is shrunk toward zero by ``n / (n + SHRINK_K)`` so small
-  samples move the mean only slightly.
+So the correction is measured and applied where it is generated: per market, per line band,
+as an additive shift to the model-side component means. The market component is untouched --
+the operator already knows the line. Bands with thin samples are shrunk toward zero, because
+a bias "measured" over eleven games is noise wearing a lab coat.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import Iterable
+import math
+from collections.abc import Iterable
+from dataclasses import dataclass
+from typing import Any
 
+# A band needs this many settled forecasts before its mean error is trusted at all, and even
+# then it is shrunk by n/(n+K) -- full strength is approached asymptotically, never reached.
 MIN_BAND_SAMPLE = 30
 SHRINK_K = 25.0
 
-# Band edges per market; a line belongs to the band whose lower edge is the
-# largest edge <= line.  One edge below the smallest expected line anchors
-# the lowest band.
+# Band edges per market, in line units. Chosen from the settled-error profile: the bias
+# changes across these boundaries, which is what makes them boundaries.
 BAND_EDGES: dict[str, tuple[float, ...]] = {
     "points": (10.0, 15.0, 20.0, 25.0),
+    "points_assists": (15.0, 20.0, 25.0, 30.0),
+    "points_rebounds": (15.0, 20.0, 25.0, 30.0),
     "rebounds": (5.0, 8.0, 11.0),
+    "rebounds_assists": (8.0, 11.0, 14.0),
     "assists": (3.0, 5.0, 7.0),
     "three_pointers": (1.5, 2.5, 3.5),
-    "points_rebounds_assists": (15.0, 25.0, 35.0),
-    "points_rebounds": (15.0, 20.0, 30.0),
-    "points_assists": (15.0, 20.0, 30.0),
-    "rebounds_assists": (8.0, 12.0, 16.0),
+    "points_rebounds_assists": (20.0, 25.0, 30.0, 35.0),
 }
-DEFAULT_EDGES = (10.0, 20.0)
+DEFAULT_EDGES: tuple[float, ...] = (10.0, 20.0)
 
 
 @dataclass(frozen=True)
 class LineBand:
-    """One fitted band: edges and the shrunk mean shift."""
+    """One measured band: lines in [lo, hi) carry ``bias`` points of measured mean error."""
 
-    lower: float
-    upper: float | None
+    lo: float
+    hi: float
     bias: float
     sample_size: int
 
-    def contains(self, line: float) -> bool:
-        if line < self.lower:
-            return False
-        return self.upper is None or line < self.upper
+    def to_payload(self) -> dict[str, Any]:
+        return {"lo": self.lo, "hi": self.hi, "bias": self.bias, "sample_size": self.sample_size}
 
 
 @dataclass(frozen=True)
 class LineBandBias:
-    """Per-market set of band biases with a fitted flag."""
+    """The fitted correction for one market, or the identity when nothing is measured."""
 
-    market: str
-    bands: tuple[LineBand, ...] = field(default_factory=tuple)
+    bands: tuple[LineBand, ...] = ()
     is_fitted: bool = False
 
     def bias_for(self, line: float) -> float:
         for band in self.bands:
-            if band.contains(line):
+            if band.lo <= line < band.hi:
                 return band.bias
         return 0.0
 
     def apply(self, mean: float, line: float) -> float:
         return max(0.0, mean + self.bias_for(line))
 
-    def to_payload(self) -> dict:
-        return {
-            "market": self.market,
-            "is_fitted": self.is_fitted,
-            "bands": [
-                {
-                    "lower": b.lower,
-                    "upper": b.upper,
-                    "bias": b.bias,
-                    "sample_size": b.sample_size,
-                }
-                for b in self.bands
-            ],
-        }
+    def to_payload(self) -> dict[str, Any]:
+        return {"bands": [band.to_payload() for band in self.bands], "is_fitted": self.is_fitted}
 
-    @staticmethod
-    def from_payload(payload: dict) -> "LineBandBias":
-        return LineBandBias(
-            market=str(payload.get("market", "__all__")),
-            is_fitted=bool(payload.get("is_fitted", False)),
-            bands=tuple(
-                LineBand(
-                    lower=float(b["lower"]),
-                    upper=None if b.get("upper") is None else float(b["upper"]),
-                    bias=float(b.get("bias", 0.0)),
-                    sample_size=int(b.get("sample_size", 0)),
-                )
-                for b in payload.get("bands", [])
-            ),
+    @classmethod
+    def from_payload(cls, payload: dict[str, Any]) -> LineBandBias:
+        bands = tuple(
+            LineBand(
+                lo=float(band["lo"]),
+                hi=float(band["hi"]),
+                bias=float(band["bias"]),
+                sample_size=int(band["sample_size"]),
+            )
+            for band in payload.get("bands", [])
         )
+        return cls(bands=bands, is_fitted=bool(payload.get("is_fitted", False)))
 
 
-IDENTITY_BIAS = LineBandBias(market="__all__")
+IDENTITY_BIAS = LineBandBias()
 
 
-def _edges_for(market: str) -> tuple[float, ...]:
-    return BAND_EDGES.get(market, DEFAULT_EDGES)
+def _band_index(edges: tuple[float, ...], line: float) -> int:
+    for index, edge in enumerate(edges):
+        if line < edge:
+            return index
+    return len(edges)
 
 
 def fit_line_bias(
@@ -118,37 +103,26 @@ def fit_line_bias(
     minimum_sample: int = MIN_BAND_SAMPLE,
     shrink_k: float = SHRINK_K,
 ) -> LineBandBias:
-    """Fit shrunk per-band bias from (line, projected_mean, actual) triples."""
+    """Fit one market's band biases from ``(line, projected_mean, actual)`` triples.
 
-    triples = [(float(line), float(projected), float(actual)) for line, projected, actual in points]
-    if not triples:
-        return LineBandBias(market=market)
+    The bias for a band is its mean signed error, shrunk toward zero by n/(n+K) so a thin
+    band earns only a fraction of its apparent correction. Bands below ``minimum_sample``
+    contribute nothing -- zero, not a guess.
+    """
+    edges = BAND_EDGES.get(market, DEFAULT_EDGES)
+    errors: list[list[float]] = [[] for _ in range(len(edges) + 1)]
+    for line, projected, actual in points:
+        errors[_band_index(edges, line)].append(actual - projected)
 
-    edges = _edges_for(market)
     bands: list[LineBand] = []
-    fitted_any = False
-    bounds = list(edges) + [None]
-    lower = float("-inf")
-    for upper in bounds:
-        members = [t for t in triples if lower <= t[0] and (upper is None or t[0] < upper)]
-        count = len(members)
-        bias = 0.0
-        if count >= minimum_sample:
-            raw = sum(actual - projected for _, projected, actual in members) / count
-            bias = raw * (count / (count + shrink_k))
-            fitted_any = True
+    bounds = (0.0, *edges, math.inf)
+    for index, band_errors in enumerate(errors):
+        count = len(band_errors)
+        if count < minimum_sample:
+            continue
+        raw = math.fsum(band_errors) / count
+        shrunk = raw * (count / (count + shrink_k))
         bands.append(
-            LineBand(
-                lower=0.0 if lower == float("-inf") else lower,
-                upper=upper,
-                bias=bias,
-                sample_size=count,
-            )
+            LineBand(lo=bounds[index], hi=bounds[index + 1], bias=shrunk, sample_size=count)
         )
-        if upper is None:
-            break
-        lower = upper
-
-    if not fitted_any:
-        return LineBandBias(market=market)
-    return LineBandBias(market=market, bands=tuple(bands), is_fitted=True)
+    return LineBandBias(bands=tuple(bands), is_fitted=bool(bands))
