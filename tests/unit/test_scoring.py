@@ -181,8 +181,8 @@ def test_the_forecast_is_wider_than_a_poisson_of_the_same_mean() -> None:
 # --------------------------------------------------------------------------------------
 # Features that used to be computed and discarded
 # --------------------------------------------------------------------------------------
-def test_rest_days_finally_change_the_forecast() -> None:
-    """They were computed, stored, written into the feature snapshot -- and never read."""
+def test_rest_days_no_longer_move_the_forecast() -> None:
+    """Measured against settled outcomes, rest was not a signal; the scorer stops pretending."""
     rested = score_prop(
         _inputs(
             matchup=MatchupInputs(team_rest_days=4.0, opponent_rest_days=4.0),
@@ -195,7 +195,7 @@ def test_rest_days_finally_change_the_forecast() -> None:
             role=RoleInputs(expected_minutes=30.0),
         )
     )
-    assert back_to_back.mean < rested.mean
+    assert back_to_back.mean == pytest.approx(rested.mean)
 
 
 def test_start_probability_moves_a_rotation_uncertain_player() -> None:
@@ -234,7 +234,8 @@ def test_teammate_and_matchup_multipliers_are_bounded() -> None:
     assert extreme.matchup_multiplier <= 1.25
 
 
-def test_a_blowout_shortens_projected_minutes() -> None:
+def test_a_blowout_no_longer_shortens_projected_minutes() -> None:
+    """Gated to zero: the probability is quantized and confounded with pace (r = -0.80, #68)."""
     calm = resolve_adjustments(
         _inputs(
             role=RoleInputs(expected_minutes=30.0),
@@ -247,7 +248,7 @@ def test_a_blowout_shortens_projected_minutes() -> None:
             matchup=MatchupInputs(blowout_probability=1.0),
         )
     )
-    assert rout.expected_minutes < calm.expected_minutes
+    assert rout.expected_minutes == pytest.approx(calm.expected_minutes)
 
 
 # --------------------------------------------------------------------------------------
@@ -338,7 +339,8 @@ def test_diagnostics_record_what_produced_the_number() -> None:
     )
     diagnostics = forecast.diagnostics
     assert diagnostics["history_games"] == 20
-    assert diagnostics["rest_minutes_multiplier"] < 1.0
+    # Rest is a measured non-signal, so the diagnostics must show the identity adjustment.
+    assert diagnostics["rest_minutes_multiplier"] == 1.0
     assert set(diagnostics["weights"]) == {component.name for component in forecast.components}
     assert diagnostics["dispersion"] == forecast.dispersion
 
