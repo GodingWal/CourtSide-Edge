@@ -1,0 +1,27 @@
+name: VPS Remote Command Runner
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch: # Allows manual triggering or API triggering via agents
+
+jobs:
+  execute-on-vps:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Execute Remote Commands via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          port: ${{ secrets.VPS_PORT }}
+          script: |
+            echo "Successfully connected to VPS as $(whoami)"
+            # Example commands your workflow/agent needs to run:
+            cd /home/deploy-agent/app || mkdir -p /home/deploy-agent/app
+            git pull origin main || echo "Fresh directory"
+            # Add Docker, PM2, or service reload commands here
