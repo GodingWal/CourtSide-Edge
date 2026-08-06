@@ -23,10 +23,11 @@ operational. Automated wager execution remains permanently out of scope.
 | Fitted calibration and weights | Operational | Isotonic maps, stacked weights, edge shrinkage |
 | Analyst rules in the forecast path | Operational | Active and shadow firings recorded per episode |
 | Walk-forward evaluation | Operational | Five pre-tip snapshots and benchmark comparisons |
-| PAT-style research | Built, not yet deployed | Five DeepSeek roles with cited expiring claims over a corpus that now carries recent form, line movement, the de-vigged market price, teammate availability and settled precedents; a failed role costs one voice rather than the run; one round-two seat is held blind as a herding control |
+| PAT-style research | Built, not yet deployed | Five DeepSeek roles with cited expiring claims over a corpus carrying recent form, line movement, the de-vigged market price, teammate availability and settled precedents; a failed analyst costs one voice rather than the run; in the advisory forecast rounds one seat is held blind as a herding control and the skeptic answers in failure modes rather than a probability |
 | Learning loop | Closed | Hypotheses reviewed against post-creation evidence; active rules re-scored on live firings and auto-suspended when harmful; measured drift widens forecasts |
 | Error attribution | Scored, two causes | Ordered if-chain replaced by ranked causes over the minutes-residual; `data_quality` and `modeling` added |
 | Model participation in learning | Advisory, audited | DeepSeek drafts rules, proposal designs, hypothesis critiques and withdrawal rationales; every call recorded in `model_advisories` with used/fallback/rejected plus tokens, latency and retries |
+| Model participation in learning | Advisory, audited | DeepSeek drafts rules, proposal designs, hypothesis critiques and withdrawal rationales; every call recorded in `model_advisories` with used/fallback/rejected plus tokens, latency and attempts |
 | Adversarial skeptic | Complete | Four analysts, then a skeptic over their conclusions as citable evidence |
 | Research verdict | Complete | Contested claims and caution computed in code, never by the model |
 | Provider resilience | Complete | Congestion retried with capped backoff; rejected responses never are; token spend recorded |
