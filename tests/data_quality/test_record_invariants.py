@@ -163,6 +163,29 @@ def test_paper_is_the_default_rather_than_something_to_remember() -> None:
     assert re.search(r"is_paper\s+BOOLEAN NOT NULL DEFAULT TRUE", text)
 
 
+def test_a_research_verdict_has_nowhere_to_put_a_prop_probability() -> None:
+    """Research may raise caution about a forecast. It may never contribute one.
+
+    Enforced by the shape of the table rather than by reviewer attention: there is no column a
+    predicted probability, edge or side could be written into, so the boundary cannot be crossed
+    by an insert that merely looks reasonable.
+    """
+    text = _migration_text()
+    table = re.search(
+        r"CREATE TABLE IF NOT EXISTS wnba\.research_verdicts \((.*?)\n\);", text, re.DOTALL
+    )
+    assert table is not None
+    names = re.findall(r"^\s{4}(\w+)\s", table.group(1), re.MULTILINE)
+    assert "caution" in names, "the verdict table was not parsed as expected"
+    for forbidden in ("probability", "predicted", "edge", "side", "stake", "recommend"):
+        assert not [name for name in names if forbidden in name], forbidden
+
+
+def test_a_research_run_cannot_report_fewer_provider_calls_than_agents() -> None:
+    """Retries only ever add calls; the reverse means the accounting was written by hand."""
+    assert "research_run_counts_are_not_negative" in _migration_text()
+
+
 def test_every_migration_is_a_single_transaction() -> None:
     """A half-applied migration leaves a schema no code was written against."""
     for path in sorted(MIGRATIONS.glob("*.sql")):

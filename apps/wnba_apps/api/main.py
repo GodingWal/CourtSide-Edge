@@ -999,7 +999,19 @@ def projection_research(projection_id: UUID) -> dict[str, object]:
             )
             run = cur.fetchone()
             if run is None:
-                return {"available": True, "configured": False, "run": None, "analyses": []}
+                return {
+                    "available": True,
+                    "configured": False,
+                    "run": None,
+                    "analyses": [],
+                    "verdict": None,
+                }
+            cur.execute(
+                "SELECT * FROM wnba.research_verdicts WHERE research_run_id=%s",
+                (run["research_run_id"],),
+            )
+            verdict_row = cur.fetchone()
+            verdict = dict(verdict_row) if verdict_row is not None else None
             cur.execute(
                 """SELECT a.*,
                           coalesce(jsonb_agg(jsonb_build_object(
@@ -1079,6 +1091,7 @@ def projection_research(projection_id: UUID) -> dict[str, object]:
         "configured": True,
         "run": dict(run),
         "analyses": analyses,
+        "verdict": verdict,
         "audit": None if audit is None else dict(audit),
         "synthesis": None if synthesis is None else dict(synthesis),
         "agent_forecasts": agent_forecasts,

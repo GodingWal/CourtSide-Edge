@@ -26,6 +26,10 @@ operational. Automated wager execution remains permanently out of scope.
 | PAT-style research | Built, not yet deployed | Five DeepSeek roles with cited expiring claims over a corpus that now carries recent form, line movement, the de-vigged market price, teammate availability and settled precedents; a failed role costs one voice rather than the run; one round-two seat is held blind as a herding control |
 | Learning loop | Closed | Hypotheses reviewed against post-creation evidence; active rules re-scored on live firings and auto-suspended when harmful; measured drift widens forecasts |
 | Error attribution | Scored, two causes | Ordered if-chain replaced by ranked causes over the minutes-residual; `data_quality` and `modeling` added |
+| Model participation in learning | Advisory, audited | DeepSeek drafts rules, proposal designs, hypothesis critiques and withdrawal rationales; every call recorded in `model_advisories` with used/fallback/rejected |
+| Adversarial skeptic | Complete | Four analysts, then a skeptic over their conclusions as citable evidence |
+| Research verdict | Complete | Contested claims and caution computed in code, never by the model |
+| Provider resilience | Complete | Congestion retried with capped backoff; rejected responses never are; token spend recorded |
 | Model participation in learning | Advisory, audited | DeepSeek drafts rules, proposal designs, hypothesis critiques and withdrawal rationales; every call recorded in `model_advisories` with used/fallback/rejected plus tokens, latency and retries |
 | Independent-sample accounting | Complete | Repeats collapsed; game clustering corrected |
 | Rule proposal and backtest | Operational | Weekly proposal/backtest; named CLI approval only |
@@ -102,7 +106,15 @@ makes that call, closing-line value stays a pending readiness gate.
 ### 5. Add PAT-style research and the learning loop
 
 - Evidence retrieval with immutable source documents and claim expiry.
-- Availability, rotation and matchup analysts plus an independent skeptic.
+- Availability, rotation and matchup analysts plus an independent skeptic. Done, and the
+  independence is now structural rather than nominal: the four analysts read identical frozen
+  evidence concurrently, and the skeptic runs afterwards over that evidence plus their four
+  conclusions, each supplied as a citable evidence row. Until that ordering existed the skeptic
+  had nothing to point at, so its `contradicting_evidence_ids` could never name a peer's claim.
+- Reduce each run to a verdict computed from the citation graph -- how many cited claims the
+  skeptic contradicted, and how confidently -- rather than from a summarizing model call. Done.
+  A provider-written summary cannot be replayed and would be the obvious place for a probability
+  to reappear; the verdict has no field for one and no input from which to derive one.
 - Reject uncited claims; agents may propose features but never write forecast probabilities.
 - Postgame error attribution, analyst feedback, hypothesis registry and weekly proposals.
 - Champion/challenger evaluation, shadow deployment and human-only promotion.

@@ -37,6 +37,29 @@ form an allow-list: a response citing an unknown identifier is rejected. Empty, 
 invalid responses fail closed. Prompts and validated outputs are hashed and stored for audit;
 the API key and hidden reasoning are never stored.
 
+Congestion, timeouts and transport faults are retried with capped backoff. A *rejected* response
+is never retried: a hallucinated citation or a truncated answer is not bad luck, and asking again
+until one comes back compliant is how an allow-list gets quietly defeated.
+
+The provider is never called with a database transaction open. A run's frozen evidence and its
+`running` row are committed first, so a run that dies over the wire leaves a record of what it was
+attempting, and a concurrent caller can see that spending is already underway rather than paying
+for the same review twice.
+
+## Adversarial review
+
+Research runs in two stages. Four analysts -- availability, rotation, matchup and market -- read
+the same frozen evidence independently. The skeptic then reads that evidence *plus* the four
+conclusions, supplied as ordinary evidence rows with their own identifiers. Only then can its
+`contradicting_evidence_ids` name the thing it disagrees with; a skeptic shown only what everyone
+else saw is a fifth analyst with a pessimistic prompt.
+
+The run is reduced to a verdict by code, not by a sixth model call. The verdict counts how many
+cited claims the skeptic contradicted -- directly, or by disputing the analyst that made them --
+and reports a caution level with the citations behind it. It has no access to the forecast, the
+line or the price, and no field to put a probability in. Raising caution for a human reading the
+evidence file is the most a research run may do.
+
 ## Promotion boundary
 
 Automation may create a challenger, run backtests, lower confidence or disable a market. Only
