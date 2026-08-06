@@ -41,3 +41,49 @@ def test_resolve_game_treats_malformed_matchup_as_unresolved() -> None:
         reason="Ankle",
     )
     assert _resolve_game(object(), injury) is None
+
+
+class _GameCursor:
+    """A cursor that plays back one game row and remembers what it was asked."""
+
+    def __init__(self, game_id: str) -> None:
+        self._row = {"game_id": game_id}
+        self.params: tuple[object, ...] | None = None
+
+    def execute(self, _sql: str, params: tuple[object, ...]) -> None:
+        self.params = params
+
+    def fetchall(self) -> list[dict[str, str]]:
+        return [self._row]
+
+
+def test_resolve_game_maps_report_abbreviations_to_schedule_abbreviations() -> None:
+    """The report says LVA/LAS/PDX where the schedule says LV/LA/POR; unmapped, every
+    row fails game resolution and the injury feed lands nothing."""
+    game_id = "11111111-2222-3333-4444-555555555555"
+    injury = OfficialInjury(
+        game_date="08/06/2026",
+        matchup="LVA@IND",
+        team_name="Las Vegas Aces",
+        player_name="Jane Doe",
+        status="Out",
+        reason="Ankle",
+    )
+    cursor = _GameCursor(game_id)
+    assert _resolve_game(cursor, injury) is not None  # type: ignore[arg-type]
+    assert cursor.params == ("08/06/2026", "LV", "IND")
+
+
+def test_resolve_game_tolerates_whitespace_around_matchup_teams() -> None:
+    game_id = "11111111-2222-3333-4444-555555555555"
+    injury = OfficialInjury(
+        game_date="08/06/2026",
+        matchup="LAS @ NYL",
+        team_name="New York Liberty",
+        player_name="Jane Doe",
+        status="Out",
+        reason="Ankle",
+    )
+    cursor = _GameCursor(game_id)
+    assert _resolve_game(cursor, injury) is not None  # type: ignore[arg-type]
+    assert cursor.params == ("08/06/2026", "LA", "NY")
