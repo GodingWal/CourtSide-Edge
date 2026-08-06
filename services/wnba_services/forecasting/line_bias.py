@@ -50,7 +50,13 @@ class LineBand:
     sample_size: int
 
     def to_payload(self) -> dict[str, Any]:
-        return {"lo": self.lo, "hi": self.hi, "bias": self.bias, "sample_size": self.sample_size}
+        # JSONB has no Infinity; the open top band is stored as null and read back as inf.
+        return {
+            "lo": self.lo,
+            "hi": None if math.isinf(self.hi) else self.hi,
+            "bias": self.bias,
+            "sample_size": self.sample_size,
+        }
 
 
 @dataclass(frozen=True)
@@ -77,7 +83,7 @@ class LineBandBias:
         bands = tuple(
             LineBand(
                 lo=float(band["lo"]),
-                hi=float(band["hi"]),
+                hi=math.inf if band["hi"] is None else float(band["hi"]),
                 bias=float(band["bias"]),
                 sample_size=int(band["sample_size"]),
             )

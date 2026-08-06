@@ -60,6 +60,19 @@ def test_payload_round_trip() -> None:
     assert restored == fitted
 
 
+def test_payload_survives_json() -> None:
+    # The top band is open-ended (hi=inf), and JSONB rejects Infinity: the payload must round
+    # trip through the strict JSON the database enforces, not Python's permissive default.
+    import json
+    import math
+
+    fitted = fit_line_bias(_points(27.0, 3.0, 100), market="points")
+    assert any(math.isinf(band.hi) for band in fitted.bands)
+    payload = json.loads(json.dumps(fitted.to_payload(), allow_nan=False))
+    restored = LineBandBias.from_payload(payload)
+    assert restored == fitted
+
+
 def test_identity_bias_is_a_no_op() -> None:
     assert IDENTITY_BIAS.bias_for(17.0) == 0.0
     assert IDENTITY_BIAS.apply(18.0, 17.0) == 18.0
