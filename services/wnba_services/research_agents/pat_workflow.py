@@ -406,7 +406,7 @@ def run_pat_research(
         )
         cur.execute(
             "UPDATE wnba.research_audits SET research_run_id=%s WHERE audit_id=%s",
-            (run_id := base.research_run_id, audit.audit_id),
+            (base.research_run_id, audit.audit_id),
         )
     return PatBatch(
         base.research_run_id, "complete", len(first), len(second), len(precedents), proposed
