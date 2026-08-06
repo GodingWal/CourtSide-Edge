@@ -6,6 +6,9 @@ After=network-online.target docker.service
 Type=oneshot
 WorkingDirectory=/opt/wnba/repo
 EnvironmentFile=/opt/wnba/repo/.env
-ExecStart=/opt/wnba/repo/.venv/bin/wnba lines poll --quiet --near-lock
+# Two record-only jobs on one timer: player-prop quotes inside the CLV window, and the ESPN
+# game spreads/totals that a blowout refit needs. The odds snapshot runs every pass -- an
+# opening line is history too -- so it is chained with ';', not gated on the quote poll.
+ExecStart=/bin/bash -lc '/opt/wnba/repo/.venv/bin/wnba lines poll --quiet --near-lock; /opt/wnba/repo/.venv/bin/wnba stats snapshot-odds --quiet'
 TimeoutStartSec=10m
 Nice=9
