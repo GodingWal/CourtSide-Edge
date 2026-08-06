@@ -50,7 +50,12 @@ def _resolve_player(cur: psycopg.Cursor[dict[str, Any]], injury: OfficialInjury)
 
 def _resolve_game(cur: psycopg.Cursor[dict[str, Any]], injury: OfficialInjury) -> UUID | None:
     teams = injury.matchup.split("@", maxsplit=1)
-    if len(teams) != 2:
+    # The league PDF occasionally yields an empty game date (see the adapter's `_context`,
+    # which returns "" when a row falls outside the expected word columns). Binding "" into
+    # the date parameter below raised InvalidDatetimeFormat and aborted the whole batch --
+    # one malformed row cost every good row in the report. A row without a date is
+    # unresolvable, and unresolved rows already have a home: entity_resolution_failures.
+    if len(teams) != 2 or not injury.game_date.strip():
         return None
     cur.execute(
         """SELECT g.game_id FROM wnba.games g
@@ -121,7 +126,7 @@ def ingest_official_injuries(*, client: PoliteClient | None = None) -> InjuryIng
                 cur.execute(
                     """UPDATE wnba.injury_status SET system_to=%s
                        WHERE player_id=%s AND game_id=%s AND source='wnba_official'
-                         AND system_to IS NULL""",
+                       AND system_to IS NULL""",
                     (observed, player_id, game_id),
                 )
             cur.execute(
