@@ -14,34 +14,26 @@ it was doing rather than vanishing, and a second caller can see that spending is
 from __future__ import annotations
 
 import hashlib
+import json
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
-from datetime import UTC, datetime
-from typing import Any
-from uuid import NAMESPACE_URL as _DOCUMENT_NAMESPACE
-from uuid import UUID, uuid4, uuid5
 
 import psycopg
 from psycopg.types.json import Jsonb
 from wnba_store.db import connect
 
+from wnba_services.research_agents.advisor import Advisor
 from wnba_services.research_agents.deepseek import (
     AgentAnalysis,
     AgentResponse,
     DeepSeekResearchClient,
 )
-from wnba_services.research_agents.synthesis import ResearchVerdict, synthesize
-from wnba_services.research_agents.advisor import Advisor
-from wnba_services.research_agents.deepseek import DeepSeekResearchClient
 from wnba_services.research_agents.evidence import build_evidence_document
-
-# The one role that does not forecast. It reviews on its own schema (`SkepticReview`) and its
-# output never enters the consensus average -- see `deepseek.SkepticReview` for why a skeptic
-# forced to emit a probability stops being a skeptic.
-SKEPTIC_ROLE = "skeptic"
+from wnba_services.research_agents.synthesis import ResearchVerdict, synthesize
 
 ANALYST_QUESTIONS = {
     "availability": "Assess availability evidence and identify unresolved status risk.",
@@ -87,70 +79,6 @@ class _PreparedRun:
     document_id: UUID
     evidence: dict[UUID, str]
     locks_at: datetime
-
-
-def _snapshot_evidence(
-    projection: dict[str, object],
-) -> tuple[str, dict[UUID, str]]:
-    features = projection["features"]
-    if not isinstance(features, dict):
-        raise ValueError("feature snapshot is not an object")
-    groups = {
-        "availability": {
-            key: features.get(key)
-            for key in (
-                "injury_designation",
-                "injury_detail",
-                "expected_minutes",
-                "start_probability",
-                "closing_lineup_probability",
-            )
-        },
-        "role_effects": {
-            key: features.get(key)
-            for key in (
-                "history_games",
-                "teammate_effect_count",
-                "teammate_rate_multiplier",
-                "teammate_effect_confidence",
-            )
-        },
-        "matchup": {
-            key: features.get(key)
-            for key in (
-                "expected_possessions",
-                "pace_multiplier",
-                "defense_multiplier",
-                "expected_margin",
-                "blowout_probability",
-                "team_rest_days",
-                "opponent_rest_days",
-            )
-        },
-        "market": {
-            "source": projection["source"],
-            "line": projection["line"],
-            "observed_at": str(projection["observed_at"]),
-            "locks_at": str(projection["locks_at"]),
-            "prop_type": projection["prop_type"],
-        },
-        "forecast_audit": {
-            "model_mean": projection["mean"],
-            "model_median": projection["median"],
-            "model_stddev": projection["stddev"],
-            "model_disagreement": projection["model_disagreement"],
-            "data_quality_score": projection["data_quality_score"],
-        },
-    }
-    document = json.dumps(groups, sort_keys=True, default=str)
-    document_hash = hashlib.sha256(document.encode()).hexdigest()
-    evidence = {
-        uuid5(NAMESPACE_URL, f"courtside-edge:evidence:{document_hash}:{name}"): json.dumps(
-            values, sort_keys=True, default=str
-        )
-        for name, values in groups.items()
-    }
-    return document, evidence
 
 
 def _peer_evidence(
@@ -219,11 +147,6 @@ def _load_verdict(
 def _completed_batch(
     cur: psycopg.Cursor[dict[str, Any]],
     run_id: UUID,
-def run_projection_research(
-    projection_id: UUID,
-    *,
-    client: DeepSeekResearchClient | None = None,
-    now: datetime | None = None,
 ) -> ResearchBatch:
     cur.execute(
         """SELECT count(*) AS analyses,
@@ -307,10 +230,9 @@ def _prepare(
                 (at, in_flight["research_run_id"]),
             )
 
-        document, evidence = _snapshot_evidence(dict(projection))
         document, evidence = build_evidence_document(cur, dict(projection), now=at)
         document_hash = hashlib.sha256(document.encode()).hexdigest()
-        document_id = uuid5(_DOCUMENT_NAMESPACE, f"courtside-edge:document:{document_hash}")
+        document_id = uuid5(NAMESPACE_URL, f"courtside-edge:document:{document_hash}")
         cur.execute(
             """INSERT INTO wnba.source_documents
                (document_id,source,title,content_sha256,content_excerpt,retrieved_at)
@@ -360,7 +282,14 @@ def _prepare(
 def _run_agents(
     prepared: _PreparedRun,
     provider: DeepSeekResearchClient,
-) -> tuple[dict[str, AgentResponse], AgentResponse, dict[str, UUID], dict[UUID, str], str]:
+) -> tuple[
+    dict[str, AgentResponse],
+    AgentResponse | None,
+    dict[str, UUID],
+    dict[UUID, str],
+    str,
+    dict[str, Exception],
+]:
     """Stage one concurrently, then the skeptic over stage one's conclusions."""
     projection = prepared.projection
     context = (
@@ -377,30 +306,51 @@ def _run_agents(
             )
             for role, question in ANALYST_QUESTIONS.items()
         }
-        stage_one = {role: future.result() for role, future in futures.items()}
+        # One analyst failing is a missing voice, not a lost run. Failures are carried out of the
+        # thread pool rather than raised here, so the surviving roles still reach the record and
+        # each absence is written down as an advisory fallback once a transaction is open again.
+        stage_one: dict[str, AgentResponse] = {}
+        failures: dict[str, Exception] = {}
+        for role, future in futures.items():
+            try:
+                stage_one[role] = future.result()
+            # Recorded per role below; re-raised only if every analyst failed.
+            except Exception as exc:
+                failures[role] = exc
+    if not stage_one:
+        raise RuntimeError("every research analyst failed; nothing to review")
 
     peer_document, peer_ids, peer_excerpts = _peer_evidence(prepared.run_id, stage_one)
-    skeptic = provider.analyze(
-        role=SKEPTIC_ROLE,
-        question=context + SKEPTIC_QUESTION,
-        evidence={**prepared.evidence, **peer_excerpts},
-        directive=SKEPTIC_DIRECTIVE,
-    )
-    return stage_one, skeptic, peer_ids, peer_excerpts, peer_document
+    skeptic: AgentResponse | None = None
+    try:
+        skeptic = provider.analyze(
+            role=SKEPTIC_ROLE,
+            question=context + SKEPTIC_QUESTION,
+            evidence={**prepared.evidence, **peer_excerpts},
+            directive=SKEPTIC_DIRECTIVE,
+        )
+    # A review that did not happen must never be implied by a verdict.
+    except Exception as exc:
+        failures[SKEPTIC_ROLE] = exc
+    return stage_one, skeptic, peer_ids, peer_excerpts, peer_document, failures
 
 
 def _persist(
     prepared: _PreparedRun,
     stage_one: dict[str, AgentResponse],
-    skeptic: AgentResponse,
+    skeptic: AgentResponse | None,
     peer_ids: dict[str, UUID],
     peer_excerpts: dict[UUID, str],
     peer_document: str,
-    verdict: ResearchVerdict,
+    verdict: ResearchVerdict | None,
+    failures: dict[str, Exception],
+    provider: DeepSeekResearchClient,
     at: datetime,
 ) -> tuple[int, int]:
     projection = prepared.projection
-    responses: dict[str, AgentResponse] = {**stage_one, SKEPTIC_ROLE: skeptic}
+    responses: dict[str, AgentResponse] = dict(stage_one)
+    if skeptic is not None:
+        responses[SKEPTIC_ROLE] = skeptic
     with connect() as conn, conn.cursor() as cur:
         peer_hash = hashlib.sha256(peer_document.encode()).hexdigest()
         peer_document_id = uuid5(NAMESPACE_URL, f"courtside-edge:document:{peer_hash}")
@@ -433,7 +383,7 @@ def _persist(
             )
 
         analyses = claims = 0
-        for role, response in [*sorted(stage_one.items()), (SKEPTIC_ROLE, skeptic)]:
+        for role, response in sorted(responses.items(), key=lambda item: item[0] == SKEPTIC_ROLE):
             analysis = response.analysis
             analysis_id = uuid4()
             cited = sorted(
@@ -462,47 +412,6 @@ def _persist(
             )
             analyses += 1
             for claim in analysis.claims:
-        # `enabled=True` because a provider was supplied: the Advisor's usual key check answers
-        # "should we call at all", and that question is already settled by the time a client is
-        # in hand. A missing key still fails every call, and is recorded as such.
-        advisor = Advisor(cur, client=provider, enabled=True)
-        try:
-            with ThreadPoolExecutor(max_workers=len(AGENT_QUESTIONS)) as executor:
-                futures = {
-                    role: executor.submit(
-                        provider.analyze,
-                        role=role,
-                        question=question_context + question,
-                        evidence=evidence,
-                    )
-                    for role, question in AGENT_QUESTIONS.items()
-                }
-                # One role failing is a missing voice, not a lost run. Each result is collected
-                # separately and its failure recorded as an advisory fallback, so a provider
-                # hiccup during the fourth of five calls no longer discards the other four.
-                generated: dict[str, Any] = {}
-                for role, future in futures.items():
-                    result = advisor.attempt(
-                        task="research_analysis",
-                        subject=f"{projection['full_name']} {projection['prop_type']} {role}",
-                        call=future.result,
-                        now=at,
-                    )
-                    if result is not None:
-                        generated[role] = result
-            if not generated:
-                raise RuntimeError("every research agent failed; nothing to record")
-            for role in generated:
-                analysis, _, response_hash = generated[role]
-                analysis_id = uuid4()
-                cited = sorted(
-                    {
-                        evidence_id
-                        for claim in analysis.claims
-                        for evidence_id in claim.evidence_ids + claim.contradicting_evidence_ids
-                    },
-                    key=str,
-                )
                 cur.execute(
                     """INSERT INTO wnba.research_claims
                        (claim_id,analysis_id,subject_id,predicate,value,confidence,evidence_ids,
@@ -524,31 +433,46 @@ def _persist(
                 )
                 claims += 1
 
-        cur.execute(
-            """INSERT INTO wnba.research_verdicts
+        # Every call is accounted for, including the ones that never came back. `attempt` runs
+        # the supplied callable, so successes are handed back pre-resolved and failures re-raise
+        # what was already caught -- the recording is identical, but no provider call happens
+        # inside this transaction.
+        advisor = Advisor(cur, client=provider, enabled=True)
+        for role in sorted({*responses, *failures}):
+            subject = f"{projection['full_name']} {projection['prop_type']} {role}"
+            recorded = responses.get(role)
+            advisor.attempt(
+                task="research_analysis",
+                subject=subject,
+                call=_replay(recorded, failures.get(role)),
+                now=at,
+            )
+
+        if verdict is not None:
+            cur.execute(
+                """INSERT INTO wnba.research_verdicts
                (verdict_id,research_run_id,caution,agreement,total_claims,contested_claims,
                 contested_predicates,risk_flags,skeptic_confidence,rationale)
                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
-            (
-                uuid4(),
-                prepared.run_id,
-                verdict.caution,
-                verdict.agreement,
-                verdict.total_claims,
-                verdict.contested_claims,
-                Jsonb(list(verdict.contested_predicates)),
-                Jsonb(list(verdict.risk_flags)),
-                verdict.skeptic_confidence,
-                verdict.rationale,
-            ),
-        )
+                (
+                    uuid4(),
+                    prepared.run_id,
+                    verdict.caution,
+                    verdict.agreement,
+                    verdict.total_claims,
+                    verdict.contested_claims,
+                    Jsonb(list(verdict.contested_predicates)),
+                    Jsonb(list(verdict.risk_flags)),
+                    verdict.skeptic_confidence,
+                    verdict.rationale,
+                ),
+            )
 
         usages = [response.usage for response in responses.values()]
-        complete = all(usage is not None for usage in usages)
-        prompt_tokens = sum(u.prompt_tokens for u in usages if u is not None) if complete else None
-        completion_tokens = (
-            sum(u.completion_tokens for u in usages if u is not None) if complete else None
-        )
+        counted = [u for u in usages if u is not None and u.prompt_tokens is not None]
+        complete = bool(usages) and len(counted) == len(usages)
+        prompt_tokens = sum(u.prompt_tokens or 0 for u in counted) if complete else None
+        completion_tokens = sum(u.completion_tokens or 0 for u in counted) if complete else None
         cur.execute(
             """UPDATE wnba.research_runs
                SET status='complete',completed_at=%s,agent_calls=%s,provider_calls=%s,
@@ -565,6 +489,28 @@ def _persist(
         )
         conn.commit()
     return analyses, claims
+
+
+def _replay(
+    response: AgentResponse | None,
+    failure: Exception | None,
+) -> Callable[[], tuple[AgentAnalysis, str, str]]:
+    """Present an already-finished call in the shape ``Advisor.attempt`` expects.
+
+    The advisor's contract is that it runs the call and records what happened. Here the call has
+    already happened, outside any transaction, so this hands back the settled outcome -- the
+    result for a role that answered, the original exception for one that did not. The recording
+    is identical either way; only the timing moved.
+    """
+
+    def replay() -> tuple[AgentAnalysis, str, str]:
+        if failure is not None:
+            raise failure
+        if response is None:
+            raise RuntimeError("no response and no recorded failure")
+        return response.analysis, response.prompt_sha256, response.response_sha256
+
+    return replay
 
 
 def _mark_failed(run_id: UUID, error: str) -> None:
@@ -590,14 +536,23 @@ def run_projection_research(
     if isinstance(prepared, ResearchBatch):
         return prepared
     try:
-        stage_one, skeptic, peer_ids, peer_excerpts, peer_document = _run_agents(prepared, provider)
+        stage_one, skeptic, peer_ids, peer_excerpts, peer_document, failures = _run_agents(
+            prepared, provider
+        )
         stage_one_analyses: dict[str, AgentAnalysis] = {
             role: response.analysis for role, response in stage_one.items()
         }
-        verdict = synthesize(
-            analyses=stage_one_analyses,
-            skeptic=skeptic.analysis,
-            peer_evidence=peer_ids,
+        # No skeptic, no verdict. A verdict computed without the review would report every claim
+        # as uncontested, which is indistinguishable from a file nobody challenged -- the one
+        # direction this must never fail in.
+        verdict = (
+            synthesize(
+                analyses=stage_one_analyses,
+                skeptic=skeptic.analysis,
+                peer_evidence=peer_ids,
+            )
+            if skeptic is not None
+            else None
         )
         analyses, claims = _persist(
             prepared,
@@ -607,6 +562,8 @@ def run_projection_research(
             peer_excerpts,
             peer_document,
             verdict,
+            failures,
+            provider,
             at,
         )
     except Exception as exc:

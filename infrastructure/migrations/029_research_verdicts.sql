@@ -1,4 +1,4 @@
--- 028_research_verdicts.sql
+-- 029_research_verdicts.sql
 -- Record what a research run concluded, and what it cost to find out.
 --
 -- The verdict is computed in Python from the stored claims and citations, never by the provider.

@@ -17,7 +17,7 @@ from uuid import UUID, uuid4
 
 import pytest
 from wnba_services.research_agents import workflow
-from wnba_services.research_agents.deepseek import AgentAnalysis, AgentResponse, TokenUsage
+from wnba_services.research_agents.deepseek import AgentAnalysis, AgentResponse, Usage
 from wnba_services.research_agents.workflow import (
     ANALYST_QUESTIONS,
     SKEPTIC_ROLE,
@@ -29,6 +29,7 @@ from tests.fixtures.fake_db import FakeDatabase
 NOW = datetime(2026, 8, 5, 18, 0, tzinfo=UTC)
 PROJECTION_ID = uuid4()
 PLAYER_ID = uuid4()
+GAME_ID = uuid4()
 
 
 def projection_row() -> dict[str, Any]:
@@ -46,6 +47,13 @@ def projection_row() -> dict[str, Any]:
         "stddev": 5.2,
         "model_disagreement": 0.11,
         "data_quality_score": 0.82,
+        # The shared evidence builder also reads these; a projection row without them is not a
+        # row this pipeline ever sees.
+        "game_id": GAME_ID,
+        "generated_at": NOW - timedelta(minutes=5),
+        "probability_over": 0.54,
+        "over_multiplier": 1.9,
+        "under_multiplier": 1.9,
         "features": {
             "injury_designation": "questionable",
             "expected_minutes": 28.4,
@@ -72,6 +80,8 @@ class ScriptedProvider:
     def __init__(self, skeptic_contradicts: list[UUID] | None = None) -> None:
         self.seen: list[tuple[str, set[UUID]]] = []
         self._skeptic_contradicts = skeptic_contradicts or []
+        # The advisory recorder reads the client's last-call usage when it writes its row.
+        self.usage = Usage(prompt_tokens=100, completion_tokens=20, attempts=1)
 
     def analyze(
         self,
@@ -104,7 +114,7 @@ class ScriptedProvider:
             analysis=analysis,
             prompt_sha256="a" * 64,
             response_sha256="b" * 64,
-            usage=TokenUsage(prompt_tokens=100, completion_tokens=20),
+            usage=Usage(prompt_tokens=100, completion_tokens=20),
             attempts=1,
         )
 
@@ -200,17 +210,55 @@ def test_an_abandoned_run_is_failed_and_the_projection_retried(
     assert provider.seen != []
 
 
-def test_a_provider_failure_marks_the_run_failed(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_a_total_provider_failure_marks_the_run_failed(monkeypatch: pytest.MonkeyPatch) -> None:
     class Broken(ScriptedProvider):
         def analyze(self, **kwargs: Any) -> AgentResponse:
             raise RuntimeError("DeepSeek did not respond after 3 attempts")
 
     db = database()
-    with pytest.raises(RuntimeError, match="did not respond"):
+    with pytest.raises(RuntimeError, match="every research analyst failed"):
         run(db, Broken(), monkeypatch)
-    failed = db.params_for("SET status='failed'")
-    assert failed and "did not respond" in str(failed[-1][1])
+    assert db.ran("SET status='failed'")
     assert not db.ran("SET status='complete'")
+
+
+def test_one_failed_analyst_is_a_missing_voice_not_a_lost_run(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The other three answers are already paid for; discarding them buys nothing."""
+
+    class OneDown(ScriptedProvider):
+        def analyze(self, **kwargs: Any) -> AgentResponse:
+            if kwargs["role"] == "rotation":
+                raise RuntimeError("DeepSeek did not respond after 3 attempts")
+            return super().analyze(**kwargs)
+
+    db = database()
+    batch = run(db, OneDown(), monkeypatch)
+    assert db.ran("SET status='complete'")
+    # Three analysts plus the skeptic; the absent one is recorded, not silently dropped.
+    assert batch.analyses == len(ANALYST_QUESTIONS)
+    advisories = db.params_for("INSERT INTO wnba.model_advisories")
+    assert len(advisories) == len(ANALYST_QUESTIONS) + 1
+    assert any("rotation" in str(p[2]) and p[7] == "fallback" for p in advisories)
+
+
+def test_a_failed_skeptic_leaves_no_verdict_rather_than_a_flattering_one(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An uncontested verdict and an unreviewed one are indistinguishable once written down."""
+
+    class NoSkeptic(ScriptedProvider):
+        def analyze(self, **kwargs: Any) -> AgentResponse:
+            if kwargs["role"] == SKEPTIC_ROLE:
+                raise RuntimeError("DeepSeek did not respond after 3 attempts")
+            return super().analyze(**kwargs)
+
+    db = database()
+    batch = run(db, NoSkeptic(), monkeypatch)
+    assert db.ran("SET status='complete'")
+    assert batch.verdict is None
+    assert not db.ran("INSERT INTO wnba.research_verdicts")
 
 
 def test_research_is_refused_once_the_market_has_locked(monkeypatch: pytest.MonkeyPatch) -> None:

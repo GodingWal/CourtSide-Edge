@@ -71,7 +71,6 @@ def build(recorder: Recorder, **kwargs: Any) -> tuple[DeepSeekResearchClient, li
     provider = DeepSeekResearchClient(
         api_key="test",
         transport=httpx.MockTransport(recorder),
-        backoff_seconds=0.0,
         sleep=slept.append,
         **kwargs,
     )
@@ -158,11 +157,13 @@ def test_transport_failure_is_retried() -> None:
 def test_retries_stop_at_the_configured_limit() -> None:
     recorder = Recorder(httpx.Response(503, json={"error": "unavailable"}))
     provider, slept = build(recorder, max_attempts=3)
-    with pytest.raises(RuntimeError, match="after 3 attempts"):
+    # The provider's own error surfaces rather than a wrapper: "503" is the fact worth keeping.
+    with pytest.raises(httpx.HTTPStatusError):
         provider.analyze(role="market", question="Fresh?", evidence={uuid4(): "Quote."})
     assert recorder.calls == 3
     # Backoff is applied between attempts, never after the last one.
     assert len(slept) == 2
+    assert provider.usage.retry_reasons == ["HTTP 503", "HTTP 503"]
 
 
 def test_a_client_error_is_not_retried() -> None:
@@ -221,9 +222,12 @@ def test_reported_token_usage_is_captured() -> None:
 
 
 def test_unreported_token_usage_is_unknown_rather_than_zero() -> None:
+    """Zero is a measurement. A provider that said nothing has not made one."""
     evidence_id = uuid4()
     recorder = Recorder(response(analysis_body(evidence_id)))
     result = client(recorder).analyze(
         role="availability", question="Known?", evidence={evidence_id: "Report."}
     )
-    assert result.usage is None
+    assert result.usage is not None
+    assert result.usage.prompt_tokens is None
+    assert result.usage.completion_tokens is None
