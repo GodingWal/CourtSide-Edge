@@ -28,6 +28,19 @@ STATUS_MAP = {
     "available": "available",
 }
 
+# The official report prints its own team abbreviations, which differ from the ones the
+# schedule feed uses for the same franchises. Every report row resolved to zero games until
+# this map existed -- LVA@IND never matches the LV@IND row in wnba.games.
+TEAM_ABBR_MAP = {
+    "LVA": "LV",
+    "LAS": "LA",
+    "PHO": "PHX",
+    "NYL": "NY",
+    "WAS": "WSH",
+    "GSV": "GS",
+    "PDX": "POR",
+}
+
 
 @dataclass(frozen=True)
 class InjuryIngestResult:
@@ -57,6 +70,7 @@ def _resolve_game(cur: psycopg.Cursor[dict[str, Any]], injury: OfficialInjury) -
     # unresolvable, and unresolved rows already have a home: entity_resolution_failures.
     if len(teams) != 2 or not injury.game_date.strip():
         return None
+    away, home = (TEAM_ABBR_MAP.get(team.strip(), team.strip()) for team in teams)
     cur.execute(
         """SELECT g.game_id FROM wnba.games g
            JOIN wnba.teams a ON a.team_id=g.away_team_id
@@ -64,7 +78,7 @@ def _resolve_game(cur: psycopg.Cursor[dict[str, Any]], injury: OfficialInjury) -
            WHERE (g.scheduled_tipoff AT TIME ZONE 'America/New_York')::date=%s::date
              AND a.abbreviation=%s AND h.abbreviation=%s
            ORDER BY g.scheduled_tipoff LIMIT 2""",
-        (injury.game_date, teams[0], teams[1]),
+        (injury.game_date, away, home),
     )
     rows = cur.fetchall()
     return UUID(str(rows[0]["game_id"])) if len(rows) == 1 else None
