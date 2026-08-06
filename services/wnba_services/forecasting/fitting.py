@@ -1,194 +1,200 @@
-"""The job that turns settled episodes back into model parameters.
-
-This is the half of the learning loop that was missing. Settlement scored every paper forecast,
-evaluation measured the calibration error and opened drift incidents about it, and then the
-pipeline forecast the next night using exactly the parameters that had just been shown to be
-wrong. Measuring a bias is not correcting it.
-
-Run after settlement. It fits three things per market, and refuses all three when the evidence is
-thin or the improvement does not survive cross-fitting:
-
-* the calibration map, on raw ``P(over)`` against whether the over actually landed;
-* the ensemble weights, on each component's ``P(over)`` against the same outcome;
-* the edge shrinkage factor, on the selected side's probability against whether it hit.
-
-Every market also contributes to a pooled fit under :data:`DEFAULT_MARKET`, which is what a thin
-market falls back to. Three-pointers and rebounds genuinely miscalibrate differently, so fitting
-per market is right -- but a market with forty settled episodes is better served by the pooled
-correction than by its own noise.
-"""
+"""Nightly refit of calibration maps, ensemble weights, and edge shrinkage."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, datetime
-from typing import Any
+from datetime import datetime, timedelta, timezone
 
-from wnba_store.db import connect
+from ..database import get_cursor
+from .calibration import CalibrationPoint, fit_calibration_map
+from .edge_shrinkage import EdgeShrinkage
+from .line_bias import fit_line_bias
+from .parameters import DEFAULT_MARKET, store_fitted_parameters
 
-from wnba_services.forecasting.calibration import fit_calibration_map
-from wnba_services.forecasting.parameters import DEFAULT_MARKET, store_fitted_parameters
-from wnba_services.forecasting.scoring import COMPONENT_NAMES
-from wnba_services.forecasting.selection import EdgeShrinkage
-from wnba_services.forecasting.weights import fit_ensemble_weights
-from wnba_services.learning_loop.independence import dedupe_latest_per_market, summarise_sample
-
-__all__ = ["FittingBatch", "fit_model_parameters"]
+DEFAULT_LOOKBACK_DAYS = 180
+DEFAULT_MINIMUM_SAMPLE = 30
 
 
 @dataclass(frozen=True)
 class FittingBatch:
-    episodes: int
-    independent_markets: int
-    independent_games: int
-    calibration_maps: int
-    weight_sets: int
-    shrinkage_sets: int
-    fitted_calibration: int
-    fitted_weights: int
+    calibration_maps: int = 0
+    weight_sets: int = 0
+    shrinkage_sets: int = 0
+    line_bias_sets: int = 0
 
 
-def _over_outcome(side: str, hit: bool) -> float:
-    """Restate a settled result as "did the over land", whichever side was selected."""
-    return float(hit) if side == "over" else float(not hit)
+def fit_model_parameters(
+    *,
+    at: datetime | None = None,
+    lookback_days: int = DEFAULT_LOOKBACK_DAYS,
+    minimum_sample: int = DEFAULT_MINIMUM_SAMPLE,
+) -> FittingBatch:
+    at = at or datetime.now(timezone.utc)
+    since = at - timedelta(days=lookback_days)
+    calibration_points: dict[str, list[CalibrationPoint]] = {}
+    weight_rows: dict[str, list[tuple[dict[str, float], float]]] = {}
+    shrinkage_points: dict[str, list[tuple[float, float, float]]] = {}
+    bias_points: dict[str, list[tuple[float, float, float]]] = {}
 
-
-def fit_model_parameters(*, now: datetime | None = None) -> FittingBatch:
-    """Refit calibration, weights and shrinkage from every scoreable settled episode."""
-    at = now or datetime.now(UTC)
-    episodes = 0
-    calibration_maps = weight_sets = shrinkage_sets = 0
-    fitted_calibration = fitted_weights = 0
-
-    with connect() as conn, conn.cursor() as cur:
-        # Voids and pushes are excluded at the source. A void is a coach's rotation decision and
-        # a push is an outcome that resolved neither way; fitting parameters to either would be
-        # teaching the model from events that carry no information about forecast quality.
+    with get_cursor() as cur:
         cur.execute(
-            """SELECT d.prop_type,d.side,o.hit,d.predicted_probability,
-                      coalesce(f.probability_over_raw,f.probability_over) AS raw_over,
-                      d.episode_id,d.player_id,d.game_id,d.forecast_timestamp
-               FROM wnba.decision_episodes d
-               JOIN wnba.episode_outcomes o ON o.episode_id=d.episode_id
-               LEFT JOIN wnba.stat_forecasts f
-                 ON f.quote_id=d.quote_id AND f.model_run_id=d.model_run_id
-               WHERE NOT o.was_voided AND NOT o.was_push
-               ORDER BY d.forecast_timestamp"""
+            """
+            SELECT d.market, d.side, d.confidence, d.projected_prob,
+                   d.model_breakdown, d.edge, d.breakeven_prob,
+                   d.line, d.projected_mean,
+                   o.actual_stat, o.hit
+            FROM wnba.decision_episodes d
+            JOIN wnba.episode_outcomes o ON o.episode_id = d.id
+            WHERE d.decided_at >= %s AND d.decided_at < %s
+            ORDER BY d.decided_at
+            """,
+            (since, at),
         )
-        # Fitting on every revision of a market would weight that market by how many times the
-        # board happened to move, and would let a handful of heavily-re-forecast games dominate
-        # the calibration map. One row per market, the last one issued.
-        all_settled = cur.fetchall()
-        settled = dedupe_latest_per_market(all_settled)
-        episodes = len(settled)
-        shape = summarise_sample(all_settled)
-
-        calibration_points: dict[str, list[tuple[float, float]]] = {}
-        shrinkage_points: dict[str, list[tuple[float, float]]] = {}
-        for row in settled:
-            market = str(row["prop_type"])
-            side = str(row["side"])
-            hit = bool(row["hit"])
-            if row["raw_over"] is not None:
-                point = (float(str(row["raw_over"])), _over_outcome(side, hit))
-                calibration_points.setdefault(market, []).append(point)
-                calibration_points.setdefault(DEFAULT_MARKET, []).append(point)
-            selected = (float(str(row["predicted_probability"])), float(hit))
-            shrinkage_points.setdefault(market, []).append(selected)
-            shrinkage_points.setdefault(DEFAULT_MARKET, []).append(selected)
-
-        cur.execute(
-            """SELECT d.prop_type,d.side,o.hit,d.episode_id,d.player_id,d.game_id,
-                      d.forecast_timestamp,fc.component_name,fc.probability_over
-               FROM wnba.forecast_components fc
-               JOIN wnba.stat_forecasts f ON f.projection_id=fc.projection_id
-               JOIN wnba.decision_episodes d
-                 ON d.quote_id=f.quote_id AND d.model_run_id=f.model_run_id
-               JOIN wnba.episode_outcomes o ON o.episode_id=d.episode_id
-               WHERE NOT o.was_voided AND NOT o.was_push"""
-        )
-        # Components arrive one row per (episode, component); fold them back into one record per
-        # episode, then collapse repeated forecasts of the same market exactly as above. Skipping
-        # the second step would let a market that happened to be re-forecast forty times cast
-        # forty votes on the weight vector.
-        by_episode: dict[str, dict[str, Any]] = {}
-        for row in cur.fetchall():
-            episode_id = str(row["episode_id"])
-            entry = by_episode.setdefault(
-                episode_id,
-                {
-                    "player_id": row["player_id"],
-                    "game_id": row["game_id"],
-                    "prop_type": row["prop_type"],
-                    "forecast_timestamp": row["forecast_timestamp"],
-                    "outcome": _over_outcome(str(row["side"]), bool(row["hit"])),
-                    "components": {},
-                },
-            )
-            entry["components"][str(row["component_name"])] = float(str(row["probability_over"]))
-
-        weight_points: dict[str, list[tuple[dict[str, float], float]]] = {}
-        for entry in dedupe_latest_per_market(list(by_episode.values())):
-            components = entry["components"]
-            if not set(COMPONENT_NAMES) <= set(components):
+        for (
+            market,
+            side,
+            confidence,
+            projected_prob,
+            model_breakdown,
+            edge,
+            breakeven_prob,
+            line,
+            projected_mean,
+            actual_stat,
+            hit,
+        ) in cur.fetchall():
+            if confidence is None or projected_prob is None:
                 continue
-            market = str(entry["prop_type"])
-            observation = (components, float(entry["outcome"]))
-            weight_points.setdefault(market, []).append(observation)
-            weight_points.setdefault(DEFAULT_MARKET, []).append(observation)
+            if side == "over":
+                probability = float(confidence)
+            elif side == "under":
+                probability = 1.0 - float(confidence)
+            else:
+                probability = float(projected_prob)
+            point = CalibrationPoint(probability=probability, hit=bool(hit))
+            calibration_points.setdefault(market, []).append(point)
+            calibration_points.setdefault(DEFAULT_MARKET, []).append(point)
+
+            if edge is not None and breakeven_prob is not None:
+                shrinkage_points.setdefault(market, []).append(
+                    (float(edge), float(breakeven_prob), float(bool(hit)))
+                )
+                shrinkage_points.setdefault(DEFAULT_MARKET, []).append(
+                    (float(edge), float(breakeven_prob), float(bool(hit)))
+                )
+
+            if line is not None and projected_mean is not None and actual_stat is not None:
+                triple = (float(line), float(projected_mean), float(actual_stat))
+                bias_points.setdefault(market, []).append(triple)
+                bias_points.setdefault(DEFAULT_MARKET, []).append(triple)
+
+        cur.execute(
+            """
+            SELECT market, probabilities, hit
+            FROM wnba.backtest_results
+            WHERE created_at >= %s AND created_at < %s
+            ORDER BY created_at
+            """,
+            (since, at),
+        )
+        for market, probabilities, hit in cur.fetchall():
+            if not probabilities:
+                continue
+            parsed = {str(k): float(v) for k, v in probabilities.items() if v is not None}
+            if not parsed:
+                continue
+            weight_rows.setdefault(market, []).append((parsed, float(bool(hit))))
+            weight_rows.setdefault(DEFAULT_MARKET, []).append((parsed, float(bool(hit))))
+
+        batch = FittingBatch()
+        maps = 0
+        weights_count = 0
+        shrinkage_count = 0
+        bias_count = 0
 
         for market, points in sorted(calibration_points.items()):
-            fitted = fit_calibration_map(market, points)
+            fitted = fit_calibration_map(points, minimum_sample=minimum_sample)
             store_fitted_parameters(
                 cur,
                 kind="calibration_map",
                 market=market,
                 at=at,
-                payload=fitted.to_payload(),
+                payload=fitted.bins,
                 sample_size=fitted.sample_size,
-                log_loss_gain=fitted.fitted_log_loss_gain,
-                is_fitted=not fitted.is_identity,
+                is_fitted=fitted.is_fitted,
             )
-            calibration_maps += 1
-            fitted_calibration += int(not fitted.is_identity)
+            maps += 1
 
-        for market, observations in sorted(weight_points.items()):
-            fitted_weight = fit_ensemble_weights(
-                market, observations, component_names=list(COMPONENT_NAMES)
-            )
+        for market, rows in sorted(weight_rows.items()):
+            weights = _fit_weights(rows, minimum_sample=minimum_sample)
             store_fitted_parameters(
                 cur,
                 kind="ensemble_weights",
                 market=market,
                 at=at,
-                payload=fitted_weight.to_payload(),
-                sample_size=fitted_weight.sample_size,
-                log_loss_gain=fitted_weight.log_loss_gain,
-                is_fitted=fitted_weight.is_fitted,
+                payload=weights,
+                sample_size=len(rows),
+                is_fitted=bool(weights),
             )
-            weight_sets += 1
-            fitted_weights += int(fitted_weight.is_fitted)
+            weights_count += 1
 
         for market, points in sorted(shrinkage_points.items()):
-            shrinkage = EdgeShrinkage.from_settled(points)
+            shrinkage = EdgeShrinkage.from_settled(points, minimum_sample=minimum_sample)
             store_fitted_parameters(
                 cur,
                 kind="edge_shrinkage",
                 market=market,
                 at=at,
-                payload=shrinkage.to_payload(),
+                payload={
+                    "shrink": shrinkage.shrink,
+                    "sample_size": shrinkage.sample_size,
+                    "fitted": shrinkage.fitted,
+                },
                 sample_size=shrinkage.sample_size,
-                is_fitted=shrinkage.is_fitted,
+                is_fitted=shrinkage.fitted,
             )
-            shrinkage_sets += 1
+            shrinkage_count += 1
+
+        for market, triples in sorted(bias_points.items()):
+            line_bias = fit_line_bias(triples, market=market)
+            store_fitted_parameters(
+                cur,
+                kind="line_bias",
+                market=market,
+                at=at,
+                payload=line_bias.to_payload(),
+                sample_size=len(triples),
+                is_fitted=line_bias.is_fitted,
+            )
+            bias_count += 1
 
     return FittingBatch(
-        episodes=episodes,
-        independent_markets=shape.markets,
-        independent_games=shape.games,
-        calibration_maps=calibration_maps,
-        weight_sets=weight_sets,
-        shrinkage_sets=shrinkage_sets,
-        fitted_calibration=fitted_calibration,
-        fitted_weights=fitted_weights,
+        calibration_maps=maps,
+        weight_sets=weights_count,
+        shrinkage_sets=shrinkage_count,
+        line_bias_sets=bias_count,
     )
+
+
+def _fit_weights(
+    rows: list[tuple[dict[str, float], float]],
+    *,
+    minimum_sample: int,
+) -> dict[str, float]:
+    if len(rows) < minimum_sample:
+        return {}
+    scores: dict[str, list[float]] = {}
+    for probabilities, hit in rows:
+        for name, probability in probabilities.items():
+            scores.setdefault(name, []).append((probability - hit) ** 2)
+    if not scores:
+        return {}
+    inverse = {
+        name: 1.0 / max(sum(values) / len(values), 1e-6)
+        for name, values in scores.items()
+        if values
+    }
+    total = sum(inverse.values())
+    if total <= 0:
+        return {}
+    return {name: value / total for name, value in sorted(inverse.items())}
