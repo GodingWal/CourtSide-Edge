@@ -155,6 +155,89 @@ def test_box_score_schema_change_fails_closed() -> None:
         raise AssertionError("schema drift was silently accepted")
 
 
+def _event_with_odds(odds: object) -> dict[str, object]:
+    competition: dict[str, object] = {
+        "competitors": [
+            {
+                "homeAway": "home",
+                "score": "0",
+                "team": {
+                    "id": "5",
+                    "abbreviation": "IND",
+                    "displayName": "Indiana Fever",
+                    "location": "Indiana",
+                },
+            },
+            {
+                "homeAway": "away",
+                "score": "0",
+                "team": {
+                    "id": "17",
+                    "abbreviation": "LV",
+                    "displayName": "Las Vegas Aces",
+                    "location": "Las Vegas",
+                },
+            },
+        ]
+    }
+    if odds is not None:
+        competition["odds"] = odds
+    return {
+        "events": [
+            {
+                "id": "401857119",
+                "date": "2026-08-06T23:00Z",
+                "status": {"period": 0, "type": {"state": "pre"}},
+                "competitions": [competition],
+            }
+        ]
+    }
+
+
+def test_scoreboard_odds_parse_into_a_game_market_snapshot() -> None:
+    adapter = EspnWnbaAdapter()
+    games = adapter.parse_scoreboard(
+        _event_with_odds(
+            [
+                {
+                    "provider": {"displayName": "DraftKings"},
+                    "details": "IND -1.5",
+                    "overUnder": 192.5,
+                    "spread": -1.5,
+                }
+            ]
+        )
+    )
+    assert len(games) == 1
+    odds = games[0].odds
+    assert odds is not None
+    assert odds.provider == "DraftKings"
+    assert odds.details == "IND -1.5"
+    assert odds.home_spread == -1.5
+    assert odds.over_under == 192.5
+
+
+def test_a_scoreboard_without_odds_is_normal_not_an_error() -> None:
+    """ESPN drops the block on some events and some final games; absence must not fail."""
+    adapter = EspnWnbaAdapter()
+    games = adapter.parse_scoreboard(_event_with_odds(None))
+    assert games[0].odds is None
+    games = adapter.parse_scoreboard(_event_with_odds([]))
+    assert games[0].odds is None
+
+
+def test_a_partial_odds_block_keeps_what_it_has() -> None:
+    adapter = EspnWnbaAdapter()
+    games = adapter.parse_scoreboard(
+        _event_with_odds([{"provider": {"displayName": "DraftKings"}, "overUnder": 171.5}])
+    )
+    odds = games[0].odds
+    assert odds is not None
+    assert odds.home_spread is None
+    assert odds.details is None
+    assert odds.over_under == 171.5
+
+
 def test_a_date_with_live_games_is_never_marked_complete() -> None:
     """Regression: a partially-played date must stay open for re-ingest.
 
