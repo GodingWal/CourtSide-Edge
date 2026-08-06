@@ -20,6 +20,7 @@ from uuid import uuid4
 from psycopg.types.json import Jsonb
 
 from wnba_services.forecasting.calibration import IDENTITY, CalibrationMap
+from wnba_services.forecasting.line_bias import IDENTITY_BIAS, LineBandBias
 from wnba_services.forecasting.selection import EdgeShrinkage
 from wnba_services.forecasting.weights import EnsembleWeights
 
@@ -55,6 +56,7 @@ class FittedParameters:
     calibration: dict[str, CalibrationMap] = field(default_factory=dict)
     weights: dict[str, EnsembleWeights] = field(default_factory=dict)
     shrinkage: dict[str, EdgeShrinkage] = field(default_factory=dict)
+    line_bias: dict[str, LineBandBias] = field(default_factory=dict)
 
     def calibration_for(self, market: str) -> CalibrationMap:
         found = self.calibration.get(market) or self.calibration.get(DEFAULT_MARKET)
@@ -67,6 +69,10 @@ class FittedParameters:
     def shrinkage_for(self, market: str) -> EdgeShrinkage:
         found = self.shrinkage.get(market) or self.shrinkage.get(DEFAULT_MARKET)
         return found or EdgeShrinkage.cold_start()
+
+    def line_bias_for(self, market: str) -> LineBandBias:
+        found = self.line_bias.get(market) or self.line_bias.get(DEFAULT_MARKET)
+        return found or IDENTITY_BIAS
 
     @property
     def is_empty(self) -> bool:
@@ -82,6 +88,7 @@ def load_fitted_parameters(cur: Cursor) -> FittedParameters:
     calibration: dict[str, CalibrationMap] = {}
     weights: dict[str, EnsembleWeights] = {}
     shrinkage: dict[str, EdgeShrinkage] = {}
+    line_bias: dict[str, LineBandBias] = {}
     for row in cur.fetchall():
         kind = str(row["kind"])
         market = str(row["market"])
@@ -96,7 +103,11 @@ def load_fitted_parameters(cur: Cursor) -> FittedParameters:
                 sample_size=int(payload.get("sample_size", 0)),
                 is_fitted=bool(payload.get("is_fitted", False)),
             )
-    return FittedParameters(calibration=calibration, weights=weights, shrinkage=shrinkage)
+        elif kind == "line_bias":
+            line_bias[market] = LineBandBias.from_payload(payload)
+    return FittedParameters(
+        calibration=calibration, weights=weights, shrinkage=shrinkage, line_bias=line_bias
+    )
 
 
 def store_fitted_parameters(

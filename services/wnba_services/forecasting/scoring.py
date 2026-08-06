@@ -51,6 +51,7 @@ from wnba_services.forecasting.distributions import (
     pmf_median,
     pmf_stddev,
 )
+from wnba_services.forecasting.line_bias import IDENTITY_BIAS, LineBandBias
 from wnba_services.forecasting.minutes import (
     MAX_MINUTES,
     GameObservation,
@@ -230,6 +231,7 @@ class ScoringInputs:
     prior_season: PriorSeasonRate | None = None
     weights: EnsembleWeights = field(default_factory=EnsembleWeights.prior)
     calibration: CalibrationMap = IDENTITY
+    line_bias: LineBandBias = IDENTITY_BIAS
     simulations: int = _DEFAULT_SIMULATIONS
     pool: str = "log"
 
@@ -632,6 +634,17 @@ def score_prop(inputs: ScoringInputs) -> ScoredForecast:
     player_state_mean = minutes * _player_state_rate(inputs) * multiplier
     opportunity_mean = opportunity_conversion_expectation(inputs, minutes) * multiplier
     market_mean = _market_mean(inputs, dispersion, length)
+
+    # Measured band bias, applied to the model side only: the shrinkage that protects thin
+    # histories systematically pulls high-line (star) projections toward the pack, and settled
+    # outcomes show it. The market component is untouched -- the operator already knows the
+    # line. The empirical PMF is built from realised counts rather than a mean and carries the
+    # same histories the bias was measured against, so it is left alone as well.
+    bias = inputs.line_bias.bias_for(float(inputs.line))
+    if bias:
+        hierarchical_mean = max(0.0, hierarchical_mean + bias)
+        player_state_mean = max(0.0, player_state_mean + bias)
+        opportunity_mean = max(0.0, opportunity_mean + bias)
 
     empirical = _empirical_pmf(inputs, adjustments, dispersion, length)
     if empirical is None:

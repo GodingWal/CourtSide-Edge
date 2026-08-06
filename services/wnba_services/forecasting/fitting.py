@@ -27,6 +27,7 @@ from typing import Any
 from wnba_store.db import connect
 
 from wnba_services.forecasting.calibration import fit_calibration_map
+from wnba_services.forecasting.line_bias import fit_line_bias
 from wnba_services.forecasting.parameters import DEFAULT_MARKET, store_fitted_parameters
 from wnba_services.forecasting.scoring import COMPONENT_NAMES
 from wnba_services.forecasting.selection import EdgeShrinkage
@@ -46,6 +47,7 @@ class FittingBatch:
     shrinkage_sets: int
     fitted_calibration: int
     fitted_weights: int
+    line_bias_sets: int = 0
 
 
 def _over_outcome(side: str, hit: bool) -> float:
@@ -59,6 +61,7 @@ def fit_model_parameters(*, now: datetime | None = None) -> FittingBatch:
     episodes = 0
     calibration_maps = weight_sets = shrinkage_sets = 0
     fitted_calibration = fitted_weights = 0
+    line_bias_sets = 0
 
     with connect() as conn, conn.cursor() as cur:
         # Voids and pushes are excluded at the source. A void is a coach's rotation decision and
@@ -67,6 +70,7 @@ def fit_model_parameters(*, now: datetime | None = None) -> FittingBatch:
         cur.execute(
             """SELECT d.prop_type,d.side,o.hit,d.predicted_probability,
                       coalesce(f.probability_over_raw,f.probability_over) AS raw_over,
+                      d.line,d.projected_mean,o.actual_stat,
                       d.episode_id,d.player_id,d.game_id,d.forecast_timestamp
                FROM wnba.decision_episodes d
                JOIN wnba.episode_outcomes o ON o.episode_id=d.episode_id
@@ -85,6 +89,7 @@ def fit_model_parameters(*, now: datetime | None = None) -> FittingBatch:
 
         calibration_points: dict[str, list[tuple[float, float]]] = {}
         shrinkage_points: dict[str, list[tuple[float, float]]] = {}
+        bias_points: dict[str, list[tuple[float, float, float]]] = {}
         for row in settled:
             market = str(row["prop_type"])
             side = str(row["side"])
@@ -96,6 +101,13 @@ def fit_model_parameters(*, now: datetime | None = None) -> FittingBatch:
             selected = (float(str(row["predicted_probability"])), float(hit))
             shrinkage_points.setdefault(market, []).append(selected)
             shrinkage_points.setdefault(DEFAULT_MARKET, []).append(selected)
+            bias_point = (
+                float(str(row["line"])),
+                float(str(row["projected_mean"])),
+                float(str(row["actual_stat"])),
+            )
+            bias_points.setdefault(market, []).append(bias_point)
+            bias_points.setdefault(DEFAULT_MARKET, []).append(bias_point)
 
         cur.execute(
             """SELECT d.prop_type,d.side,o.hit,d.episode_id,d.player_id,d.game_id,
@@ -182,6 +194,19 @@ def fit_model_parameters(*, now: datetime | None = None) -> FittingBatch:
             )
             shrinkage_sets += 1
 
+        for market, triples in sorted(bias_points.items()):
+            line_bias = fit_line_bias(triples, market=market)
+            store_fitted_parameters(
+                cur,
+                kind="line_bias",
+                market=market,
+                at=at,
+                payload=line_bias.to_payload(),
+                sample_size=len(triples),
+                is_fitted=line_bias.is_fitted,
+            )
+            line_bias_sets += 1
+
     return FittingBatch(
         episodes=episodes,
         independent_markets=shape.markets,
@@ -191,4 +216,5 @@ def fit_model_parameters(*, now: datetime | None = None) -> FittingBatch:
         shrinkage_sets=shrinkage_sets,
         fitted_calibration=fitted_calibration,
         fitted_weights=fitted_weights,
+        line_bias_sets=line_bias_sets,
     )

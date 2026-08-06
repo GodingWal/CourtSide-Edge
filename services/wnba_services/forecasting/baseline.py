@@ -430,6 +430,7 @@ def run_baseline(*, now: datetime | None = None, seed: int = 20260803) -> Foreca
                 prior_season=prior_season,
                 weights=parameters.weights_for(prop),
                 calibration=parameters.calibration_for(prop),
+                line_bias=parameters.line_bias_for(prop),
             )
             if not inputs.has_sufficient_history:
                 skipped += 1
