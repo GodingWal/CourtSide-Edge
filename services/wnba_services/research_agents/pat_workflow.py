@@ -128,6 +128,37 @@ def _credibility_weights(cur: Any, roles: Sequence[str]) -> dict[str, float]:
     return {str(row["agent_role"]): float(str(row["credibility"])) for row in cur.fetchall()}
 
 
+def _track_records(cur: Any, roles: Sequence[str]) -> dict[str, str]:
+    """Each role's latest measured track record, phrased for its own prompt.
+
+    Credibility has been computed per role for as long as the table has existed and, until the
+    consensus weighting, influenced nothing the agent itself could see. An agent that cannot
+    see its own calibration history cannot correct for it. Rows with tiny samples are withheld
+    rather than shown: quoting a Brier over four settled views teaches noise, not humility.
+    """
+    if not roles:
+        return {}
+    cur.execute(
+        """SELECT DISTINCT ON (agent_role) agent_role,sample_size,brier,skill_vs_model
+           FROM wnba.agent_credibility
+           WHERE agent_role = ANY(%s) AND domain='player_prop' AND round=2
+           ORDER BY agent_role,calculated_at DESC""",
+        (list(roles),),
+    )
+    records: dict[str, str] = {}
+    for row in cur.fetchall():
+        sample = int(str(row["sample_size"]))
+        if sample < 5:
+            continue
+        parts = [f"{sample} settled advisory views"]
+        if row["brier"] is not None:
+            parts.append(f"Brier {float(str(row['brier'])):.3f}")
+        if row["skill_vs_model"] is not None:
+            parts.append(f"skill vs model {float(str(row['skill_vs_model'])):+.3f}")
+        records[str(row["agent_role"])] = "; ".join(parts)
+    return records
+
+
 def _load_projection(cur: Any, projection_id: UUID) -> dict[str, Any]:
     cur.execute(
         """SELECT f.*,fs.features,q.source,q.system_from AS observed_at,q.locks_at,
@@ -232,6 +263,10 @@ def run_pat_research(
         projection = _load_projection(cur, projection_id)
         evidence = _run_evidence(cur, base.research_run_id)
         precedents = retrieve_precedents(cur, projection)
+        # The desk paid to retrieve these; until now they were stored and never shown to the
+        # agents. Their summaries carry the settled outcome, which is the calibration signal a
+        # probability-producing agent most lacks.
+        precedent_summaries = [item.summary for item in precedents]
         for rank, precedent in enumerate(precedents, 1):
             cur.execute(
                 """INSERT INTO wnba.research_precedents(research_run_id,episode_id,similarity,rank)
@@ -243,6 +278,7 @@ def run_pat_research(
         forecasting_roles = {
             role: question for role, question in AGENT_QUESTIONS.items() if role != SKEPTIC_ROLE
         }
+        track_records = _track_records(cur, sorted(forecasting_roles))
         with ThreadPoolExecutor(max_workers=len(forecasting_roles)) as executor:
             futures = {
                 role: executor.submit(
@@ -250,6 +286,8 @@ def run_pat_research(
                     role=role,
                     question=f"{context}. {question}",
                     evidence=evidence,
+                    precedents=precedent_summaries,
+                    track_record=track_records.get(role),
                 )
                 for role, question in forecasting_roles.items()
             }
@@ -299,6 +337,8 @@ def run_pat_research(
                     question=f"Reconsider {context}. {question}",
                     evidence=evidence,
                     peers=None if role == blind_role else peer_views,
+                    precedents=precedent_summaries,
+                    track_record=track_records.get(role),
                 )
                 for role, question in forecasting_roles.items()
             }
@@ -332,6 +372,7 @@ def run_pat_research(
                 question=f"{context}. {AGENT_QUESTIONS[SKEPTIC_ROLE]}",
                 evidence=evidence,
                 peers=peer_views,
+                precedents=precedent_summaries,
             ),
             now=at,
         )

@@ -7,6 +7,7 @@ and that single lucky response is the one that lands in the evidence file.
 
 from __future__ import annotations
 
+import hashlib
 import json
 from typing import Any
 from uuid import uuid4
@@ -14,7 +15,9 @@ from uuid import uuid4
 import httpx
 import pytest
 from wnba_services.research_agents.deepseek import (
+    DEFAULT_MAX_TOKENS,
     MAX_RETRY_AFTER_SECONDS,
+    SKEPTIC_MAX_TOKENS,
     DeepSeekResearchClient,
 )
 
@@ -227,3 +230,121 @@ def test_unreported_token_usage_is_unknown_rather_than_zero() -> None:
         role="availability", question="Known?", evidence={evidence_id: "Report."}
     )
     assert result.usage is None
+
+
+# --------------------------------------------------------------------------------------
+# Research context: precedents, track record, token budgets, evidence ordering
+# --------------------------------------------------------------------------------------
+class CapturingRecorder(Recorder):
+    """A recorder that also keeps the request payloads it was given."""
+
+    def __init__(self, *replies: httpx.Response | Exception) -> None:
+        super().__init__(*replies)
+        self.payloads: list[dict[str, Any]] = []
+
+    def __call__(self, request: httpx.Request) -> httpx.Response:
+        self.payloads.append(json.loads(request.content))
+        return super().__call__(request)
+
+
+def forecast_body(evidence_id: object) -> dict[str, object]:
+    return {
+        "advisory_probability": 0.55,
+        "rationale": "Pace profile supports the over.",
+        "evidence_ids": [str(evidence_id)],
+        "risk_flags": [],
+    }
+
+
+def skeptic_body() -> dict[str, object]:
+    return {
+        "summary": "Concern is answerable.",
+        "failure_modes": [],
+        "fragility": "low",
+        "risk_flags": [],
+    }
+
+
+def user_message(payload: dict[str, Any]) -> dict[str, Any]:
+    """The decoded user prompt from a captured chat request."""
+    return json.loads(payload["messages"][1]["content"])
+
+
+def test_forecast_prompt_carries_precedents_and_track_record() -> None:
+    """Settled precedents and the seat's own measured record must reach the analyst."""
+    evidence_id = uuid4()
+    recorder = CapturingRecorder(response(forecast_body(evidence_id)))
+    client(recorder).forecast(
+        role="availability",
+        question="Over or under?",
+        evidence={evidence_id: "Official report."},
+        precedents=["line=10.5 probability=0.6 actual=12 hit=True"],
+        track_record="8 settled advisory views; Brier 0.210; skill vs model +0.030",
+    )
+    prompt = user_message(recorder.payloads[0])
+    assert prompt["precedents_with_outcomes"] == ["line=10.5 probability=0.6 actual=12 hit=True"]
+    assert (
+        prompt["your_recent_track_record"]
+        == "8 settled advisory views; Brier 0.210; skill vs model +0.030"
+    )
+
+
+def test_forecast_context_defaults_to_empty_rather_than_missing() -> None:
+    evidence_id = uuid4()
+    recorder = CapturingRecorder(response(forecast_body(evidence_id)))
+    client(recorder).forecast(
+        role="rotation", question="Over or under?", evidence={evidence_id: "Bench usage."}
+    )
+    prompt = user_message(recorder.payloads[0])
+    assert prompt["precedents_with_outcomes"] == []
+    assert prompt["your_recent_track_record"] == ""
+
+
+def test_skeptic_prompt_carries_precedents_but_no_track_record() -> None:
+    """The skeptic is calibrated by precedents; a per-seat record would be meaningless to it."""
+    evidence_id = uuid4()
+    recorder = CapturingRecorder(response(skeptic_body()))
+    client(recorder).challenge(
+        question="How could this be wrong?",
+        evidence={evidence_id: "Official report."},
+        precedents=["line=10.5 probability=0.6 actual=12 hit=True"],
+    )
+    prompt = user_message(recorder.payloads[0])
+    assert prompt["precedents_with_outcomes"] == ["line=10.5 probability=0.6 actual=12 hit=True"]
+    assert "your_recent_track_record" not in prompt
+
+
+def test_the_skeptic_gets_the_larger_token_budget() -> None:
+    """Failure-mode prose plus thinking needs more room than a terse analyst draft."""
+    evidence_id = uuid4()
+    forecaster = CapturingRecorder(response(forecast_body(evidence_id)))
+    client(forecaster).forecast(
+        role="rotation", question="Over or under?", evidence={evidence_id: "Bench usage."}
+    )
+    skeptic = CapturingRecorder(response(skeptic_body()))
+    client(skeptic).challenge(question="How could this be wrong?", evidence={evidence_id: "Same."})
+    assert forecaster.payloads[0]["max_tokens"] == DEFAULT_MAX_TOKENS
+    assert skeptic.payloads[0]["max_tokens"] == SKEPTIC_MAX_TOKENS
+    assert SKEPTIC_MAX_TOKENS > DEFAULT_MAX_TOKENS
+
+
+def test_token_budgets_are_configurable_per_deployment() -> None:
+    evidence_id = uuid4()
+    recorder = CapturingRecorder(response(skeptic_body()))
+    client(recorder, skeptic_max_tokens=1234).challenge(
+        question="How could this be wrong?", evidence={evidence_id: "Report."}
+    )
+    assert recorder.payloads[0]["max_tokens"] == 1234
+
+
+def test_evidence_is_serialised_in_content_order() -> None:
+    """Id order is random per run, which would defeat the provider's prefix cache; the
+    corpus must arrive in a stable order derived from the text itself."""
+    first, second = "AAA first text", "ZZZ second text"
+    expected = sorted((first, second), key=lambda t: hashlib.sha256(t.encode()).hexdigest())
+    evidence = {uuid4(): first, uuid4(): second}
+    recorder = CapturingRecorder(response(analysis_body(next(iter(evidence)))))
+    client(recorder).analyze(role="availability", question="What is known?", evidence=evidence)
+    serialised = user_message(recorder.payloads[0])["evidence"]
+    assert [item["text"] for item in serialised] == expected
+    assert {item["evidence_id"] for item in serialised} == {str(key) for key in evidence}

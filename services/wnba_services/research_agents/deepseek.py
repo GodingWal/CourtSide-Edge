@@ -6,7 +6,7 @@ import hashlib
 import json
 import os
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Annotated, Any
 from uuid import UUID
@@ -18,6 +18,12 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 # and the frozen evidence inside it -- open past the market lock it was built for.
 MAX_RETRY_AFTER_SECONDS = 30.0
 RETRYABLE_STATUS = frozenset({408, 409, 425, 429, 500, 502, 503, 504})
+
+# Completion budgets per task. The skeptic reads every peer view plus the full corpus, so a
+# shared budget truncates it first -- and a truncated response fails closed (never retried),
+# which made the most complex call the most fragile one. Both are env-overridable.
+DEFAULT_MAX_TOKENS = 4000
+SKEPTIC_MAX_TOKENS = 6000
 
 
 class ClaimDraft(BaseModel):
@@ -164,6 +170,22 @@ def _retry_after(response: httpx.Response, fallback: float) -> float:
     return min(requested, MAX_RETRY_AFTER_SECONDS)
 
 
+def _evidence_payload(evidence: dict[UUID, str]) -> list[dict[str, str]]:
+    """Serialise the corpus in content order, not id order.
+
+    Evidence ids are minted per run, so sorting by them shuffles identical content into a
+    different order every run and defeats the provider's prefix cache. Sorting by a digest
+    of the text keeps a role's prompt prefix stable whenever the corpus overlaps -- the
+    common case across the seats of one run and across runs on one market.
+    """
+    return [
+        {"evidence_id": str(evidence_id), "text": text}
+        for evidence_id, text in sorted(
+            evidence.items(), key=lambda item: hashlib.sha256(item[1].encode()).hexdigest()
+        )
+    ]
+
+
 class DeepSeekResearchClient:
     """Small provider adapter; no model response bypasses strict validation."""
 
@@ -176,6 +198,8 @@ class DeepSeekResearchClient:
         timeout_seconds: float | None = None,
         max_attempts: int | None = None,
         backoff_seconds: float | None = None,
+        max_tokens: int | None = None,
+        skeptic_max_tokens: int | None = None,
         transport: httpx.BaseTransport | None = None,
         sleep: Callable[[float], None] | None = None,
     ) -> None:
@@ -189,6 +213,12 @@ class DeepSeekResearchClient:
         self.max_attempts = max(1, max_attempts or int(os.getenv("DEEPSEEK_MAX_ATTEMPTS", "3")))
         self.backoff_seconds = backoff_seconds or float(
             os.getenv("DEEPSEEK_BACKOFF_SECONDS", "2.0")
+        )
+        self.max_tokens = max_tokens or int(
+            os.getenv("DEEPSEEK_MAX_TOKENS", str(DEFAULT_MAX_TOKENS))
+        )
+        self.skeptic_max_tokens = skeptic_max_tokens or int(
+            os.getenv("DEEPSEEK_SKEPTIC_MAX_TOKENS", str(SKEPTIC_MAX_TOKENS))
         )
         self.transport = transport
         self._sleep = sleep or time.sleep
@@ -210,10 +240,7 @@ class DeepSeekResearchClient:
     ) -> AgentResponse:
         if not self.api_key:
             raise RuntimeError("DEEPSEEK_API_KEY is not configured")
-        evidence_payload = [
-            {"evidence_id": str(evidence_id), "text": text}
-            for evidence_id, text in sorted(evidence.items(), key=lambda item: str(item[0]))
-        ]
+        evidence_payload = _evidence_payload(evidence)
         system = (
             "You are the "
             f"{role} analyst in a WNBA player-prop research system. Return JSON only. "
@@ -270,21 +297,24 @@ class DeepSeekResearchClient:
         question: str,
         evidence: dict[UUID, str],
         peers: list[dict[str, object]] | None = None,
+        precedents: Sequence[str] | None = None,
+        track_record: str | None = None,
     ) -> tuple[AgentForecastDraft, str, str]:
         """Return an advisory view, independently in round one and peer-aware in round two."""
         system = (
             f"You are the {role} analyst. Return JSON only and cite supplied evidence IDs. "
             "Your probability is advisory research metadata. It cannot alter the statistical "
-            "forecast, create a recommendation, set a stake, or activate a rule."
+            "forecast, create a recommendation, set a stake, or activate a rule. Settled "
+            "precedents and your own measured track record may be supplied for calibration; "
+            "they are context, not citable evidence."
         )
         user = json.dumps(
             {
                 "question": question,
-                "evidence": [
-                    {"evidence_id": str(key), "text": value}
-                    for key, value in sorted(evidence.items(), key=lambda item: str(item[0]))
-                ],
+                "evidence": _evidence_payload(evidence),
                 "peer_round_one_views": peers or [],
+                "precedents_with_outcomes": list(precedents or []),
+                "your_recent_track_record": track_record or "",
                 "json_shape": {
                     "advisory_probability": 0.5,
                     "rationale": "string",
@@ -306,6 +336,7 @@ class DeepSeekResearchClient:
         question: str,
         evidence: dict[UUID, str],
         peers: list[dict[str, object]] | None = None,
+        precedents: Sequence[str] | None = None,
     ) -> tuple[SkepticReview, str, str]:
         """Ask the skeptic for failure modes rather than for a number it does not believe in."""
         system = (
@@ -314,16 +345,15 @@ class DeepSeekResearchClient:
             "stake. Your output is a list of ways this forecast could be wrong, each with what "
             "observation would show the concern to be unfounded. A concern nothing could answer "
             "is not a concern; omit it. If the evidence supports the forecast, say so and return "
-            "few or no failure modes."
+            "few or no failure modes. Settled precedents may be supplied for calibration; "
+            "they are context, not citable evidence."
         )
         user = json.dumps(
             {
                 "question": question,
-                "evidence": [
-                    {"evidence_id": str(key), "text": value}
-                    for key, value in sorted(evidence.items(), key=lambda item: str(item[0]))
-                ],
+                "evidence": _evidence_payload(evidence),
                 "peer_views": peers or [],
+                "precedents_with_outcomes": list(precedents or []),
                 "json_shape": {
                     "summary": "string",
                     "failure_modes": [
@@ -341,7 +371,7 @@ class DeepSeekResearchClient:
             sort_keys=True,
         )
         prompt_hash = hashlib.sha256(f"{system}\n{user}".encode()).hexdigest()
-        completion = self._complete(system, user, SkepticReview)
+        completion = self._complete(system, user, SkepticReview, max_tokens=self.skeptic_max_tokens)
         review: SkepticReview = completion.value
         cited = {evidence_id for mode in review.failure_modes for evidence_id in mode.evidence_ids}
         self._reject_unknown(cited, set(evidence))
@@ -389,10 +419,7 @@ class DeepSeekResearchClient:
                     "flag_for_review",
                     "require_evidence",
                 ],
-                "evidence": [
-                    {"evidence_id": str(key), "text": value}
-                    for key, value in sorted(evidence.items(), key=lambda item: str(item[0]))
-                ],
+                "evidence": _evidence_payload(evidence),
             },
             sort_keys=True,
         )
@@ -422,7 +449,14 @@ class DeepSeekResearchClient:
         if unknown:
             raise ValueError(f"DeepSeek cited unknown evidence ids: {sorted(map(str, unknown))}")
 
-    def _complete(self, system: str, user: str, model_type: type[BaseModel]) -> _Completion:
+    def _complete(
+        self,
+        system: str,
+        user: str,
+        model_type: type[BaseModel],
+        *,
+        max_tokens: int | None = None,
+    ) -> _Completion:
         if not self.api_key:
             raise RuntimeError("DEEPSEEK_API_KEY is not configured")
         payload: dict[str, Any] = {
@@ -438,7 +472,7 @@ class DeepSeekResearchClient:
             # credibility is scored across runs, and a sampling temperature would put run-to-run
             # variance into a number we intend to read as skill.
             "temperature": 0.0,
-            "max_tokens": 4000,
+            "max_tokens": max_tokens or self.max_tokens,
             "stream": False,
         }
         started = time.monotonic()
@@ -456,7 +490,8 @@ class DeepSeekResearchClient:
             raise ValueError("DeepSeek returned no choices")
         choice = choices[0]
         if not isinstance(choice, dict) or choice.get("finish_reason") != "stop":
-            raise ValueError("DeepSeek response did not finish cleanly")
+            reason = choice.get("finish_reason") if isinstance(choice, dict) else None
+            raise ValueError(f"DeepSeek response did not finish cleanly: {reason!r}")
         message = choice.get("message")
         content = message.get("content") if isinstance(message, dict) else None
         if not isinstance(content, str) or not content.strip():
