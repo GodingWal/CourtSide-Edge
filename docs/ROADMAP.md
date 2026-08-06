@@ -26,11 +26,10 @@ operational. Automated wager execution remains permanently out of scope.
 | PAT-style research | Built, not yet deployed | Five DeepSeek roles with cited expiring claims over a corpus that now carries recent form, line movement, the de-vigged market price, teammate availability and settled precedents; a failed role costs one voice rather than the run; one round-two seat is held blind as a herding control |
 | Learning loop | Closed | Hypotheses reviewed against post-creation evidence; active rules re-scored on live firings and auto-suspended when harmful; measured drift widens forecasts |
 | Error attribution | Scored, two causes | Ordered if-chain replaced by ranked causes over the minutes-residual; `data_quality` and `modeling` added |
-| Model participation in learning | Advisory, audited | DeepSeek drafts rules, proposal designs, hypothesis critiques and withdrawal rationales; every call recorded in `model_advisories` with used/fallback/rejected |
+| Model participation in learning | Advisory, audited | DeepSeek drafts rules, proposal designs, hypothesis critiques and withdrawal rationales; every call recorded in `model_advisories` with used/fallback/rejected plus tokens, latency and retries |
 | Adversarial skeptic | Complete | Four analysts, then a skeptic over their conclusions as citable evidence |
 | Research verdict | Complete | Contested claims and caution computed in code, never by the model |
 | Provider resilience | Complete | Congestion retried with capped backoff; rejected responses never are; token spend recorded |
-| Model participation in learning | Advisory, audited | DeepSeek drafts rules, proposal designs, hypothesis critiques and withdrawal rationales; every call recorded in `model_advisories` with used/fallback/rejected plus tokens, latency and retries |
 | Independent-sample accounting | Complete | Repeats collapsed; game clustering corrected |
 | Rule proposal and backtest | Operational | Weekly proposal/backtest; named CLI approval only |
 | Rule withdrawal | Automatic, one-way | Harmful active rules suspend without a human; reactivation still needs a named one |
