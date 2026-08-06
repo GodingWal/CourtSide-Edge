@@ -29,6 +29,14 @@ other route requires the owner credential.
   `failed` has exhausted `DEEPSEEK_MAX_ATTEMPTS` or was rejected on validation -- read `error`
   before retrying. A run stuck at `running` blocks further spend on that projection until the
   provider's whole timeout budget has elapsed, after which the next attempt reclaims it.
+- DeepSeek failure: forecasts continue. Individual agents now fail open — a run completes with
+  the roles that answered, and each missing one is a `fallback` row in `wnba.model_advisories`.
+  A run only fails when every role failed. Check `disposition` and `failure_reason` there before
+  suspecting the pipeline.
+- Owner picks stuck on `pending`: `wnba learning settle` settles them alongside paper episodes.
+  Legs whose `player_id` is null were confirmed under a name that matched no player, or matched
+  more than one; they never settle, and that is deliberate. Re-enter them with a name from the
+  board rather than relaxing the match.
 - Disk above 80%: inspect PostgreSQL, Docker and backup growth before deleting anything.
 
 ## Champion/challenger experiments

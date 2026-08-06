@@ -38,12 +38,14 @@ from wnba_services.learning_loop.experiments import (
     rollback_promotion,
 )
 from wnba_services.learning_loop.hypothesis_review import review_hypotheses
+from wnba_services.learning_loop.pick_settlement import settle_pick_slips
 from wnba_services.learning_loop.proposals import generate_research_proposals
 from wnba_services.learning_loop.readiness import evaluate_readiness
 from wnba_services.learning_loop.rule_lifecycle import approve_rule, retire_rule, run_rule_backtests
 from wnba_services.learning_loop.rule_proposals import propose_from_measured_errors
 from wnba_services.learning_loop.rule_review import review_active_rules
 from wnba_services.learning_loop.settlement import settle_paper_episodes
+from wnba_services.market_engine.correlation import refresh_leg_correlations
 from wnba_services.monitoring.liveness import run_liveness_checks
 from wnba_services.research_agents.organization import refresh_research_memory
 from wnba_services.research_agents.pat_workflow import run_pat_research, run_triggered_research
@@ -313,15 +315,22 @@ def learning_settle() -> None:
     result = settle_paper_episodes()
     evaluation = evaluate_models()
     # Refitting here rather than in a separate timer: settlement is the only event that adds
-    # evidence, so it is the only moment at which the fitted parameters can have changed.
+    # evidence, so it is the only moment at which the fitted parameters can have changed. Owner
+    # picks and leg correlation are refit for the same reason -- both read settled outcomes and
+    # neither can have moved without one.
     fitted = fit_model_parameters()
+    picks = settle_pick_slips()
+    correlations = refresh_leg_correlations()
     console.print(
         f"[green]settlement complete[/green] settled={result.settled} "
         f"voided={result.voided} pushed={result.pushed} unsupported={result.unsupported} "
         f"evaluations={evaluation.evaluations} attributions={evaluation.attributions} "
         f"drift_incidents={evaluation.drift_incidents} "
         f"calibration_fitted={fitted.fitted_calibration}/{fitted.calibration_maps} "
-        f"weights_fitted={fitted.fitted_weights}/{fitted.weight_sets}"
+        f"weights_fitted={fitted.fitted_weights}/{fitted.weight_sets} "
+        f"pick_legs={picks.legs_settled} pick_slips={picks.slips_settled} "
+        f"pick_legs_unmatched={picks.legs_unmatched} "
+        f"leg_correlations={correlations.fitted}/{correlations.written}"
     )
 
 

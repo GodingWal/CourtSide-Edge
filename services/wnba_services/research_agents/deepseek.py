@@ -8,6 +8,7 @@ import os
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Annotated, Any
 from uuid import UUID
 
@@ -53,6 +54,38 @@ class AgentForecastDraft(BaseModel):
     advisory_probability: Annotated[float, Field(ge=0, le=1)]
     rationale: Annotated[str, Field(min_length=20, max_length=2000)]
     evidence_ids: Annotated[list[UUID], Field(min_length=1)]
+    risk_flags: list[Annotated[str, Field(min_length=1, max_length=300)]]
+
+
+class FailureMode(BaseModel):
+    """One way the forecast could be wrong, stated so it can be checked."""
+
+    model_config = ConfigDict(strict=True, extra="forbid")
+
+    description: Annotated[str, Field(min_length=10, max_length=500)]
+    severity: Annotated[str, Field(pattern=r"^(low|moderate|high)$")]
+    disconfirming_observation: Annotated[str, Field(min_length=10, max_length=500)]
+    """What would show this concern to be unfounded. A criticism that nothing could answer is
+    not a criticism, it is a mood, and it costs the reader the same attention as a real one."""
+
+    evidence_ids: Annotated[list[UUID], Field(min_length=1)]
+
+
+class SkepticReview(BaseModel):
+    """The skeptic's output, deliberately without a probability.
+
+    The skeptic used to answer on the same schema as everybody else, which meant its job -- find
+    the reasons this is fragile -- was expressed as a number that then went into the consensus
+    average. An agent required to produce a probability is pulled toward the other agents'
+    probabilities, and the one seat whose value is disagreement was the seat most punished for
+    it. It now returns failure modes and nothing that can be averaged.
+    """
+
+    model_config = ConfigDict(strict=True, extra="forbid")
+
+    summary: Annotated[str, Field(min_length=20, max_length=2000)]
+    failure_modes: Annotated[list[FailureMode], Field(max_length=8)]
+    fragility: Annotated[str, Field(pattern=r"^(low|moderate|high)$")]
     risk_flags: list[Annotated[str, Field(min_length=1, max_length=300)]]
 
 
@@ -126,6 +159,25 @@ def _retry_after(response: httpx.Response, fallback: float) -> float:
     if requested <= 0:
         return fallback
     return min(requested, MAX_RETRY_AFTER_SECONDS)
+@dataclass
+class Usage:
+    """What the last call cost. Mutable by design: the client fills it in as calls complete.
+
+    Recorded because "what does a research run cost per projection" was previously unanswerable,
+    and it is the number that decides how many projections the trigger should select. Latency is
+    wall clock including retries, which is what the operator experiences.
+    """
+
+    prompt_tokens: int | None = None
+    completion_tokens: int | None = None
+    latency_ms: int | None = None
+    attempts: int = 0
+    retry_reasons: list[str] = field(default_factory=list)
+
+
+# Status codes worth a second attempt. A 400 means the request is wrong and will be wrong again;
+# a 429 or a 5xx means the provider is busy or broken, which is a condition that passes.
+_RETRYABLE_STATUS = frozenset({408, 409, 425, 429, 500, 502, 503, 504})
 
 
 class DeepSeekResearchClient:
@@ -142,6 +194,8 @@ class DeepSeekResearchClient:
         backoff_seconds: float | None = None,
         transport: httpx.BaseTransport | None = None,
         sleep: Callable[[float], None] | None = None,
+        max_attempts: int | None = None,
+        sleep: Any = time.sleep,
     ) -> None:
         self.api_key = api_key or os.getenv("DEEPSEEK_API_KEY", "")
         configured_base_url = (
@@ -156,6 +210,9 @@ class DeepSeekResearchClient:
         )
         self.transport = transport
         self._sleep = sleep or time.sleep
+        self.max_attempts = max_attempts or int(os.getenv("DEEPSEEK_MAX_ATTEMPTS", "3"))
+        self._sleep = sleep
+        self.usage = Usage()
 
     def analyze(
         self,
@@ -257,6 +314,52 @@ class DeepSeekResearchClient:
         self._reject_unknown(set(result.evidence_ids), set(evidence))
         return result, prompt_hash, completion.response_sha256
 
+    def challenge(
+        self,
+        *,
+        question: str,
+        evidence: dict[UUID, str],
+        peers: list[dict[str, object]] | None = None,
+    ) -> tuple[SkepticReview, str, str]:
+        """Ask the skeptic for failure modes rather than for a number it does not believe in."""
+        system = (
+            "You are the skeptic on a WNBA player-prop research desk. Return JSON only and cite "
+            "supplied evidence IDs. Do not produce a probability, projection, recommendation or "
+            "stake. Your output is a list of ways this forecast could be wrong, each with what "
+            "observation would show the concern to be unfounded. A concern nothing could answer "
+            "is not a concern; omit it. If the evidence supports the forecast, say so and return "
+            "few or no failure modes."
+        )
+        user = json.dumps(
+            {
+                "question": question,
+                "evidence": [
+                    {"evidence_id": str(key), "text": value}
+                    for key, value in sorted(evidence.items(), key=lambda item: str(item[0]))
+                ],
+                "peer_views": peers or [],
+                "json_shape": {
+                    "summary": "string",
+                    "failure_modes": [
+                        {
+                            "description": "string",
+                            "severity": "low|moderate|high",
+                            "disconfirming_observation": "string",
+                            "evidence_ids": ["uuid"],
+                        }
+                    ],
+                    "fragility": "low|moderate|high",
+                    "risk_flags": ["string"],
+                },
+            },
+            sort_keys=True,
+        )
+        prompt_hash = hashlib.sha256(f"{system}\n{user}".encode()).hexdigest()
+        result, response_hash = self._request_json(system, user, SkepticReview)
+        cited = {evidence_id for mode in result.failure_modes for evidence_id in mode.evidence_ids}
+        self._reject_unknown(cited, set(evidence))
+        return result, prompt_hash, response_hash
+
     def propose_rule(
         self,
         *,
@@ -333,6 +436,39 @@ class DeepSeekResearchClient:
             raise ValueError(f"DeepSeek cited unknown evidence ids: {sorted(map(str, unknown))}")
 
     def _complete(self, system: str, user: str, model_type: type[BaseModel]) -> _Completion:
+    def _post(self, payload: dict[str, Any]) -> httpx.Response:
+        """One request, retried on the failures that pass on their own.
+
+        Exponential backoff, capped attempts, and every retry reason kept on :attr:`usage` so a
+        run that succeeded on its third try is distinguishable from one that succeeded outright.
+        A provider having a bad minute should not lose an evening's research, and it should also
+        not be invisible.
+        """
+        last: Exception | None = None
+        with httpx.Client(
+            timeout=self.timeout_seconds,
+            transport=self.transport,
+            headers={"Authorization": f"Bearer {self.api_key}"},
+        ) as client:
+            for attempt in range(1, self.max_attempts + 1):
+                self.usage.attempts = attempt
+                try:
+                    response = client.post(f"{self.base_url}/chat/completions", json=payload)
+                    if response.status_code in _RETRYABLE_STATUS and attempt < self.max_attempts:
+                        self.usage.retry_reasons.append(f"HTTP {response.status_code}")
+                        self._sleep(2.0 ** (attempt - 1))
+                        continue
+                    response.raise_for_status()
+                    return response
+                except (httpx.TimeoutException, httpx.TransportError) as error:
+                    last = error
+                    if attempt >= self.max_attempts:
+                        break
+                    self.usage.retry_reasons.append(type(error).__name__)
+                    self._sleep(2.0 ** (attempt - 1))
+        raise last if last is not None else RuntimeError("DeepSeek request failed without a cause")
+
+    def _request_json(self, system: str, user: str, model_type: type[BaseModel]) -> tuple[Any, str]:
         if not self.api_key:
             raise RuntimeError("DEEPSEEK_API_KEY is not configured")
         payload: dict[str, Any] = {
@@ -344,12 +480,33 @@ class DeepSeekResearchClient:
             "response_format": {"type": "json_object"},
             "thinking": {"type": "enabled"},
             "reasoning_effort": "high",
+            # Zero temperature is not a quality choice, it is a measurement one: agent
+            # credibility is scored across runs, and a sampling temperature would put run-to-run
+            # variance into a number we intend to read as skill.
+            "temperature": 0.0,
             "max_tokens": 4000,
             "stream": False,
         }
         envelope, attempts = self._post(payload)
+        self.usage = Usage()
+        started = time.monotonic()
+        try:
+            response = self._post(payload)
+        finally:
+            self.usage.latency_ms = int((time.monotonic() - started) * 1000)
+        envelope = response.json()
         if not isinstance(envelope, dict):
             raise ValueError("DeepSeek returned a non-object response")
+        usage = envelope.get("usage")
+        if isinstance(usage, dict):
+            prompt_tokens, completion_tokens = (
+                usage.get("prompt_tokens"),
+                usage.get("completion_tokens"),
+            )
+            self.usage.prompt_tokens = prompt_tokens if isinstance(prompt_tokens, int) else None
+            self.usage.completion_tokens = (
+                completion_tokens if isinstance(completion_tokens, int) else None
+            )
         choices = envelope.get("choices")
         if not isinstance(choices, list) or not choices:
             raise ValueError("DeepSeek returned no choices")
