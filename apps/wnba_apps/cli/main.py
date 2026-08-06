@@ -207,13 +207,31 @@ def stats_backfill(
 @lines_app.command("poll")
 def lines_poll(
     quiet: Annotated[bool, typer.Option("--quiet", "-q", help="One line of output.")] = False,
+    near_lock: Annotated[
+        bool,
+        typer.Option(
+            "--near-lock",
+            help="Skip quietly unless a quote locks within the CLV window.",
+        ),
+    ] = False,
 ) -> None:
     """Poll the market once and append every quote to the archive.
 
     Record-only: this forecasts nothing and recommends nothing. It exists so that a year from
     now there is a market history to evaluate against -- the one thing that cannot be bought
     retroactively at any price.
+
+    With ``--near-lock`` the poll exits without touching the source unless at least one
+    available quote locks within the CLV window, so a 5-minute timer can densify closing-line
+    history near tipoff without hammering the feed all day.
     """
+    if near_lock and not _quotes_lock_within(CLV_WINDOW_MINUTES):
+        if not quiet:
+            console.print(
+                f"[dim]no quotes locking within {CLV_WINDOW_MINUTES} minutes -- skipping[/dim]"
+            )
+        return
+
     result = run_archiver()
 
     if quiet:
@@ -228,6 +246,22 @@ def lines_poll(
     if not result.ok:
         console.print(f"[red]{result.error}[/red]")
         sys.exit(1)
+
+
+CLV_WINDOW_MINUTES = 90
+
+
+def _quotes_lock_within(minutes: int) -> bool:
+    """Whether any available quote locks inside the next ``minutes`` minutes."""
+    with connect() as conn, conn.cursor() as cur:
+        cur.execute(
+            """SELECT 1 FROM wnba.prop_quotes
+               WHERE is_available AND locks_at IS NOT NULL
+                 AND locks_at > now() AND locks_at <= now() + make_interval(mins => %s)
+               LIMIT 1""",
+            (minutes,),
+        )
+        return cur.fetchone() is not None
 
 
 @lines_app.command("coverage")
