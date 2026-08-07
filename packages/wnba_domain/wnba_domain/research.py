@@ -13,7 +13,7 @@ intentions:
 
 from __future__ import annotations
 
-from typing import Annotated, Self
+from typing import Annotated, Any, Literal, Self
 from uuid import UUID
 
 from pydantic import AwareDatetime, Field, HttpUrl, model_validator
@@ -23,12 +23,17 @@ from wnba_domain.enums import AgentRole, ClaimStatus, HypothesisStatus, PropType
 from wnba_domain.identity import SourceName
 
 __all__ = [
+    "AgentAnalysis",
     "AgentForecast",
+    "DecisionSynthesis",
     "Evidence",
     "Experiment",
     "Hypothesis",
+    "ResearchAudit",
     "ResearchClaim",
     "ResearchProposal",
+    "ResearchRun",
+    "ResearchVerdict",
     "SourceDocument",
     "UncitedClaimError",
 ]
@@ -212,3 +217,96 @@ class Experiment(FrozenModel):
         if self.champion_model_version_id == self.challenger_model_version_id:
             raise ValueError("champion and challenger must be different model versions")
         return self
+
+
+class ResearchRun(FrozenModel):
+    """One audited research engagement against one immutable projection.
+
+    Owner-triggered, never automatic: the run records provider, model, token spend and the
+    prompt hash so cost and content are both reconstructable after the fact.
+    """
+
+    research_run_id: UUID
+    projection_id: UUID
+    provider: Annotated[str, Field(min_length=1, max_length=40)]
+    model: Annotated[str, Field(min_length=1, max_length=80)]
+    started_at: AwareDatetime
+    completed_at: AwareDatetime | None = None
+    status: Annotated[str, Field(min_length=1, max_length=20)]
+    prompt_sha256: Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
+    error: str | None = None
+    agent_calls: Annotated[int, Field(ge=0)]
+    provider_calls: Annotated[int, Field(ge=0)]
+    prompt_tokens: int | None = None
+    completion_tokens: int | None = None
+
+
+class AgentAnalysis(FrozenModel):
+    """One agent's cited position inside a research run."""
+
+    analysis_id: UUID
+    research_run_id: UUID
+    agent_role: AgentRole
+    conclusion: Annotated[str, Field(min_length=1)]
+    confidence: Probability
+    risk_flags: tuple[str, ...] = ()
+    evidence_ids: tuple[UUID, ...] = ()
+    response_sha256: Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
+    created_at: AwareDatetime
+
+
+class ResearchAudit(FrozenModel):
+    """The data auditor's gate on one research run.
+
+    Freshness and blocking issues are recorded before any agent output is trusted; a
+    ``blocked`` verdict is the system refusing to reason over data it cannot stand behind.
+    """
+
+    audit_id: UUID
+    research_run_id: UUID
+    projection_id: UUID
+    audited_at: AwareDatetime
+    status: Literal["pass", "warn", "blocked"]
+    issues: tuple[dict[str, Any], ...] = ()
+    freshness_seconds: Annotated[int, Field(ge=0)]
+
+
+class ResearchVerdict(FrozenModel):
+    """The skeptic's scored verdict on a research run's claims."""
+
+    verdict_id: UUID
+    research_run_id: UUID
+    caution: Literal["low", "elevated", "high"]
+    agreement: Probability
+    total_claims: Annotated[int, Field(ge=0)]
+    contested_claims: Annotated[int, Field(ge=0)]
+    contested_predicates: tuple[str, ...] = ()
+    risk_flags: tuple[str, ...] = ()
+    skeptic_confidence: Probability
+    rationale: Annotated[str, Field(min_length=1)]
+    created_at: AwareDatetime
+
+    @model_validator(mode="after")
+    def _contested_within_total(self) -> Self:
+        if self.contested_claims > self.total_claims:
+            raise ValueError("contested_claims cannot exceed total_claims")
+        return self
+
+
+class DecisionSynthesis(FrozenModel):
+    """A research run's closing position.
+
+    The model's probability set against the advisory probability, with the disagreement and
+    the policy reasons preserved rather than averaged away.
+    """
+
+    synthesis_id: UUID
+    research_run_id: UUID
+    created_at: AwareDatetime
+    disposition: Annotated[str, Field(min_length=1, max_length=40)]
+    model_probability: Probability
+    advisory_probability: Probability | None = None
+    disagreement: Annotated[float, Field(ge=0.0)]
+    summary: Annotated[str, Field(min_length=1)]
+    risk_flags: tuple[str, ...] = ()
+    policy_reasons: tuple[str, ...] = ()
