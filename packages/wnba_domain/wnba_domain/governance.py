@@ -8,7 +8,7 @@ evidence -- so that "why was this disabled in July?" has an answer.
 from __future__ import annotations
 
 import math
-from typing import Annotated, Self
+from typing import Annotated, Any, Self
 from uuid import UUID
 
 from pydantic import AwareDatetime, Field, model_validator
@@ -25,13 +25,18 @@ from wnba_domain.enums import (
 from wnba_domain.identity import SourceName
 
 __all__ = [
+    "AnalystRule",
     "CalibrationBucket",
     "CalibrationSnapshot",
     "DataQualityIncident",
+    "DeescalationEvent",
     "DriftIncident",
+    "ModelEvaluation",
     "ModelPromotion",
     "OntologyAction",
     "QuarantineRecord",
+    "ReadinessEvaluation",
+    "RuleFiring",
     "SourceReliability",
 ]
 
@@ -217,3 +222,94 @@ class ModelPromotion(FrozenModel):
         if self.from_stage is self.to_stage:
             raise ValueError("a promotion must change stage")
         return self
+
+
+class AnalystRule(FrozenModel):
+    """A human-reviewable rule the learning loop proposes from repeated error.
+
+    Approval is a human act. A rule the model authored is labelled as such, and shadow
+    firings record what it *would* have done before it may restrict anything live.
+    """
+
+    rule_id: Annotated[str, Field(min_length=1, max_length=80)]
+    title: Annotated[str, Field(min_length=1, max_length=200)]
+    rationale: Annotated[str, Field(min_length=1)]
+    definition: dict[str, Any]
+    status: Annotated[str, Field(min_length=1, max_length=20)]
+    priority: Annotated[int, Field(ge=0)]
+    proposed_by: Annotated[str, Field(min_length=1, max_length=60)]
+    proposed_at: AwareDatetime
+    approved_by: Annotated[str, Field(max_length=60)] | None = None
+    approved_at: AwareDatetime | None = None
+    approval_reason: str | None = None
+    retired_by: Annotated[str, Field(max_length=60)] | None = None
+    retired_at: AwareDatetime | None = None
+    retirement_reason: str | None = None
+    backtest: dict[str, Any] | None = None
+    live_review: dict[str, Any] | None = None
+    last_reviewed_at: AwareDatetime | None = None
+    suspended_at: AwareDatetime | None = None
+    suspension_reason: str | None = None
+    evidence_ids: tuple[UUID, ...] = ()
+    mechanism: str | None = None
+    confounders: tuple[str, ...] = ()
+    expires_at: AwareDatetime | None = None
+    withdrawal_criteria: str | None = None
+    authored_by_model: bool
+
+
+class RuleFiring(FrozenModel):
+    """One rule firing, shadow or live, with the before/after probabilities it moved."""
+
+    firing_id: UUID
+    rule_id: Annotated[str, Field(min_length=1, max_length=80)]
+    episode_id: UUID | None = None
+    fired_at: AwareDatetime
+    shadow: bool
+    action_kind: Annotated[str, Field(min_length=1, max_length=40)]
+    probability_before: Probability
+    probability_after: Probability
+
+
+class ReadinessEvaluation(FrozenModel):
+    """The fail-closed gate between shadow analysis and any real-money discussion."""
+
+    readiness_evaluation_id: UUID
+    evaluated_at: AwareDatetime
+    overall_ready: bool
+    specification_version: Annotated[str, Field(min_length=1, max_length=40)]
+    evidence: dict[str, Any]
+
+
+class ModelEvaluation(FrozenModel):
+    """Proper scores for one model component over one evaluation window."""
+
+    evaluation_id: UUID
+    model_version_id: UUID
+    component_name: Annotated[str, Field(min_length=1, max_length=80)]
+    evaluated_at: AwareDatetime
+    sample_size: Annotated[int, Field(ge=0)]
+    brier: float | None = None
+    log_loss: float | None = None
+    calibration_error: float | None = None
+    mean_line_value: float | None = None
+    mean_absolute_error: float | None = None
+    status: Annotated[str, Field(min_length=1, max_length=20)]
+    metrics: dict[str, Any]
+
+
+class DeescalationEvent(FrozenModel):
+    """The platform restricting its own exposure in response to measured drift.
+
+    This is the permitted direction of automation: it may shrink a probability toward one
+    half, never push it further out.
+    """
+
+    event_id: UUID
+    incident_id: UUID
+    episode_id: UUID | None = None
+    applied_at: AwareDatetime
+    response: DriftResponse
+    probability_before: Probability
+    probability_after: Probability
+    detail: dict[str, Any]
