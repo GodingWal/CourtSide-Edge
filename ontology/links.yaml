@@ -213,3 +213,33 @@ links:
     to: Experiment
     cardinality: many_to_one
     note: Required for promotion to champion. Software does not grade its own homework.
+
+  # --- decision: owner record and dialogue ---------------------------------------------
+  - name: composed_of
+    from: PickSlip
+    to: PickLeg
+    cardinality: one_to_many
+
+  - name: discusses
+    from: ProjectionDialogue
+    to: Projection
+    field: [projection_id]
+    cardinality: one_to_one
+    note: One dialogue per projection per analyst.
+
+  - name: composed_of
+    from: ProjectionDialogue
+    to: DialogueMessage
+    cardinality: one_to_many
+
+  # --- research: run governance ---------------------------------------------------------
+  - name: gated_by
+    from: ResearchRun
+    to: ResearchAudit
+    cardinality: one_to_many
+    note: The auditor's verdict precedes any trust in the run's output.
+
+  - name: judged_by
+    from: ResearchRun
+    to: ResearchVerdict
+    cardinality: one_to_one

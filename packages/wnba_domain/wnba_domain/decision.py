@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import math
 from decimal import Decimal
-from typing import Annotated, Self
+from typing import Annotated, Any, Self
 from uuid import UUID
 
 from pydantic import AwareDatetime, Field, model_validator
@@ -31,11 +31,16 @@ from wnba_domain.market import QuoteKey
 __all__ = [
     "AnalystFeedback",
     "DecisionEpisode",
+    "DialogueMessage",
     "EntryCandidate",
     "EntryLeg",
     "EpisodeOutcome",
     "ErrorAttribution",
     "ForecastScore",
+    "PickLeg",
+    "PickSlip",
+    "PickUpload",
+    "ProjectionDialogue",
     "brier_score",
     "log_loss",
 ]
@@ -281,3 +286,102 @@ class AnalystFeedback(FrozenModel):
     would_repeat: bool
     evidence_ids_marked_useful: tuple[UUID, ...] = Field(default_factory=tuple)
     evidence_ids_marked_misleading: tuple[UUID, ...] = Field(default_factory=tuple)
+
+
+class PickSlip(FrozenModel):
+    """One owner-confirmed entry, recorded for the paper record.
+
+    Always paper: ``is_paper`` is not a default waiting to be flipped but the reason the
+    object exists. There is no wager-placement object in this domain, and this is not one.
+    """
+
+    pick_slip_id: UUID
+    title: Annotated[str, Field(max_length=200)] = ""
+    source: Annotated[str, Field(min_length=1, max_length=20)]
+    status: Annotated[str, Field(min_length=1, max_length=20)]
+    entry_type: Annotated[str, Field(min_length=1, max_length=20)]
+    platform: Annotated[str, Field(max_length=100)] = ""
+    stake: Decimal | None = None
+    potential_payout: Decimal | None = None
+    notes: Annotated[str, Field(max_length=2000)] = ""
+    is_paper: bool
+    created_at: AwareDatetime
+    updated_at: AwareDatetime
+    settled_at: AwareDatetime | None = None
+    legs_won: int | None = None
+    legs_settled: int | None = None
+    realised_multiple: Decimal | None = None
+
+
+class PickLeg(FrozenModel):
+    """One leg of an owner pick slip.
+
+    ``player_name`` is what the owner typed; ``player_id`` is filled at entry time, while
+    the person who typed the name is present. An unresolved name stays text: the leg is
+    recorded but never settles, and nothing fuzzy-binds it after the fact.
+    """
+
+    pick_leg_id: UUID
+    pick_slip_id: UUID
+    projection_id: UUID | None = None
+    player_name: Annotated[str, Field(min_length=1, max_length=120)]
+    prop_type: Annotated[str, Field(min_length=1, max_length=80)]
+    side: Side
+    line: Decimal
+    offered_odds: int | None = None
+    model_probability: Probability | None = None
+    result: Annotated[str, Field(min_length=1, max_length=20)]
+    extraction_confidence: Probability | None = None
+    player_id: UUID | None = None
+    episode_id: UUID | None = None
+    settled_at: AwareDatetime | None = None
+    actual_stat: float | None = None
+    created_at: AwareDatetime
+
+
+class PickUpload(FrozenModel):
+    """A screenshot the owner dropped in, retained with its OCR output and parse status.
+
+    The image's hash is kept so a parsed draft can always be checked against the pixels it
+    came from.
+    """
+
+    upload_id: UUID
+    pick_slip_id: UUID | None = None
+    original_filename: Annotated[str, Field(min_length=1, max_length=200)]
+    content_type: Annotated[str, Field(min_length=1, max_length=50)]
+    storage_path: Annotated[str, Field(min_length=1, max_length=500)]
+    content_sha256: Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
+    ocr_text: str
+    parse_status: Annotated[str, Field(min_length=1, max_length=20)]
+    error: str | None = None
+    created_at: AwareDatetime
+
+
+class ProjectionDialogue(FrozenModel):
+    """The conversation between the owner and the resident analyst about one projection.
+
+    One dialogue per projection per analyst; the messages carry the audit trail.
+    """
+
+    dialogue_id: UUID
+    projection_id: UUID
+    analyst: Annotated[str, Field(min_length=1, max_length=40)]
+    created_at: AwareDatetime
+    updated_at: AwareDatetime
+
+
+class DialogueMessage(FrozenModel):
+    """One message in a projection dialogue -- owner, assistant, or a tool result.
+
+    Write-once: ``payload`` is the exact envelope exchanged with the provider, so the
+    transcript replays verbatim and an answer that cites a tool result can be checked
+    against the row that produced it.
+    """
+
+    message_id: UUID
+    dialogue_id: UUID
+    role: Annotated[str, Field(min_length=1, max_length=20)]
+    content: str
+    payload: dict[str, Any] | None = None
+    created_at: AwareDatetime

@@ -19,6 +19,7 @@ from wnba_domain.base import BitemporalRecord, FrozenModel, Probability
 
 __all__ = [
     "EntityResolutionFailure",
+    "GameAlias",
     "GameId",
     "PlayerAlias",
     "PlayerId",
@@ -118,3 +119,18 @@ class UnresolvedAliasError(LookupError):
             f"unresolved {failure.entity_kind} alias from {failure.source}: "
             f"{failure.source_display_name!r} (id={failure.source_entity_id!r})"
         )
+
+
+class GameAlias(FrozenModel):
+    """A binding between one source's game id and the canonical game.
+
+    The table carries the system time axis; the record asserts no valid-time claim, so it
+    is declared non-temporal rather than pretending to a second axis it does not have.
+    """
+
+    alias_id: UUID
+    game_id: GameId
+    source: SourceName
+    source_game_id: Annotated[str, Field(min_length=1, max_length=200)]
+    system_from: AwareDatetime
+    system_to: AwareDatetime | None = None
