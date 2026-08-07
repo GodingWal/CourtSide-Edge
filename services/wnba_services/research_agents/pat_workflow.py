@@ -78,13 +78,20 @@ def _persist_skeptic_review(cur: Any, run_id: UUID, review: SkepticReview, *, at
     It reuses ``agent_analyses`` rather than gaining a table: a conclusion, a confidence and a
     set of risk flags is exactly the shape of that row. What it never becomes is an
     ``agent_forecasts`` row, because that is the table the consensus average reads.
+
+    The run's own pipeline already writes a skeptic analysis when the run completes, so the
+    second write is a no-op: the first row stands, and this review still reaches the synthesis
+    in-process. Without the conflict guard a re-reviewed run crashed the whole PAT tick on the
+    unique (research_run_id, agent_role) constraint, and one poisoned projection starved every
+    projection queued behind it.
     """
     severity_weight = {"low": 0.25, "moderate": 0.55, "high": 0.85}
     cur.execute(
         """INSERT INTO wnba.agent_analyses
            (analysis_id,research_run_id,agent_role,conclusion,confidence,risk_flags,
             evidence_ids,response_sha256)
-           VALUES (%s,%s,%s,%s,%s,%s,%s,%s)""",
+           VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
+           ON CONFLICT (research_run_id,agent_role) DO NOTHING""",
         (
             uuid4(),
             run_id,
