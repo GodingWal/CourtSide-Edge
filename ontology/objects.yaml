@@ -8,7 +8,7 @@
 # `temporal: bitemporal` means the model inherits BitemporalRecord and carries both time axes.
 # `temporal: immutable` means it is a write-once audit record.
 
-version: 1
+version: 2
 
 groups:
   basketball:
@@ -98,6 +98,13 @@ groups:
           A name we could not bind. Not a warning to be tuned away -- each one is a hole in the
           data through which a forecast can fall.
 
+      - name: GameAlias
+        model: GameAlias
+        temporal: none
+        description: >
+          Binding between a source's game id and the canonical game. The table carries the
+          system time axis only, so the object is declared non-temporal rather than
+          pretending to a valid-time axis it does not have.
   market:
     description: >
       Prices and payout structures. Free data means DFS pick'em, so value comes from a payout
@@ -198,6 +205,34 @@ groups:
         temporal: immutable
         description: Structured human judgement. Free text alone is not a training signal.
 
+      - name: PickSlip
+        model: PickSlip
+        temporal: immutable
+        description: >
+          One owner-confirmed entry, always paper. There is no wager-placement object in
+          this domain and this is not one.
+      - name: PickLeg
+        model: PickLeg
+        temporal: immutable
+        description: >
+          One leg of a pick slip. Player names resolve at entry time; an unresolved name
+          never settles and is never fuzzy-bound after the fact.
+      - name: PickUpload
+        model: PickUpload
+        temporal: immutable
+        description: >
+          A screenshot retained with its hash and OCR output, so a parsed draft can be
+          checked against the pixels it came from.
+      - name: ProjectionDialogue
+        model: ProjectionDialogue
+        temporal: immutable
+        description: The persisted owner/analyst conversation about one projection.
+      - name: DialogueMessage
+        model: DialogueMessage
+        temporal: immutable
+        description: >
+          One dialogue message with the exact provider payload, so the transcript replays
+          verbatim and every cited claim can be checked against its source row.
   research:
     description: >
       PAT-style evidence, claims and hypotheses. Agents explain, challenge and propose; they
@@ -240,6 +275,32 @@ groups:
           A champion-challenger comparison with its primary metric fixed in advance, so the
           result cannot be reinterpreted into whichever metric happened to improve.
 
+      - name: ResearchRun
+        model: ResearchRun
+        temporal: immutable
+        description: >
+          One owner-triggered, audited research engagement: provider, model, token spend
+          and prompt hash, all reconstructable.
+      - name: AgentAnalysis
+        model: AgentAnalysis
+        temporal: immutable
+        description: One agent's cited position inside a research run.
+      - name: ResearchAudit
+        model: ResearchAudit
+        temporal: immutable
+        description: >
+          The data auditor's freshness gate on a run; a blocked verdict is the system
+          refusing to reason over data it cannot stand behind.
+      - name: ResearchVerdict
+        model: ResearchVerdict
+        temporal: immutable
+        description: The skeptic's scored verdict on a run's claims.
+      - name: DecisionSynthesis
+        model: DecisionSynthesis
+        temporal: immutable
+        description: >
+          A run's closing position: model probability against advisory probability, with
+          the disagreement preserved rather than averaged away.
   governance:
     description: Audited actions, data quality, reliability, calibration and drift.
     objects:
@@ -280,3 +341,27 @@ groups:
         model: ModelPromotion
         temporal: immutable
         description: A champion/challenger transition. Always human-approved.
+      - name: AnalystRule
+        model: AnalystRule
+        temporal: immutable
+        description: >
+          A human-reviewable rule proposed from repeated error. Approval is a human act;
+          model-authored rules are labelled as such.
+      - name: RuleFiring
+        model: RuleFiring
+        temporal: immutable
+        description: One rule firing, shadow or live, with the probabilities it moved.
+      - name: ReadinessEvaluation
+        model: ReadinessEvaluation
+        temporal: immutable
+        description: The fail-closed gate between shadow analysis and any real-money discussion.
+      - name: ModelEvaluation
+        model: ModelEvaluation
+        temporal: immutable
+        description: Proper scores for one model component over one evaluation window.
+      - name: DeescalationEvent
+        model: DeescalationEvent
+        temporal: immutable
+        description: >
+          The platform restricting its own exposure after measured drift -- the permitted
+          direction of automation.
