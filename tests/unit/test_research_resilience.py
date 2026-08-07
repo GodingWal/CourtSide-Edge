@@ -8,6 +8,7 @@ itself rewarded hedging, so the safest way to look credible was to answer 0.5 fo
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -18,10 +19,11 @@ from wnba_services.research_agents.advisor import Advisor
 from wnba_services.research_agents.deepseek import (
     AgentForecastDraft,
     DeepSeekResearchClient,
+    FailureMode,
     SkepticReview,
 )
 from wnba_services.research_agents.organization import MINIMUM_CONSENSUS_WEIGHT, synthesize
-from wnba_services.research_agents.pat_workflow import _blind_role
+from wnba_services.research_agents.pat_workflow import _blind_role, _persist_skeptic_review
 
 from tests.fixtures.fake_db import FakeDatabase, statements_matching
 
@@ -268,3 +270,34 @@ def test_a_client_error_is_not_retried() -> None:
         client.challenge(question="q", evidence={})
 
     assert len(attempts) == 1
+
+
+# --------------------------------------------------------------------------------------
+# Re-reviewing a run must not crash the tick
+# --------------------------------------------------------------------------------------
+def test_a_repeated_skeptic_review_is_a_noop_not_a_unique_violation() -> None:
+    """The run's own pipeline already writes a skeptic analysis at completion, so the PAT
+    review's insert must tolerate the conflict. Without it, one re-reviewed projection
+    crashed the whole triggered-research tick and starved everything queued behind it."""
+    database = FakeDatabase()
+    review = SkepticReview(
+        summary="the under case rests on one three-game minute spike",
+        failure_modes=[
+            FailureMode(
+                description="minutes projection leans on a blowout game",
+                severity="moderate",
+                disconfirming_observation="a normal rotation in the next two games",
+                evidence_ids=[uuid4()],
+            )
+        ],
+        fragility="moderate",
+        risk_flags=["sample skew"],
+    )
+
+    _persist_skeptic_review(_cursor(database), RUN, review, at=datetime.now(UTC))
+    _persist_skeptic_review(_cursor(database), RUN, review, at=datetime.now(UTC))
+
+    recorded = statements_matching(database.statements, "INSERT INTO wnba.agent_analyses")
+    assert len(recorded) == 2
+    for statement, _params in recorded:
+        assert "ON CONFLICT (research_run_id,agent_role) DO NOTHING" in statement
