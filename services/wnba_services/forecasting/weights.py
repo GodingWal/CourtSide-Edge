@@ -21,6 +21,11 @@ which components deserve trust -- not about which arithmetic reads them out.
 and returns the prior weights unless the fitted ones beat them on held-out log loss. Fitting
 five free parameters on a few hundred correlated episodes is exactly the situation where an
 in-sample improvement means nothing.
+
+Beating the prior is not enough on its own. If every component is overconfident -- the normal
+state of a young model -- any pooling of them can lose to simply quoting the base rate, while
+still "improving" on whichever weights happened to be the prior. The candidate therefore has to
+beat the holdout base rate as well, fold by fold, or it is refused and the prior stands.
 """
 
 from __future__ import annotations
@@ -101,6 +106,10 @@ class EnsembleWeights:
     log_loss_gain: float = 0.0
     """Out-of-fold log-loss reduction against the prior weights. Zero when unfitted."""
 
+    climatology_gain: float = 0.0
+    """Out-of-fold reduction against quoting the training base rate. The floor every other
+    gain is measured on top of: a pool that cannot beat the base rate is noise with opinions."""
+
     is_fitted: bool = False
 
     def for_components(self, names: Sequence[str]) -> tuple[float, ...]:
@@ -117,6 +126,7 @@ class EnsembleWeights:
             "weights": dict(self.weights),
             "sample_size": self.sample_size,
             "log_loss_gain": self.log_loss_gain,
+            "climatology_gain": self.climatology_gain,
             "is_fitted": self.is_fitted,
         }
 
@@ -128,6 +138,7 @@ class EnsembleWeights:
             weights={str(name): float(value) for name, value in dict(raw).items()},
             sample_size=int(payload.get("sample_size", 0)),
             log_loss_gain=float(payload.get("log_loss_gain", 0.0)),
+            climatology_gain=float(payload.get("climatology_gain", 0.0)),
             is_fitted=bool(payload.get("is_fitted", False)),
         )
 
@@ -208,14 +219,22 @@ def fit_ensemble_weights(
 
     prior_vector = list(baseline.for_components(names))
     gains: list[float] = []
+    base_gains: list[float] = []
     for fold in range(_FOLDS):
         holdout = [row for index, row in enumerate(observations) if index % _FOLDS == fold]
         training = [row for index, row in enumerate(observations) if index % _FOLDS != fold]
         if not holdout or len(training) < len(names) * 10:
             continue
         candidate = _descend(names, training, prior_vector)
-        gains.append(
-            _mean_log_loss(names, prior_vector, holdout) - _mean_log_loss(names, candidate, holdout)
+        candidate_loss = _mean_log_loss(names, candidate, holdout)
+        gains.append(_mean_log_loss(names, prior_vector, holdout) - candidate_loss)
+        # The second benchmark: a constant forecast of the training fold's base rate. This is
+        # deliberately evaluated on the holdout -- a candidate that needed the training rate to
+        # be seen to win is not winning.
+        base_rate = math.fsum(outcome for _, outcome in training) / len(training)
+        base_gains.append(
+            math.fsum(log_loss(base_rate, int(outcome)) for _, outcome in holdout) / len(holdout)
+            - candidate_loss
         )
 
     if not gains:
@@ -225,15 +244,21 @@ def fit_ensemble_weights(
 
     # A mean gain alone is not enough. Five free parameters fitted on a few hundred correlated
     # episodes will beat the prior on one fold by luck often enough to carry the average, so the
-    # improvement must also show up in nearly every fold before it is believed.
+    # improvement must also show up in nearly every fold before it is believed -- against the
+    # prior, and against having no model at all.
     gain = math.fsum(gains) / len(gains)
+    base_gain = math.fsum(base_gains) / len(base_gains)
     consistent = sum(1 for value in gains if value > 0.0) >= math.ceil(len(gains) * 0.8)
-    if gain <= _MINIMUM_GAIN or not consistent:
+    base_consistent = sum(1 for value in base_gains if value > 0.0) >= math.ceil(
+        len(base_gains) * 0.8
+    )
+    if gain <= _MINIMUM_GAIN or base_gain <= 0.0 or not consistent or not base_consistent:
         return EnsembleWeights(
             market=market,
             weights=dict(baseline.weights),
             sample_size=len(observations),
             log_loss_gain=gain,
+            climatology_gain=base_gain,
         )
 
     final = _descend(names, observations, prior_vector)
@@ -242,5 +267,6 @@ def fit_ensemble_weights(
         weights=dict(zip(names, final, strict=True)),
         sample_size=len(observations),
         log_loss_gain=gain,
+        climatology_gain=base_gain,
         is_fitted=True,
     )

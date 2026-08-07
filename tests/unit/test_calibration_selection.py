@@ -226,6 +226,48 @@ def test_weights_round_trip_through_their_payload() -> None:
     assert restored.is_fitted == fitted.is_fitted
 
 
+def test_a_fit_that_cannot_beat_the_base_rate_is_refused() -> None:
+    """Better than the prior is not good enough when the prior was the problem.
+
+    Four loud noise components and one quiet one: shifting every gram of weight onto the quiet
+    component is a large, genuine improvement over the prior weights -- and still only equals
+    quoting the base rate, because none of it predicts anything. The fit must be refused, and
+    the record must show that it *did* beat the prior so the next reviewer sees both halves of
+    the story.
+    """
+    rng = random.Random(9)
+    rows: list[tuple[dict[str, float], float]] = []
+    for _ in range(2000):
+        rows.append(
+            (
+                {
+                    "empirical": rng.uniform(0.05, 0.95),
+                    "hierarchical": rng.uniform(0.05, 0.95),
+                    "player_state": rng.uniform(0.05, 0.95),
+                    "opportunity_conversion": rng.uniform(0.49, 0.51),
+                    "market_prior": rng.uniform(0.05, 0.95),
+                },
+                float(rng.random() < 0.5),
+            )
+        )
+    fitted = fit_ensemble_weights("points", rows)
+    assert fitted.log_loss_gain > 0.002, "the quiet-noise pool really does beat the prior"
+    assert not fitted.is_fitted, "but it does not beat having no model at all"
+    assert fitted.weights == DEFAULT_COMPONENT_WEIGHTS
+
+
+def test_an_adopted_fit_also_beats_the_base_rate() -> None:
+    fitted = fit_ensemble_weights("points", _weight_sample(2000, 31))
+    assert fitted.is_fitted
+    assert fitted.climatology_gain > 0.0
+
+
+def test_the_base_rate_benchmark_round_trips_through_the_payload() -> None:
+    fitted = fit_ensemble_weights("points", _weight_sample(2000, 15))
+    restored = EnsembleWeights.from_payload(fitted.to_payload())
+    assert restored.climatology_gain == pytest.approx(fitted.climatology_gain)
+
+
 # --------------------------------------------------------------------------------------
 # Edge shrinkage
 # --------------------------------------------------------------------------------------
