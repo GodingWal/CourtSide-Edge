@@ -1177,6 +1177,39 @@ def submit_feedback(episode_id: UUID, feedback: FeedbackRequest) -> dict[str, ob
     return {"feedback_id": feedback_id, "stored": True}
 
 
+@app.get("/api/dialogue/{projection_id}")
+def read_dialogue(projection_id: UUID) -> dict[str, object]:
+    """Persisted owner/analyst transcript for one projection."""
+    from wnba_services.dialogue import get_dialogue
+
+    try:
+        view = get_dialogue(projection_id)
+    except Exception as exc:
+        return {"available": False, "reason": str(exc)[:200], "messages": []}
+    return {"available": True, **view.to_payload()}
+
+
+class DialogueMessageRequest(BaseModel):
+    content: Annotated[str, Field(min_length=1, max_length=4000)]
+
+
+@app.post("/api/dialogue/{projection_id}/messages")
+def post_dialogue_message(
+    projection_id: UUID, request: DialogueMessageRequest
+) -> dict[str, object]:
+    """One owner turn. The analyst answers grounded in fixed database reads and public
+    web search; the whole exchange is stored for audit. Analysis-only, as always."""
+    from wnba_services.dialogue import send_message
+
+    try:
+        view = send_message(projection_id, request.content)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return {"available": True, **view.to_payload()}
+
+
 @app.get("/api/learning/proposals")
 def learning_proposals() -> dict[str, object]:
     """Human-reviewable experiments generated from repeated errors."""
