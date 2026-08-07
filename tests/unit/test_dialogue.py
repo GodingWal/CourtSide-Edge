@@ -231,3 +231,68 @@ def test_tool_definitions_have_valid_schema_shape() -> None:
         assert tool["type"] == "function"
         assert tool["function"]["parameters"]["type"] == "object"
         assert tool["function"]["description"]
+
+
+class _ToolLoopClient(_FakeClient):
+    """Requests a tool on every round until the final round forbids it."""
+
+    def _post(self, payload: dict[str, Any]) -> tuple[dict[str, Any], int]:
+        self.payloads.append(payload)
+        if payload["tool_choice"] == "none":
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "content": "Forced final answer grounded in the tool results.",
+                        }
+                    }
+                ]
+            }, 1
+        return {
+            "choices": [
+                {
+                    "message": {
+                        "role": "assistant",
+                        "content": None,
+                        "tool_calls": [
+                            {
+                                "id": f"loop_{len(self.payloads)}",
+                                "type": "function",
+                                "function": {
+                                    "name": "search_web",
+                                    "arguments": json.dumps({"query": "latest news"}),
+                                },
+                            }
+                        ],
+                    }
+                }
+            ]
+        }, 1
+
+
+def test_final_round_forces_a_text_reply(monkeypatch: pytest.MonkeyPatch) -> None:
+    from wnba_services.dialogue.web_search import SearchResult
+
+    connection = _FakeConnection(_projection())
+    monkeypatch.setattr(service, "connect", lambda: connection)
+    monkeypatch.setattr(
+        service,
+        "search_web",
+        lambda query, limit=5: [
+            SearchResult(
+                title="news", url="https://example.com", snippet="snippet"
+            )
+        ],
+    )
+    client = _ToolLoopClient()
+    view = service.send_message(
+        PROJECTION_ID, "why the under?", client=client, max_tool_rounds=2
+    )
+    assert [payload["tool_choice"] for payload in client.payloads] == [
+        "auto",
+        "auto",
+        "none",
+    ]
+    assert view.messages[-1].role == "assistant"
+    assert view.messages[-1].content == "Forced final answer grounded in the tool results."
