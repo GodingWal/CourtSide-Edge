@@ -178,8 +178,9 @@ def _tool_research_findings(context: dict[str, Any]) -> dict[str, Any]:
         if run is None:
             return {"research": None, "note": "No research run exists for this projection yet."}
         cur.execute(
-            """SELECT verdict,rationale,confidence FROM wnba.research_verdicts
-               WHERE research_run_id=%s""",
+            """SELECT caution,agreement,total_claims,contested_claims,
+                      contested_predicates,risk_flags,skeptic_confidence,rationale
+               FROM wnba.research_verdicts WHERE research_run_id=%s""",
             (run["research_run_id"],),
         )
         verdict = cur.fetchone()
@@ -192,7 +193,7 @@ def _tool_research_findings(context: dict[str, Any]) -> dict[str, Any]:
         )
         claims = [dict(row) for row in cur.fetchall()]
         cur.execute(
-            """SELECT status,support_level,notes FROM wnba.research_audits
+            """SELECT status,issues,freshness_seconds FROM wnba.research_audits
                WHERE research_run_id=%s ORDER BY audited_at DESC LIMIT 1""",
             (run["research_run_id"],),
         )
@@ -425,12 +426,15 @@ def send_message(
 
     with connect() as conn, conn.cursor() as cur:
         for _round in range(max_tool_rounds + 1):
+            # The final round forbids tool calls, so a model that keeps retrying a
+            # failed read still owes the owner a written answer instead of a 503.
+            final_round = _round == max_tool_rounds
             envelope, _attempts = client._post(
                 {
                     "model": client.model,
                     "messages": provider_messages,
                     "tools": _TOOL_DEFINITIONS,
-                    "tool_choice": "auto",
+                    "tool_choice": "none" if final_round else "auto",
                     "max_tokens": REPLY_MAX_TOKENS,
                     "stream": False,
                 }
