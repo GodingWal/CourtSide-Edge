@@ -1,14 +1,16 @@
 [Unit]
-Description=Densify closing-line history near lock
+Description=Archive player-prop quotes and game odds every pass
 After=network-online.target docker.service
 
 [Service]
 Type=oneshot
 WorkingDirectory=/opt/wnba/repo
 EnvironmentFile=/opt/wnba/repo/.env
-# Two record-only jobs on one timer: player-prop quotes inside the CLV window, and the ESPN
-# game spreads/totals that a blowout refit needs. The odds snapshot runs every pass -- an
-# opening line is history too -- so it is chained with ';', not gated on the quote poll.
-ExecStart=/bin/bash -lc '/opt/wnba/repo/.venv/bin/wnba lines poll --quiet --near-lock; /opt/wnba/repo/.venv/bin/wnba stats snapshot-odds --quiet'
+# Two record-only jobs on one timer: player-prop quotes, and the ESPN game spreads/totals a
+# blowout refit needs. The quote poll runs every pass now -- a projection frozen on a
+# mid-afternoon quote went stale inside two hours, and the research auditor (correctly)
+# refused to run on it; near-lock-only polling was saving requests on a free endpoint at the
+# cost of blocking research all afternoon. The odds snapshot stays chained with ';'.
+ExecStart=/bin/bash -lc '/opt/wnba/repo/.venv/bin/wnba lines poll --quiet; /opt/wnba/repo/.venv/bin/wnba stats snapshot-odds --quiet'
 TimeoutStartSec=10m
 Nice=9
