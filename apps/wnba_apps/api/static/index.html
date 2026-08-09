@@ -19,6 +19,7 @@
       <button class="nav" data-view="validation" data-mobile="Validate"><span>05</span>Validation</button>
       <button class="nav" data-view="learning" data-mobile="Learn"><span>06</span>Learning</button>
       <button class="nav" data-view="operations" data-mobile="Ops"><span>07</span>Operations</button>
+      <button class="nav" data-view="history" data-mobile="History"><span>08</span>History</button>
     </nav>
     <div class="sidefoot"><span class="pulse"></span><div><b id="connection">Connecting</b><small>Private owner console</small></div></div>
   </aside>
@@ -84,11 +85,19 @@
       <div class="kpis" id="operationKpis"></div>
       <div class="twocol"><section class="card pad"><div class="cardhead flush"><div><label>Pipeline history</label><h2>Recent events</h2></div></div><div class="timeline" id="eventTimeline"></div></section><section class="stack"><section class="card pad"><div class="cardhead flush"><div><label>Official reports</label><h2>Injury state</h2></div></div><div id="injuryList"></div></section><section class="card pad"><div class="cardhead flush"><div><label>Fail closed</label><h2>Data-quality incidents</h2></div></div><div id="incidentList"></div></section></section></div>
     </section>
+  
+    <section class="view" id="view-history">
+      <div class="sectionintro"><div><label>System of record</label><h2>Historical box scores</h2><p>Every game line ESPN has published, ingested as immutable history &mdash; the raw material the feature engine trains on.</p></div></div>
+      <div class="kpis" id="historyKpis"></div>
+      <section class="card"><div class="cardhead"><div><label>Coverage</label><h2>Seasons in the archive</h2></div></div><div class="tablewrap"><table><thead><tr><th>Season</th><th>Games</th><th>With box scores</th><th>Player lines</th><th>Players</th></tr></thead><tbody id="historySeasons"></tbody></table></div></section>
+      <section class="card pad" style="margin-top:17px"><div class="cardhead flush"><div><label>Game logs</label><h2>Player history</h2></div></div><div class="filters"><input id="historySearch" placeholder="Search a player (min 2 letters)" aria-label="Search player history"></div><div id="historyPlayers"></div><div id="historyDetail"></div></section>
+    </section>
   </main>
 </div>
 
 <div class="drawer" id="drawer" role="dialog" aria-modal="true" aria-label="Forecast audit"><button class="backdrop" id="backdrop" aria-label="Close forecast audit"></button><aside tabindex="-1"><div class="sheetgrab" aria-hidden="true"></div><button class="close" id="close" aria-label="Close forecast audit">×</button><div id="drawerBody"></div></aside></div>
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
 <script src="/static/app.js"></script>
+<script src="/static/history.js"></script>
 </body>
 </html>
