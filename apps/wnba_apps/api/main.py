@@ -1247,9 +1247,13 @@ def learning() -> dict[str, object]:
         )
         experiments = [dict(row) for row in cur.fetchall()]
         cur.execute(
-            """SELECT agent_role,domain,sample_size,calibration,evidence_accuracy,
+            # One row per agent: the table holds every scoring round, and the console
+            # panel means "how trusted is this agent now", not "show 25 rounds of history".
+            """SELECT DISTINCT ON (agent_role,domain)
+                      agent_role,domain,sample_size,calibration,evidence_accuracy,
                       credibility,calculated_at
-               FROM wnba.agent_credibility ORDER BY calculated_at DESC LIMIT 100"""
+               FROM wnba.agent_credibility
+               ORDER BY agent_role,domain,calculated_at DESC"""
         )
         credibility = [dict(row) for row in cur.fetchall()]
         cur.execute(
@@ -1498,7 +1502,7 @@ def create_pick(draft: PickSlipDraft) -> dict[str, object]:
             """INSERT INTO wnba.pick_slips
                (pick_slip_id,title,source,status,entry_type,platform,stake,potential_payout,
                 notes,is_paper,created_at,updated_at)
-               VALUES (%s,%s,%s,'confirmed',%s,%s,%s,%s,%s,true,%s,%s)""",
+               VALUES (%s,%s,%s,'confirmed',%s,%s,%s,%s,%s,%s,true,%s,%s)""",
             (
                 slip_id,
                 draft.title,
