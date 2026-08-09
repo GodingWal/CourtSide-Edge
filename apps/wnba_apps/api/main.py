@@ -1502,7 +1502,7 @@ def create_pick(draft: PickSlipDraft) -> dict[str, object]:
             """INSERT INTO wnba.pick_slips
                (pick_slip_id,title,source,status,entry_type,platform,stake,potential_payout,
                 notes,is_paper,created_at,updated_at)
-               VALUES (%s,%s,%s,'confirmed',%s,%s,%s,%s,%s,%s,true,%s,%s)""",
+               VALUES (%s,%s,%s,'confirmed',%s,%s,%s,%s,%s,true,%s,%s)""",
             (
                 slip_id,
                 draft.title,
