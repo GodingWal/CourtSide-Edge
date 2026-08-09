@@ -1641,6 +1641,150 @@ def readiness() -> dict[str, object]:
 
 
 # --------------------------------------------------------------------------------------
+# Learning-loop owner actions. Every one of these calls the same lifecycle function the CLI
+# wraps, under the console's authenticated owner identity. Automation never calls them: the
+# buttons exist so the human gate is a click instead of an SSH session.
+# --------------------------------------------------------------------------------------
+class LearningActionRequest(BaseModel):
+    reason: Annotated[str, Field(min_length=3, max_length=500)]
+
+
+class ExperimentOpenRequest(BaseModel):
+    challenger: Annotated[str, Field(min_length=1, max_length=80)]
+    primary_metric: Literal["log_loss", "brier", "mae", "line_value"] = "brier"
+    minimum_sample: Annotated[int, Field(ge=10, le=10_000)] = 200
+
+
+class ProposalReviewRequest(BaseModel):
+    verdict: Literal["approved", "rejected"]
+    reason: Annotated[str, Field(max_length=500)] = ""
+
+
+@app.post("/api/learning/rules/{rule_id}/approve")
+def approve_analyst_rule(rule_id: str, request: LearningActionRequest) -> dict[str, object]:
+    """Activate one backtested-helpful rule. Recorded under the owner, never automated."""
+    from wnba_services.learning_loop.rule_lifecycle import approve_rule
+
+    try:
+        approval = approve_rule(rule_id, approved_by="owner", reason=request.reason)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return {"rule_id": approval.rule_id, "status": approval.status, "actor": approval.actor}
+
+
+@app.post("/api/learning/rules/{rule_id}/retire")
+def retire_analyst_rule(rule_id: str, request: LearningActionRequest) -> dict[str, object]:
+    """Retire an active rule, preserving its history. Fail closed, always available."""
+    from wnba_services.learning_loop.rule_lifecycle import retire_rule
+
+    try:
+        retirement = retire_rule(rule_id, retired_by="owner", reason=request.reason)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return {
+        "rule_id": retirement.rule_id,
+        "status": retirement.status,
+        "actor": retirement.actor,
+    }
+
+
+@app.post("/api/learning/experiments/open")
+def open_learning_experiment(request: ExperimentOpenRequest) -> dict[str, object]:
+    """Open a shadow champion/challenger comparison. The challenger reaches no forecast."""
+    from wnba_services.learning_loop.experiments import open_experiment
+
+    try:
+        experiment_id = open_experiment(
+            request.challenger,
+            opened_by="owner",
+            primary_metric=request.primary_metric,
+            minimum_sample=request.minimum_sample,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return {"experiment_id": experiment_id, "status": "running"}
+
+
+@app.post("/api/learning/experiments/{experiment_id}/promote")
+def promote_learning_experiment(
+    experiment_id: UUID, request: LearningActionRequest
+) -> dict[str, object]:
+    """Promote a challenger whose stored evaluation clears every gate. Humans only."""
+    from wnba_services.learning_loop.experiments import promote_challenger
+
+    try:
+        promotion = promote_challenger(experiment_id, approved_by="owner", reason=request.reason)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return {
+        "experiment_id": str(promotion.experiment_id),
+        "challenger": promotion.challenger_name,
+        "status": promotion.status,
+        "actor": promotion.actor,
+    }
+
+
+@app.post("/api/learning/experiments/{experiment_id}/rollback")
+def rollback_learning_experiment(
+    experiment_id: UUID, request: LearningActionRequest
+) -> dict[str, object]:
+    """Restore the previous champion. The promotion stays in the record as history."""
+    from wnba_services.learning_loop.experiments import rollback_promotion
+
+    try:
+        rollback = rollback_promotion(experiment_id, rolled_back_by="owner", reason=request.reason)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return {
+        "experiment_id": str(rollback.experiment_id),
+        "challenger": rollback.challenger_name,
+        "status": rollback.status,
+        "actor": rollback.actor,
+    }
+
+
+@app.post("/api/learning/experiments/{experiment_id}/abandon")
+def abandon_learning_experiment(
+    experiment_id: UUID, request: LearningActionRequest
+) -> dict[str, object]:
+    """Stop collecting shadow predictions without reaching a verdict."""
+    from wnba_services.learning_loop.experiments import abandon_experiment
+
+    try:
+        abandoned = abandon_experiment(experiment_id, actor="owner", reason=request.reason)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return {
+        "experiment_id": str(abandoned.experiment_id),
+        "challenger": abandoned.challenger_name,
+        "status": abandoned.status,
+        "actor": abandoned.actor,
+    }
+
+
+@app.post("/api/learning/proposals/{proposal_id}/review")
+def review_learning_proposal(
+    proposal_id: UUID, request: ProposalReviewRequest
+) -> dict[str, object]:
+    """Mark a research proposal approved or rejected; the queue stays human-decided."""
+    from wnba_store.db import connect
+
+    with connect() as conn, conn.cursor() as cur:
+        cur.execute(
+            """UPDATE wnba.research_proposals
+               SET status=%s,approved_by='owner'
+               WHERE proposal_id=%s AND status='proposed'
+               RETURNING proposal_id""",
+            (request.verdict, proposal_id),
+        )
+        if cur.fetchone() is None:
+            raise HTTPException(
+                status_code=422, detail="unknown proposal or already reviewed"
+            )
+    return {"proposal_id": str(proposal_id), "status": request.verdict}
+
+
+# --------------------------------------------------------------------------------------
 # Historical box scores
 # --------------------------------------------------------------------------------------
 @app.get("/api/history")
