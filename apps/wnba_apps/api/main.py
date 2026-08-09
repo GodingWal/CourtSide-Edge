@@ -1232,7 +1232,7 @@ def learning() -> dict[str, object]:
         cur.execute("SELECT * FROM wnba.hypotheses ORDER BY created_at DESC LIMIT 100")
         hypotheses = [dict(row) for row in cur.fetchall()]
         # `e.*` already carries `challenger_name` since migration 025, so aliasing
-        # `champion.name` to the same label put two columns of that name in the result set and
+        # `challenger.name` to the same label put two columns of that name in the result set and
         # left `dict(row)` to silently keep whichever came last. They hold identical strings today
         # only because `ensure_challenger_version` writes both from `challenger.name`; the
         # champion alias is the one that is actually needed.
