@@ -1498,7 +1498,7 @@ def create_pick(draft: PickSlipDraft) -> dict[str, object]:
             """INSERT INTO wnba.pick_slips
                (pick_slip_id,title,source,status,entry_type,platform,stake,potential_payout,
                 notes,is_paper,created_at,updated_at)
-               VALUES (%s,%s,%s,'confirmed',%s,%s,%s,%s,%s,true,%s,%s)""",
+               VALUES (%s,%s,%s,'confirmed',%s,%s,%s,%s,%s,%s,true,%s,%s)""",
             (
                 slip_id,
                 draft.title,
@@ -1634,3 +1634,122 @@ def readiness() -> dict[str, object]:
         )
         gates = [dict(row) for row in cur.fetchall()]
     return {"available": True, "evaluation": dict(evaluation), "gates": gates}
+
+
+# --------------------------------------------------------------------------------------
+# Historical box scores
+# --------------------------------------------------------------------------------------
+@app.get("/api/history")
+def history_coverage() -> dict[str, object]:
+    """How much history the archive actually holds, per season.
+
+    Same honesty rule as the market archive: this reports what is in the database, not what
+    we wish was there. A season with games but no lines is listed plainly.
+    """
+    from wnba_store.db import connect
+
+    with connect() as conn, conn.cursor() as cur:
+        cur.execute(
+            """SELECT g.season_year,
+                      count(DISTINCT g.game_id)  AS games,
+                      count(DISTINCT l.game_id)  AS games_with_lines,
+                      count(l.line_id)           AS player_lines,
+                      count(DISTINCT l.player_id) AS players
+               FROM wnba.games g
+               LEFT JOIN wnba.player_game_lines l
+                 ON l.game_id = g.game_id AND l.system_to IS NULL
+               GROUP BY g.season_year ORDER BY g.season_year"""
+        )
+        seasons = [dict(row) for row in cur.fetchall()]
+    return {
+        "available": True,
+        "seasons": seasons,
+        "note": (
+            "Complete box scores from ESPN, ingested as the system of record. "
+            "This is the raw material the feature engine trains on."
+        ),
+    }
+
+
+@app.get("/api/history/players")
+def history_players(q: str = "") -> dict[str, object]:
+    """Find players with historical box scores by (partial) name. Exact data only."""
+    from wnba_store.db import connect
+
+    needle = q.strip()
+    if len(needle) < 2:
+        return {"available": True, "players": []}
+    with connect() as conn, conn.cursor() as cur:
+        cur.execute(
+            """SELECT p.player_id, p.full_name, p.position,
+                      count(l.line_id) AS games,
+                      min(g.scheduled_tipoff)::date AS first_game,
+                      max(g.scheduled_tipoff)::date AS last_game
+               FROM wnba.players p
+               JOIN wnba.player_game_lines l
+                 ON l.player_id = p.player_id AND l.system_to IS NULL
+               JOIN wnba.games g ON g.game_id = l.game_id
+               WHERE p.full_name ILIKE %s
+               GROUP BY p.player_id, p.full_name, p.position
+               ORDER BY games DESC LIMIT 20""",
+            (f"%{needle}%",),
+        )
+        players = [dict(row) for row in cur.fetchall()]
+    return {"available": True, "players": players}
+
+
+@app.get("/api/history/player/{player_id}")
+def history_player(player_id: str) -> dict[str, object]:
+    """One player's game log and per-season averages, straight from the box scores."""
+    from wnba_store.db import connect
+
+    with connect() as conn, conn.cursor() as cur:
+        cur.execute(
+            "SELECT player_id, full_name, position FROM wnba.players WHERE player_id=%s",
+            (player_id,),
+        )
+        player = cur.fetchone()
+        if player is None:
+            raise HTTPException(status_code=404, detail="Unknown player")
+        cur.execute(
+            """SELECT g.season_year, count(*) AS games,
+                      round(avg(l.minutes)::numeric, 1) AS minutes,
+                      round(avg(l.points)::numeric, 1) AS points,
+                      round(
+                          avg(l.rebounds_offensive + l.rebounds_defensive)::numeric, 1
+                      ) AS rebounds,
+                      round(avg(l.assists)::numeric, 1) AS assists,
+                      round(avg(l.three_pointers_made)::numeric, 2) AS threes
+               FROM wnba.player_game_lines l
+               JOIN wnba.games g ON g.game_id = l.game_id
+               WHERE l.player_id = %s AND l.system_to IS NULL
+               GROUP BY g.season_year ORDER BY g.season_year""",
+            (player_id,),
+        )
+        seasons = [dict(row) for row in cur.fetchall()]
+        cur.execute(
+            """SELECT g.scheduled_tipoff::date AS game_date, g.season_year,
+                      t.abbreviation AS team,
+                      CASE WHEN l.team_id = g.home_team_id THEN at2.abbreviation
+                           ELSE ht.abbreviation END AS opponent,
+                      (l.team_id = g.home_team_id) AS is_home,
+                      round(l.minutes::numeric, 1) AS minutes,
+                      l.points, l.rebounds_offensive + l.rebounds_defensive AS rebounds,
+                      l.assists, l.three_pointers_made AS threes,
+                      l.steals, l.blocks, l.turnovers
+               FROM wnba.player_game_lines l
+               JOIN wnba.games g ON g.game_id = l.game_id
+               JOIN wnba.teams t ON t.team_id = l.team_id
+               JOIN wnba.teams ht ON ht.team_id = g.home_team_id
+               JOIN wnba.teams at2 ON at2.team_id = g.away_team_id
+               WHERE l.player_id = %s AND l.system_to IS NULL
+               ORDER BY g.scheduled_tipoff DESC LIMIT 60""",
+            (player_id,),
+        )
+        games = [dict(row) for row in cur.fetchall()]
+    return {
+        "available": True,
+        "player": dict(player),
+        "seasons": seasons,
+        "games": games,
+    }
