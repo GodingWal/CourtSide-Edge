@@ -38,10 +38,7 @@ def _inputs() -> SimpleNamespace:
 
 
 def _champion() -> SimpleNamespace:
-    components = tuple(
-        SimpleNamespace(name=name, mean=20.0, over=0.55)
-        for name in COMPONENT_NAMES
-    )
+    components = tuple(SimpleNamespace(name=name, mean=20.0, over=0.55) for name in COMPONENT_NAMES)
     return SimpleNamespace(
         components=components,
         mean=20.2,

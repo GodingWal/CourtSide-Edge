@@ -73,9 +73,7 @@ def _feature_vector(
     )
 
 
-def _features_from_champion(
-    inputs: ScoringInputs, champion: ScoredForecast
-) -> list[float]:
+def _features_from_champion(inputs: ScoringInputs, champion: ScoredForecast) -> list[float]:
     by_name = {component.name: component for component in champion.components}
     return _feature_vector(
         component_means={name: by_name[name].mean for name in COMPONENT_NAMES if name in by_name},
@@ -174,9 +172,7 @@ def fit_boosted_challengers(
                 "verbose": -1,
                 "seed": 0,
             },
-            lgb.Dataset(
-                np.asarray(x_train), label=y_train, feature_name=list(FEATURE_NAMES)
-            ),
+            lgb.Dataset(np.asarray(x_train), label=y_train, feature_name=list(FEATURE_NAMES)),
             num_boost_round=300,
             valid_sets=[lgb.Dataset(np.asarray(x_valid), label=y_valid)],
         )

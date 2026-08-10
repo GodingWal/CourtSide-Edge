@@ -29,6 +29,7 @@ worse sets the verdict to ``subgroup_degradation`` regardless of how good the ag
 from __future__ import annotations
 
 import math
+import random
 import time
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -84,6 +85,7 @@ MINIMUM_SUBGROUP_SAMPLE = 40
 # separated by the seed.
 MATERIAL_LOG_LOSS_GAIN = 0.005
 SUBGROUP_DEGRADATION = 0.02
+BOOTSTRAP_ITERATIONS = 1_000
 
 _LINE_BUCKETS: tuple[tuple[str, float, float], ...] = (
     ("line_lt_6", 0.0, 6.0),
@@ -456,6 +458,73 @@ def _paired_log_loss_gain(rows: Sequence[Mapping[str, Any]]) -> tuple[float, flo
     return mean, mean / math.sqrt(variance / len(differences))
 
 
+def _loss_difference(row: Mapping[str, Any]) -> float:
+    return log_loss(float(str(row["predicted_probability"])), int(bool(row["hit"]))) - log_loss(
+        float(str(row["challenger_probability"])), int(bool(row["hit"]))
+    )
+
+
+def _cluster_key(row: Mapping[str, Any], dimension: str) -> str:
+    if dimension == "date":
+        tip = row.get("scheduled_tipoff")
+        return tip.date().isoformat() if isinstance(tip, datetime) else "unknown"
+    return str(row.get(dimension) or "unknown")
+
+
+def _cluster_bootstrap_interval(
+    rows: Sequence[Mapping[str, Any]],
+    *,
+    dimension: str,
+    alpha: float,
+    iterations: int = BOOTSTRAP_ITERATIONS,
+) -> tuple[float | None, float | None, int]:
+    """Cluster-resampled interval for paired log-loss gain.
+
+    Props from one game, player, or slate are correlated. Resampling those clusters keeps that
+    dependence intact instead of pretending every prop is a new independent experiment.
+    """
+    clusters: dict[str, list[float]] = {}
+    for row in rows:
+        clusters.setdefault(_cluster_key(row, dimension), []).append(_loss_difference(row))
+    keys = sorted(clusters)
+    if len(keys) < 2:
+        return None, None, len(keys)
+    seed = f"{dimension}:{len(rows)}:{','.join(keys)}"
+    rng = random.Random(seed)
+    draws: list[float] = []
+    for _ in range(iterations):
+        values: list[float] = []
+        for _ in keys:
+            values.extend(clusters[rng.choice(keys)])
+        draws.append(math.fsum(values) / len(values))
+    draws.sort()
+    lower_index = max(0, math.floor((alpha / 2.0) * (len(draws) - 1)))
+    upper_index = min(len(draws) - 1, math.ceil((1.0 - alpha / 2.0) * (len(draws) - 1)))
+    return draws[lower_index], draws[upper_index], len(keys)
+
+
+def _robust_gain_interval(rows: Sequence[Mapping[str, Any]], *, alpha: float) -> dict[str, Any]:
+    intervals: dict[str, dict[str, Any]] = {}
+    valid: list[tuple[float, float]] = []
+    for dimension in ("game_id", "player_id", "date"):
+        lower, upper, clusters = _cluster_bootstrap_interval(rows, dimension=dimension, alpha=alpha)
+        intervals[dimension] = {
+            "clusters": clusters,
+            "lower": _rounded(lower),
+            "upper": _rounded(upper),
+        }
+        if lower is not None and upper is not None:
+            valid.append((lower, upper))
+    return {
+        "method": "paired_cluster_bootstrap",
+        "iterations": BOOTSTRAP_ITERATIONS,
+        "alpha": alpha,
+        "lower": None if not valid else min(value[0] for value in valid),
+        "upper": None if not valid else max(value[1] for value in valid),
+        "by_cluster": intervals,
+    }
+
+
 def _subgroup_rows(rows: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
     groups: dict[tuple[str, str], list[Mapping[str, Any]]] = {}
     for row in rows:
@@ -464,17 +533,27 @@ def _subgroup_rows(rows: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
         groups.setdefault(("time_before_tip", _lead_bucket(row)), []).append(row)
 
     reported: list[dict[str, Any]] = []
+    adjusted_alpha = 0.05 / max(1, len(groups))
     for (dimension, value), members in sorted(groups.items()):
         gain, _ = _paired_log_loss_gain(members)
+        interval = _robust_gain_interval(members, alpha=adjusted_alpha)
         champion = _score(members, "predicted_probability")
         challenger = _score(members, "challenger_probability")
-        degraded = len(members) >= MINIMUM_SUBGROUP_SAMPLE and gain <= -SUBGROUP_DEGRADATION
+        degraded = (
+            len(members) >= MINIMUM_SUBGROUP_SAMPLE
+            and gain <= -SUBGROUP_DEGRADATION
+            and interval["upper"] is not None
+            and float(interval["upper"]) < 0.0
+        )
         reported.append(
             {
                 "dimension": dimension,
                 "value": value,
                 "sample_size": len(members),
                 "log_loss_gain": _rounded(gain),
+                "gain_ci_lower": _rounded(interval["lower"]),
+                "gain_ci_upper": _rounded(interval["upper"]),
+                "adjusted_alpha": adjusted_alpha,
                 "champion_log_loss": _rounded(champion.log_loss),
                 "challenger_log_loss": _rounded(challenger.log_loss),
                 "champion_calibration_error": _rounded(champion.calibration_error),
@@ -525,11 +604,17 @@ def _verdict(
     gain: float,
     statistic: float | None,
     subgroups: Sequence[Mapping[str, Any]],
+    confidence_lower: float | None = None,
+    confidence_upper: float | None = None,
 ) -> str:
     if independent < minimum_sample:
         return "insufficient_sample"
     if any(bool(group["degraded"]) for group in subgroups):
         return "subgroup_degradation"
+    if confidence_lower is not None and confidence_upper is not None:
+        if abs(gain) < MATERIAL_LOG_LOSS_GAIN or confidence_lower <= 0.0 <= confidence_upper:
+            return "no_difference"
+        return "challenger_better" if confidence_lower > 0.0 else "challenger_worse"
     if abs(gain) < MATERIAL_LOG_LOSS_GAIN or statistic is None or abs(statistic) < 2.0:
         return "no_difference"
     return "challenger_better" if gain > 0 else "challenger_worse"
@@ -551,7 +636,9 @@ def evaluate_experiments(*, now: datetime | None = None) -> list[ExperimentEvalu
                FROM wnba.experiments
                WHERE status IN ('running','evaluated') ORDER BY started_at"""
         )
-        for experiment in [dict(row) for row in cur.fetchall()]:
+        active = [dict(row) for row in cur.fetchall()]
+        adjusted_alpha = 0.05 / max(1, len(active))
+        for experiment in active:
             experiment_id = UUID(str(experiment["experiment_id"]))
             cur.execute(
                 """SELECT d.episode_id,d.player_id,d.game_id,d.prop_type,d.side,d.line,
@@ -574,6 +661,7 @@ def evaluate_experiments(*, now: datetime | None = None) -> list[ExperimentEvalu
             champion = _score(rows, "predicted_probability")
             challenger = _score(rows, "challenger_probability")
             gain, statistic = _paired_log_loss_gain(rows)
+            inference = _robust_gain_interval(rows, alpha=adjusted_alpha)
             subgroups = _subgroup_rows(rows)
             minimum_sample = int(str(experiment["minimum_sample"]))
             verdict = _verdict(
@@ -582,12 +670,21 @@ def evaluate_experiments(*, now: datetime | None = None) -> list[ExperimentEvalu
                 gain=gain,
                 statistic=statistic,
                 subgroups=subgroups,
+                confidence_lower=inference["lower"],
+                confidence_upper=inference["upper"],
             )
             metrics = {
                 "champion": champion.to_payload(),
                 "challenger": challenger.to_payload(),
                 "paired_log_loss_gain": _rounded(gain),
                 "paired_t_statistic": _rounded(statistic),
+                "paired_gain_confidence_interval": {
+                    **inference,
+                    "lower": _rounded(inference["lower"]),
+                    "upper": _rounded(inference["upper"]),
+                    "family_size": len(active),
+                    "multiple_comparison_correction": "bonferroni",
+                },
                 "material_gain_threshold": MATERIAL_LOG_LOSS_GAIN,
                 "sample_shape": shape.to_payload(),
                 "minimum_sample": minimum_sample,

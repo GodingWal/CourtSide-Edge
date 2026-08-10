@@ -85,9 +85,7 @@ class _Connection:
 
 def test_recommendation_decision_records_the_owner(monkeypatch: pytest.MonkeyPatch) -> None:
     episode_id = uuid4()
-    monkeypatch.setattr(
-        "wnba_store.db.connect", lambda: _Connection({"episode_id": episode_id})
-    )
+    monkeypatch.setattr("wnba_store.db.connect", lambda: _Connection({"episode_id": episode_id}))
     body = client.post(
         f"/api/recommendations/{episode_id}/decision", json={"decision": "accepted"}
     ).json()

@@ -291,8 +291,6 @@ def _edge_over_breakeven(row: dict[str, object]) -> float | None:
     return float(str(shrunk)) - float(str(breakeven))
 
 
-
-
 def _drivers_and_flags(row: dict[str, object]) -> tuple[list[str], list[str]]:
     """Explain one forecast in the owner's language, from fields already on the row.
 
@@ -818,6 +816,10 @@ def forecasts() -> dict[str, object]:
                           d.episode_id,d.side,d.predicted_probability,d.model_disagreement,
                           d.system_recommendation,d.shrunk_probability,d.breakeven_probability,
                           d.decision_reason,q.source,
+                          (fs.features->>'probability_lower_bound')::double precision
+                            AS probability_lower_bound,
+                          (fs.features->>'uncertainty_standard_error')::double precision
+                            AS uncertainty_standard_error,
                           g.scheduled_tipoff,i.designation AS injury_designation,
                           i.detail AS injury_detail,r.availability_probability,
                           r.start_probability,r.closing_lineup_probability,
@@ -839,6 +841,8 @@ def forecasts() -> dict[str, object]:
                    JOIN wnba.players p ON p.player_id=f.player_id
                    JOIN wnba.decision_episodes d ON d.model_run_id=f.model_run_id
                      AND d.quote_id=f.quote_id
+                   JOIN wnba.feature_snapshots fs
+                     ON fs.feature_snapshot_id=f.feature_snapshot_id
                    JOIN wnba.prop_quotes q ON q.quote_id=f.quote_id
                    JOIN wnba.games g ON g.game_id=f.game_id
                    JOIN wnba.teams ht ON ht.team_id=g.home_team_id
@@ -1093,16 +1097,12 @@ def performance() -> dict[str, object]:
         "error_attributions": error_attributions,
         "candidate_drawdown": _max_drawdown(
             [
-                (1.0 / float(str(r["breakeven_probability"])) - 1.0)
-                if r["hit"]
-                else -1.0
+                (1.0 / float(str(r["breakeven_probability"])) - 1.0) if r["hit"] else -1.0
                 for r in candidate_record
             ]
         ),
         "candidate_units": sum(
-            (1.0 / float(str(r["breakeven_probability"])) - 1.0)
-            if r["hit"]
-            else -1.0
+            (1.0 / float(str(r["breakeven_probability"])) - 1.0) if r["hit"] else -1.0
             for r in candidate_record
         ),
         "candidate_record_length": len(candidate_record),
@@ -1387,6 +1387,7 @@ def learning_proposals() -> dict[str, object]:
 @app.get("/api/learning")
 def learning() -> dict[str, object]:
     """One read-only view of the closed learning loop and its human review queue."""
+    from wnba_services.forecasting.challengers import challenger_names
     from wnba_store.db import connect
 
     with connect() as conn, conn.cursor() as cur:
@@ -1479,6 +1480,7 @@ def learning() -> dict[str, object]:
         "rule_firings": rule_firings,
         "advisories": advisories,
         "deescalations": deescalations,
+        "challengers": list(challenger_names()),
     }
 
 
@@ -1948,9 +1950,7 @@ def learning_memory() -> dict[str, object]:
     if procedures_path.exists():
         import yaml
 
-        procedures = list(
-            (yaml.safe_load(procedures_path.read_text()) or {}).get("procedures", [])
-        )
+        procedures = list((yaml.safe_load(procedures_path.read_text()) or {}).get("procedures", []))
     with connect() as conn, conn.cursor() as cur:
         cur.execute(
             """SELECT name,status,confidence,supporting_count,contradicting_count,
@@ -1999,7 +1999,7 @@ class LearningActionRequest(BaseModel):
 
 class ExperimentOpenRequest(BaseModel):
     challenger: Annotated[str, Field(min_length=1, max_length=80)]
-    primary_metric: Literal["log_loss", "brier", "mae", "line_value"] = "brier"
+    primary_metric: Literal["log_loss", "brier", "mae", "line_value"] = "log_loss"
     minimum_sample: Annotated[int, Field(ge=10, le=10_000)] = 200
 
 
@@ -2126,9 +2126,7 @@ def review_learning_proposal(
             (request.verdict, proposal_id),
         )
         if cur.fetchone() is None:
-            raise HTTPException(
-                status_code=422, detail="unknown proposal or already reviewed"
-            )
+            raise HTTPException(status_code=422, detail="unknown proposal or already reviewed")
     return {"proposal_id": str(proposal_id), "status": request.verdict}
 
 

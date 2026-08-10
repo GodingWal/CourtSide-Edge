@@ -126,8 +126,6 @@ def classify_error(
     return "random_variance", False, 0.6, None
 
 
-
-
 def error_contribution(
     *,
     actual_minutes: float,
@@ -155,9 +153,7 @@ def error_contribution(
     }
 
 
-def _causal_chain(
-    cur: Any, episode: dict[str, Any], *, primary: str | None
-) -> list[str]:
+def _causal_chain(cur: Any, episode: dict[str, Any], *, primary: str | None) -> list[str]:
     """Trace one attribution back through what the system knew, root cause last.
 
     The plan's example chain -- lost recommendation, projection too high, minutes too high,
@@ -170,8 +166,8 @@ def _causal_chain(
         stat_error = float(str(episode["actual_stat"])) - float(str(episode["projected_mean"]))
         direction = "low" if stat_error > 0 else "high"
         chain.append(f"projection too {direction}")
-        minutes_error = (
-            float(str(episode["actual_minutes"])) - float(str(episode["projected_minutes"]))
+        minutes_error = float(str(episode["actual_minutes"])) - float(
+            str(episode["projected_minutes"])
         )
         if primary == "minutes_projection":
             chain.append(f"minutes too {'low' if minutes_error > 0 else 'high'}")
@@ -252,9 +248,7 @@ def evaluate_models(*, now: datetime | None = None) -> EvaluationBatch:
                         {
                             "method": "scored-causes-v2",
                             "human_reviewed": False,
-                            "secondary_errors": (
-                                [] if secondary is None else [secondary]
-                            ),
+                            "secondary_errors": ([] if secondary is None else [secondary]),
                             "error_contribution": episode.get("error_contribution"),
                             "causal_chain": chain,
                         }

@@ -52,8 +52,10 @@ scorer before this section can say anything.
 Three sets of parameters are learned from settled episodes and stored in
 `wnba.fitted_parameters`, superseded rather than overwritten:
 
-- **Calibration maps** — isotonic, per market, shrunk toward the identity by sample size, and
-  adopted only when they beat the raw probabilities out of fold in nearly every fold.
+- **Calibration maps** — isotonic and regularized logistic (Platt) candidates, per market,
+  shrunk toward the identity by sample size. The method with the best held-out log loss is
+  adopted only when it beats raw probabilities consistently across rolling-origin folds, where
+  every validation episode occurs after the map's training data.
 - **Ensemble weights** — fitted on held-out log loss over the simplex, adopted under the same
   consistency requirement.
 - **Edge shrinkage** — the fraction of an apparent edge that survives regression to the mean,
@@ -64,9 +66,11 @@ correct output rather than a degraded one.
 
 ## Selection
 
-Candidates are gated on the **shrunk** probability against the break-even implied by the payout
-table — 57.7% per leg for a two-leg power play — plus a 2% margin. The previous fixed `0.58`
-threshold was unconnected to any product and was applied to an unshrunk edge.
+Candidates are gated on the **shrunk** probability and its conservative one-sided lower bound
+against the break-even implied by the payout table — 57.7% per leg for a two-leg power play —
+plus a 2% margin. The bound combines component disagreement with the sampling uncertainty of the
+settled shrinkage record. The previous fixed `0.58` threshold was unconnected to any product and
+was applied to an unshrunk edge.
 
 ## Known limitations
 
@@ -118,6 +122,8 @@ promotion in the record. A model that was promoted and then withdrawn is a more 
 a model that was never promoted.
 
 Experiments are scored **paired** on identical episodes, deduplicated to one row per market, and
-gated on the effective sample after the within-game clustering correction. An episode a challenger
-failed to score is dropped from both sides; its failure is still counted in the experiment's
-failure rate.
+gated on the effective sample after the within-game clustering correction. Confidence intervals
+come from deterministic paired cluster bootstraps by game, player, and slate date; the most
+conservative bounds are used, and simultaneous experiments and subgroup checks receive a
+Bonferroni correction. An episode a challenger failed to score is dropped from both sides; its
+failure is still counted in the experiment's failure rate.

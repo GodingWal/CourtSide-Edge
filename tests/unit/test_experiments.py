@@ -20,6 +20,7 @@ from wnba_services.learning_loop.experiments import (
     MATERIAL_LOG_LOSS_GAIN,
     MINIMUM_SUBGROUP_SAMPLE,
     _paired_log_loss_gain,
+    _robust_gain_interval,
     _score,
     _subgroup_rows,
     _verdict,
@@ -127,7 +128,6 @@ def test_the_comparison_is_paired_not_two_separate_averages() -> None:
 
 def test_a_challenger_that_is_confidently_wrong_loses() -> None:
     rows = _pairs(60, edge=-0.25)
-
     gain, statistic = _paired_log_loss_gain(rows)
 
     assert gain < 0
@@ -140,6 +140,31 @@ def test_a_challenger_that_is_confidently_wrong_loses() -> None:
             subgroups=[],
         )
         == "challenger_worse"
+    )
+
+
+def test_cluster_bootstrap_reports_all_dependence_dimensions_deterministically() -> None:
+    rows = _pairs(120, edge=0.08)
+    first = _robust_gain_interval(rows, alpha=0.05)
+    second = _robust_gain_interval(rows, alpha=0.05)
+
+    assert first == second
+    assert first["lower"] is not None and first["lower"] > 0.0
+    assert set(first["by_cluster"]) == {"game_id", "player_id", "date"}
+
+
+def test_interval_that_crosses_zero_cannot_promote_a_challenger() -> None:
+    assert (
+        _verdict(
+            independent=300,
+            minimum_sample=200,
+            gain=0.02,
+            statistic=4.0,
+            subgroups=[],
+            confidence_lower=-0.001,
+            confidence_upper=0.04,
+        )
+        == "no_difference"
     )
 
 

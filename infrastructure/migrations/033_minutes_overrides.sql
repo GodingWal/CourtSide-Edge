@@ -1,4 +1,6 @@
 -- Owner minutes overrides: the recorded action of a named human, never silent edits.
+BEGIN;
+
 CREATE TABLE IF NOT EXISTS wnba.minutes_overrides (
     override_id uuid PRIMARY KEY,
     player_id uuid NOT NULL REFERENCES wnba.players(player_id),
@@ -11,3 +13,5 @@ CREATE TABLE IF NOT EXISTS wnba.minutes_overrides (
 );
 CREATE INDEX IF NOT EXISTS minutes_overrides_live_idx
     ON wnba.minutes_overrides (player_id, game_id) WHERE superseded_at IS NULL;
+
+COMMIT;

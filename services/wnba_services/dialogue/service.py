@@ -405,9 +405,7 @@ def send_message(
                WHERE dialogue_id=%s ORDER BY created_at DESC LIMIT %s""",
             (dialogue_id, MAX_REPLAY_MESSAGES),
         )
-        history = [
-            row["payload"] for row in cast(list[dict[str, Any]], cur.fetchall())
-        ][::-1]
+        history = [row["payload"] for row in cast(list[dict[str, Any]], cur.fetchall())][::-1]
 
         _append_message(
             cur,

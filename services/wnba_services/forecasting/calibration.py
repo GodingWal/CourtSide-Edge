@@ -5,15 +5,13 @@ incidents when it drifted, and wrote ``automatic_response = 'reduce_confidence'`
 incident row. Nothing read that column. The system could see that it was, say, systematically
 returning 0.62 for events that happen 0.56 of the time -- and then went on returning 0.62.
 
-This module closes that loop. It fits an isotonic map from settled episodes and applies it
-between the ensemble and the decision gate, so a measured bias is corrected rather than merely
-logged.
+This module closes that loop. It compares isotonic and regularized logistic (Platt) maps from
+settled episodes and applies the one that performs best out of sample between the ensemble and
+the decision gate, so a measured bias is corrected rather than merely logged.
 
-**Why isotonic and not Platt.** Miscalibration here is not a single logistic slope: the
-components are pooled, clipped and multiplied by bounded adjustments, which distorts different
-parts of the probability range differently. Isotonic regression assumes only monotonicity --
-that a higher raw probability should never map to a lower calibrated one -- which is the one
-property we genuinely believe.
+**Why compare both.** Platt scaling is stable when the error is mostly global overconfidence;
+isotonic is flexible when different probability bands are distorted differently. Choosing by
+held-out log loss avoids baking either assumption into production.
 
 **Why it is shrunk toward the identity.** Isotonic regression is non-parametric and will
 happily carve a step function out of two hundred noisy points. :meth:`CalibrationMap.apply`
@@ -125,10 +123,13 @@ class CalibrationMap:
     sample_size: int
     fitted_log_loss_gain: float = 0.0
     """Mean log-loss reduction measured out of fold. Zero for the identity map."""
+    method: str = "isotonic"
+    intercept: float = 0.0
+    slope: float = 1.0
 
     @property
     def is_identity(self) -> bool:
-        return not self.knots
+        return self.method == "identity" or (self.method == "isotonic" and not self.knots)
 
     @property
     def shrinkage(self) -> float:
@@ -142,7 +143,11 @@ class CalibrationMap:
         raw = min(1.0, max(0.0, probability))
         if self.is_identity:
             return raw
-        fitted = _interpolate_knots(self.knots, raw)
+        fitted = (
+            _apply_platt(self.intercept, self.slope, raw)
+            if self.method == "platt"
+            else _interpolate_knots(self.knots, raw)
+        )
         blended = self.shrinkage * fitted + (1.0 - self.shrinkage) * raw
         return min(1.0 - _PROBABILITY_FLOOR, max(_PROBABILITY_FLOOR, blended))
 
@@ -152,20 +157,103 @@ class CalibrationMap:
             "knots": [[x, y] for x, y in self.knots],
             "sample_size": self.sample_size,
             "fitted_log_loss_gain": self.fitted_log_loss_gain,
+            "method": self.method,
+            "intercept": self.intercept,
+            "slope": self.slope,
         }
 
     @classmethod
     def from_payload(cls, payload: dict[str, Any]) -> CalibrationMap:
         raw_knots = payload.get("knots") or []
+        method = str(payload.get("method") or ("isotonic" if raw_knots else "identity"))
         return cls(
             market=str(payload.get("market", "unknown")),
             knots=tuple((float(knot[0]), float(knot[1])) for knot in raw_knots),
             sample_size=int(payload.get("sample_size", 0)),
             fitted_log_loss_gain=float(payload.get("fitted_log_loss_gain", 0.0)),
+            method=method,
+            intercept=float(payload.get("intercept", 0.0)),
+            slope=float(payload.get("slope", 1.0)),
         )
 
 
-IDENTITY = CalibrationMap(market="identity", knots=(), sample_size=0)
+IDENTITY = CalibrationMap(market="identity", knots=(), sample_size=0, method="identity")
+
+
+def _logit(probability: float) -> float:
+    clipped = min(1.0 - 1e-6, max(1e-6, probability))
+    return math.log(clipped / (1.0 - clipped))
+
+
+def _apply_platt(intercept: float, slope: float, probability: float) -> float:
+    value = max(-30.0, min(30.0, intercept + slope * _logit(probability)))
+    return 1.0 / (1.0 + math.exp(-value))
+
+
+def _fit_platt(points: Sequence[tuple[float, float]]) -> tuple[float, float]:
+    """Small L2-regularized logistic fit on raw forecast logits."""
+    intercept, slope = 0.0, 1.0
+    penalty = 1.0
+    for _ in range(50):
+        g0 = g1 = 0.0
+        h00 = h01 = h11 = 0.0
+        for probability, outcome in points:
+            x = _logit(probability)
+            fitted = _apply_platt(intercept, slope, probability)
+            error = fitted - outcome
+            weight = fitted * (1.0 - fitted)
+            g0 += error
+            g1 += error * x
+            h00 += weight
+            h01 += weight * x
+            h11 += weight * x * x
+        g1 += penalty * (slope - 1.0)
+        h11 += penalty
+        determinant = h00 * h11 - h01 * h01
+        if determinant <= 1e-12:
+            break
+        step0 = (h11 * g0 - h01 * g1) / determinant
+        step1 = (-h01 * g0 + h00 * g1) / determinant
+        intercept -= step0
+        slope = max(0.05, min(5.0, slope - step1))
+        if max(abs(step0), abs(step1)) < 1e-7:
+            break
+    return intercept, slope
+
+
+def _rolling_splits(
+    points: Sequence[tuple[float, float]], folds: int
+) -> list[tuple[Sequence[tuple[float, float]], Sequence[tuple[float, float]]]]:
+    """Expanding-window splits; callers provide points in forecast-time order."""
+    if len(points) < folds * 2:
+        return []
+    block = len(points) // (folds + 1)
+    if block < 2:
+        return []
+    return [
+        (
+            points[: block * (fold + 1)],
+            points[block * (fold + 1) : len(points) if fold == folds - 1 else block * (fold + 2)],
+        )
+        for fold in range(folds)
+    ]
+
+
+def _platt_fold_gains(points: Sequence[tuple[float, float]], folds: int) -> list[float]:
+    weight = len(points) / (len(points) + _SHRINK_PRIOR)
+    gains: list[float] = []
+    for training, holdout in _rolling_splits(points, folds):
+        intercept, slope = _fit_platt(training)
+        raw_loss = math.fsum(log_loss(p, int(y)) for p, y in holdout)
+        fitted_loss = math.fsum(
+            log_loss(
+                weight * _apply_platt(intercept, slope, p) + (1.0 - weight) * p,
+                int(y),
+            )
+            for p, y in holdout
+        )
+        gains.append((raw_loss - fitted_loss) / len(holdout))
+    return gains
 
 
 def _apply_knots(
@@ -179,18 +267,12 @@ def _apply_knots(
 def _fold_gains(points: Sequence[tuple[float, float]], folds: int) -> list[float]:
     """Per-fold out-of-fold log-loss reduction, in nats.
 
-    Folds are interleaved by index rather than contiguous, so a season's worth of drift does
-    not end up entirely inside one held-out block.
+    Expanding windows preserve forecast-time order: every fitted map is scored only on episodes
+    that happened later than its training set.
     """
-    if len(points) < folds * 2:
-        return []
     weight = len(points) / (len(points) + _SHRINK_PRIOR)
     gains: list[float] = []
-    for fold in range(folds):
-        holdout = [point for index, point in enumerate(points) if index % folds == fold]
-        training = [point for index, point in enumerate(points) if index % folds != fold]
-        if not holdout or len(training) < 2:
-            continue
+    for training, holdout in _rolling_splits(points, folds):
         knots = fit_isotonic(training)
         raw = math.fsum(
             log_loss(min(0.999999, max(1e-6, probability)), int(outcome))
@@ -233,18 +315,40 @@ def fit_calibration_map(
         if 0.0 <= probability <= 1.0 and outcome in (0.0, 1.0, 0, 1, True, False)
     ]
     if len(usable) < minimum_sample:
-        return CalibrationMap(market=market, knots=(), sample_size=len(usable))
+        return CalibrationMap(market=market, knots=(), sample_size=len(usable), method="identity")
 
-    gains = _fold_gains(usable, _FOLDS)
+    isotonic_gains = _fold_gains(usable, _FOLDS)
+    platt_gains = _platt_fold_gains(usable, _FOLDS)
+    candidates = [("isotonic", isotonic_gains), ("platt", platt_gains)]
+    method, gains = max(
+        candidates,
+        key=lambda item: math.fsum(item[1]) / len(item[1]) if item[1] else -math.inf,
+    )
     gain = math.fsum(gains) / len(gains) if gains else 0.0
     consistent = sum(1 for value in gains if value > 0.0) >= math.ceil(len(gains) * 0.8)
     if gain <= _MINIMUM_GAIN or not consistent:
         return CalibrationMap(
-            market=market, knots=(), sample_size=len(usable), fitted_log_loss_gain=gain
+            market=market,
+            knots=(),
+            sample_size=len(usable),
+            fitted_log_loss_gain=gain,
+            method="identity",
+        )
+    if method == "platt":
+        intercept, slope = _fit_platt(usable)
+        return CalibrationMap(
+            market=market,
+            knots=(),
+            sample_size=len(usable),
+            fitted_log_loss_gain=gain,
+            method="platt",
+            intercept=intercept,
+            slope=slope,
         )
     return CalibrationMap(
         market=market,
         knots=fit_isotonic(usable),
         sample_size=len(usable),
         fitted_log_loss_gain=gain,
+        method="isotonic",
     )
