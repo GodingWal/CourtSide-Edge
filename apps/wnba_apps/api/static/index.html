@@ -32,10 +32,11 @@
 
     <section class="view active" id="view-today">
       <div class="kpis" id="todayKpis"></div>
+      <section class="card pad qualified-section"><div class="cardhead flush"><div><label>Evidence-qualified only</label><h2>Qualified picks</h2><p>Ranked by the probability lower bound after freshness, availability, minutes, calibration, and payout gates. An empty board is a valid recommendation.</p></div><span class="pill safe" id="qualifiedCount">0 qualified</span></div><div class="qualified-grid" id="qualifiedPicks"></div></section>
       <div class="split">
         <section class="card grow">
-          <div class="cardhead"><div><label>Live decisions</label><h2>Forecast board</h2></div><span class="mono accent" id="forecastCount">Loading</span></div>
-          <div class="filters"><input id="search" placeholder="Search player or market" aria-label="Search player or market"><select id="marketFilter" aria-label="Filter by market"><option value="all">All markets</option></select><select id="teamFilter" aria-label="Filter by team"><option value="all">All teams</option></select><select id="sideFilter" aria-label="Filter by side"><option value="all">Both sides</option><option value="over">Over</option><option value="under">Under</option></select><select id="qualityFilter" aria-label="Filter by forecast quality"><option value="all">All quality</option><option value="candidate">Candidates</option></select></div>
+          <div class="cardhead"><div><label>All model output</label><h2>Analysis board</h2></div><span class="mono accent" id="forecastCount">Loading</span></div>
+          <div class="filters"><input id="search" placeholder="Search player or market" aria-label="Search player or market"><select id="marketFilter" aria-label="Filter by market"><option value="all">All markets</option></select><select id="teamFilter" aria-label="Filter by team"><option value="all">All teams</option></select><select id="sideFilter" aria-label="Filter by side"><option value="all">Both sides</option><option value="over">Over</option><option value="under">Under</option></select><select id="qualityFilter" aria-label="Filter by forecast quality"><option value="all">All quality</option><option value="qualified">Qualified only</option><option value="candidate">Legacy candidates</option></select></div>
           <div class="tablewrap forecastwrap"><table class="forecasttable"><thead><tr><th>Player / market</th><th>Source</th><th>Line</th><th>Model</th><th>Side</th><th>Probability</th><th>Edge vs break-even</th><th>Quality</th><th></th></tr></thead><tbody id="forecastRows"><tr><td colspan="9" class="empty">Loading forecasts...</td></tr></tbody></table></div><button class="button wide" id="loadMoreForecasts" hidden>Load 120 more</button>
         </section>
         <aside class="stack narrow"><section class="card pad" id="todayReadiness"></section><section class="card pad" id="todayHealth"></section><section class="card pad process"></section></aside>
@@ -44,7 +45,7 @@
 
     <section class="view" id="view-picks">
       <div class="sectionintro"><div><label>Owner pick workspace</label><h2>Picks & parlays</h2><p>Build a slip from model forecasts, describe it to DeepSeek, or upload a screenshot. AI-created legs remain drafts until you confirm them.</p></div><span class="pill warning">Paper record only</span></div>
-      <section class="card pad" style="margin-bottom:17px"><div class="cardhead flush"><div><label>Model shortlist</label><h2>Recommended paper candidates</h2></div><span class="muted">Ranked by shrunk edge over the payout table · calibration gate still applies</span></div><div class="slipgrid" id="pickCandidates"></div></section>
+      <section class="card pad" style="margin-bottom:17px"><div class="cardhead flush"><div><label>Conservative shortlist</label><h2>Qualified paper picks</h2></div><span class="muted">Lower-bound probabilities only; no qualified pick means no action</span></div><div class="slipgrid" id="pickCandidates"></div></section>
       <section class="card pad" style="margin-bottom:17px"><div class="cardhead flush"><div><label>Which legs belong on one ticket</label><h2>Suggested entries</h2><p class="muted">Searched over tonight's candidates, priced across the correlation band. A suggestion with any open gate is shown as a decline with its reasons.</p></div><button class="button" id="suggestEntries">Search entries</button></div><div id="entrySuggestions"><div class="empty">Run the search to price combinations of tonight's candidates.</div></div></section>
       <div class="pickgrid">
         <section class="card pad"><div class="cardhead flush"><div><label>Build</label><h2>Parlay builder</h2></div><button class="button" id="clearPick">Clear</button></div><div id="pickLegs"></div><div class="formgrid pickmeta"><label>Title<input id="pickTitle" placeholder="Tonight's card"></label><label>Platform<input id="pickPlatform" placeholder="PrizePicks"></label><label>Entry<select id="pickEntry"><option value="power">Power</option><option value="flex">Flex</option><option value="sportsbook">Sportsbook</option></select></label><label>Stake<input id="pickStake" type="number" min="0" step="0.01" placeholder="Optional"></label></div><div id="pickPrice"></div><div class="feedback"><button class="button" id="pricePick">Price this entry</button><button class="primary" id="savePick">Confirm paper pick</button></div></section>
@@ -73,9 +74,10 @@
     </section>
 
     <section class="view" id="view-learning">
-      <div class="sectionintro"><div><label>Closed-loop improvement</label><h2>Learning laboratory</h2><p>Outcomes create diagnoses; diagnoses create hypotheses; approved hypotheses create challenger experiments. Nothing promotes itself.</p></div><span class="pill safe">Human approval required</span></div>
-      <div class="kpis" id="learningHealth"></div>
-      <section class="card pad attention" id="learningAttention"><div class="cardhead flush"><div><label>Prioritized intervention queue</label><h2>Needs attention</h2></div></div><div id="attentionItems"></div></section>
+        <div class="sectionintro"><div><label>Closed-loop improvement</label><h2>Learning laboratory</h2><p>Outcomes create diagnoses; diagnoses create hypotheses; approved hypotheses create challenger experiments. Nothing promotes itself.</p></div><span class="pill safe">Human approval required</span></div>
+        <div class="kpis" id="learningHealth"></div>
+        <div class="twocol"><section class="card pad"><div class="cardhead flush"><div><label>Current recommendation funnel</label><h2>Why picks are withheld</h2><p>Every analysed forecast remains visible; only the first failed gate determines its status.</p></div></div><div id="qualificationFunnel"></div></section><section class="card pad"><div class="cardhead flush"><div><label>Highest-leverage next evidence</label><h2>What must improve</h2><p>Operational blockers are fixed with fresher or broader evidence. Model blockers require settled outcomes.</p></div></div><div id="qualificationActions"></div></section></div>
+        <section class="card pad attention" id="learningAttention"><div class="cardhead flush"><div><label>Prioritized intervention queue</label><h2>Needs attention</h2></div></div><div id="attentionItems"></div></section>
       <div class="pipeline"><span>Decision</span><i>→</i><span>Outcome</span><i>→</i><span>Diagnosis</span><i>→</i><span>Hypothesis</span><i>→</i><span>Experiment</span><i>→</i><span>Review</span></div>
       <div class="threecol"><section class="card pad"><div class="cardhead flush"><div><label>Prioritized</label><h2>Research proposals</h2></div></div><div id="proposals"></div></section><section class="card pad"><div class="cardhead flush"><div><label>Causal memory</label><h2>Hypotheses</h2></div></div><div id="hypotheses"></div></section><section class="card pad"><div class="cardhead flush"><div><label>Champion / challenger</label><h2>Experiments</h2></div></div><div id="experiments"></div></section></div>
       <div class="twocol"><section class="card pad"><div class="cardhead flush"><div><label>Codified judgment</label><h2>Analyst rules</h2></div></div><div id="analystRules"></div></section><section class="card pad"><div class="cardhead flush"><div><label>Observed behavior</label><h2>Rule firings</h2></div></div><div id="ruleFirings"></div></section></div>
@@ -107,5 +109,6 @@
 <script src="/static/learning_actions.js"></script>
 <script src="/static/learning_dashboard.js"></script>
 <script src="/static/site_enhancements.js"></script>
+<script src="/static/qualified_picks.js"></script>
 </body>
 </html>

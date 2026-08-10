@@ -19,7 +19,8 @@ evidence supports it and fall back to the priors below when it does not.
 | Devigged market prior | 0.20 | What the price says, once the operator's margin is removed |
 
 Injuries, expected role and minutes, teammate absences, pace, opponent defence, rest and blowout
-risk adjust the distributions. Component disagreement reduces confidence and can block
+risk adjust the distributions. Starter and bench minutes scenarios remain separate through the
+forecast and are shown to the owner. Component disagreement reduces confidence and can block
 candidates.
 
 ## Distributional assumptions
@@ -57,7 +58,9 @@ Three sets of parameters are learned from settled episodes and stored in
   adopted only when it beats raw probabilities consistently across rolling-origin folds, where
   every validation episode occurs after the map's training data.
 - **Ensemble weights** — fitted on held-out log loss over the simplex, adopted under the same
-  consistency requirement.
+  consistency requirement. Rolling-origin folds prevent later episodes entering earlier fits;
+  highly correlated component pairs are recorded and penalized when their combined fitted
+  weight would exceed their prior allocation.
 - **Edge shrinkage** — the fraction of an apparent edge that survives regression to the mean,
   estimated as the ratio of signal variance to total variance in the settled record.
 
@@ -71,6 +74,13 @@ against the break-even implied by the payout table — 57.7% per leg for a two-l
 plus a 2% margin. The bound combines component disagreement with the sampling uncertainty of the
 settled shrinkage record. The previous fixed `0.58` threshold was unconnected to any product and
 was applied to an unshrunk edge.
+
+A production-qualified pick must also have a quote no more than 30 minutes old, at least two
+independent market sources, at least 90% availability probability, minutes uncertainty no more
+than 20% of projected minutes, no material minutes-restriction risk, and a shrinkage estimate
+fitted from at least 200 settled episodes. Failure of any gate produces no qualified pick. Entry
+search uses the lower-bound probabilities—not the headline estimates—and caps exposure per
+player, team, and game before correlation-band pricing.
 
 ## Known limitations
 

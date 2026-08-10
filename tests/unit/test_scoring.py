@@ -152,6 +152,20 @@ def test_no_role_projection_still_produces_coherent_minutes() -> None:
     assert adjustments.minutes_std > 0.0
 
 
+def test_minutes_scenarios_preserve_the_mixture_behind_the_headline() -> None:
+    adjustments = resolve_adjustments(
+        _inputs(role=RoleInputs(expected_minutes=27.0, start_probability=0.60))
+    )
+
+    mixed = (
+        adjustments.start_probability * adjustments.starter_minutes
+        + (1.0 - adjustments.start_probability) * adjustments.bench_minutes
+    )
+    assert mixed == pytest.approx(adjustments.expected_minutes)
+    assert adjustments.starter_minutes_std > 0.0
+    assert adjustments.bench_minutes_std > 0.0
+
+
 # --------------------------------------------------------------------------------------
 # Dispersion and combination markets
 # --------------------------------------------------------------------------------------

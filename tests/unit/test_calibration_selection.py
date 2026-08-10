@@ -183,6 +183,41 @@ def test_identical_components_offer_nothing_to_learn() -> None:
     assert fitted.weights == DEFAULT_COMPONENT_WEIGHTS
 
 
+def test_redundant_predictive_components_are_detected_and_regularized() -> None:
+    rng = random.Random(121)
+    rows: list[tuple[dict[str, float], float]] = []
+    for _ in range(2000):
+        truth = rng.random() < 0.5
+        empirical_signal = truth if rng.random() > 0.12 else not truth
+        duplicate = 0.72 if truth else 0.28
+        rows.append(
+            (
+                {
+                    "empirical": 0.78 if empirical_signal else 0.22,
+                    "hierarchical": rng.uniform(0.45, 0.55),
+                    "player_state": duplicate,
+                    "opportunity_conversion": duplicate,
+                    "market_prior": rng.uniform(0.45, 0.55),
+                },
+                float(truth),
+            )
+        )
+
+    fitted = fit_ensemble_weights("points", rows)
+
+    assert fitted.is_fitted
+    assert any(
+        {first, second} == {"player_state", "opportunity_conversion"} and correlation > 0.99
+        for first, second, correlation in fitted.redundant_pairs
+    )
+    assert (
+        fitted.weights["player_state"] + fitted.weights["opportunity_conversion"]
+        <= DEFAULT_COMPONENT_WEIGHTS["player_state"]
+        + DEFAULT_COMPONENT_WEIGHTS["opportunity_conversion"]
+        + 0.02
+    )
+
+
 def test_an_anti_predictive_component_loses_its_weight() -> None:
     """A component that is reliably backwards should be weighted toward nothing, not inverted."""
     rng = random.Random(13)
@@ -373,6 +408,48 @@ def test_uncertainty_lower_bound_can_decline_a_nominal_edge() -> None:
     assert decision.probability_lower_bound is not None
     assert decision.probability_lower_bound < decision.breakeven + 0.02
     assert decision.status is RecommendationStatus.DECLINED_NO_EDGE
+
+
+def _operational_decision(**overrides: object):  # type: ignore[no-untyped-def]
+    arguments: dict[str, object] = {
+        "disagreement": 0.01,
+        "use_uncertainty_gate": True,
+        "enforce_operational_gates": True,
+        "require_fitted_shrinkage": True,
+        "quote_age_minutes": 5.0,
+        "availability_probability": 0.98,
+        "minutes_restriction_probability": 0.05,
+        "minutes_uncertainty_ratio": 0.10,
+        "market_source_count": 2,
+    }
+    arguments.update(overrides)
+    return _decision(0.75, **arguments)
+
+
+def test_a_pick_must_clear_every_operational_evidence_gate() -> None:
+    assert _operational_decision().status is RecommendationStatus.CANDIDATE
+    assert (
+        _operational_decision(quote_age_minutes=45.0).status
+        is RecommendationStatus.BLOCKED_STALE_QUOTE
+    )
+    assert (
+        _operational_decision(market_source_count=1).status
+        is RecommendationStatus.BLOCKED_DATA_QUALITY
+    )
+    assert (
+        _operational_decision(availability_probability=0.80).status
+        is RecommendationStatus.BLOCKED_BY_SKEPTIC
+    )
+    assert (
+        _operational_decision(minutes_uncertainty_ratio=0.30).status
+        is RecommendationStatus.BLOCKED_CALIBRATION
+    )
+
+
+def test_unfitted_edge_shrinkage_cannot_create_a_qualified_pick() -> None:
+    decision = _operational_decision(shrinkage=EdgeShrinkage.cold_start())
+    assert decision.status is RecommendationStatus.BLOCKED_CALIBRATION
+    assert "settled episodes" in decision.reason
 
 
 def test_the_under_side_is_selected_and_gated_symmetrically() -> None:

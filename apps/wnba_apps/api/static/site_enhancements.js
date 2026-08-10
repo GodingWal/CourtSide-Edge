@@ -34,7 +34,7 @@ renderForecasts = function () {
     (market === "all" || item.prop_type === market) &&
     (team === "all" || item.team === team || item.opponent === team) &&
     (side === "all" || item.side === side) &&
-    (quality === "all" || item.system_recommendation === quality)
+    (quality === "all" || (quality === "qualified" ? item.qualified === true : item.system_recommendation === quality))
   );
   const visible = filtered.slice(0, forecastPageSize);
   $("forecastRows").innerHTML = visible.map((item) => `<tr><td><div class="player">${esc(item.full_name)}</div><div class="market">${esc(item.prop_type.replaceAll("_", " "))}${item.team ? ` · ${esc(item.team)}${item.opponent ? ` vs ${esc(item.opponent)}` : ""}` : ""}</div></td><td>${esc(item.source)}</td><td class="mono">${item.line}</td><td class="mono">${fixed(item.mean, 1)}</td><td><span class="side ${item.side}">${item.side}</span></td><td><b class="mono">${pct(item.predicted_probability)}</b><div class="market">shrunk ${pct(item.shrunk_probability)}</div></td><td><b class="mono ${item.edge > 0 ? "ok" : item.edge != null ? "bad" : ""}">${pp(item.edge)}</b><div class="market">break-even ${pct(item.breakeven_probability)}</div></td><td><span class="status ${item.system_recommendation}">${esc(item.system_recommendation)}</span></td><td><button class="inspect" onclick="addForecastPick('${item.projection_id}')">+ Pick</button> <button class="inspect" onclick="openAudit('${item.projection_id}')">Audit</button></td></tr>`).join("") || `<tr><td colspan="9">${empty("No forecasts match these filters.")}</td></tr>`;

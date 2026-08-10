@@ -59,6 +59,8 @@ MINIMUM_WEIGHT_SAMPLE = 300
 _LEARNING_RATE = 0.5
 _ITERATIONS = 400
 _PRIOR_STRENGTH = 0.05
+_REDUNDANCY_STRENGTH = 0.25
+_REDUNDANCY_CORRELATION = 0.90
 _LOGIT_CLAMP = 6.0
 _FOLDS = 5
 
@@ -111,6 +113,7 @@ class EnsembleWeights:
     gain is measured on top of: a pool that cannot beat the base rate is noise with opinions."""
 
     is_fitted: bool = False
+    redundant_pairs: tuple[tuple[str, str, float], ...] = ()
 
     def for_components(self, names: Sequence[str]) -> tuple[float, ...]:
         """Weights aligned to ``names``, renormalised over whichever are present."""
@@ -128,6 +131,10 @@ class EnsembleWeights:
             "log_loss_gain": self.log_loss_gain,
             "climatology_gain": self.climatology_gain,
             "is_fitted": self.is_fitted,
+            "redundant_pairs": [
+                {"component_a": first, "component_b": second, "correlation": correlation}
+                for first, second, correlation in self.redundant_pairs
+            ],
         }
 
     @classmethod
@@ -140,6 +147,14 @@ class EnsembleWeights:
             log_loss_gain=float(payload.get("log_loss_gain", 0.0)),
             climatology_gain=float(payload.get("climatology_gain", 0.0)),
             is_fitted=bool(payload.get("is_fitted", False)),
+            redundant_pairs=tuple(
+                (
+                    str(pair["component_a"]),
+                    str(pair["component_b"]),
+                    float(pair["correlation"]),
+                )
+                for pair in payload.get("redundant_pairs", [])
+            ),
         )
 
     @classmethod
@@ -166,6 +181,7 @@ def _descend(
     names: Sequence[str],
     observations: Sequence[tuple[Mapping[str, float], float]],
     prior: Sequence[float],
+    redundancy: Sequence[tuple[int, int, float]] = (),
 ) -> tuple[float, ...]:
     """Projected gradient descent on the simplex, pulled gently toward the prior weights."""
     current = list(prior)
@@ -188,11 +204,126 @@ def _descend(
                 gradient[index] += residual * value / sample_count
         for index in range(len(names)):
             gradient[index] += _PRIOR_STRENGTH * (current[index] - prior[index])
+        for first, second, correlation in redundancy:
+            excess = current[first] + current[second] - prior[first] - prior[second]
+            if excess > 0.0:
+                penalty = _REDUNDANCY_STRENGTH * correlation * excess
+                gradient[first] += penalty
+                gradient[second] += penalty
         stepped = [
             weight - _LEARNING_RATE * slope for weight, slope in zip(current, gradient, strict=True)
         ]
-        current = list(_project_to_simplex(stepped))
+        current = list(_cap_redundant_groups(_project_to_simplex(stepped), prior, redundancy))
     return tuple(current)
+
+
+def _cap_redundant_groups(
+    values: Sequence[float],
+    prior: Sequence[float],
+    redundancy: Sequence[tuple[int, int, float]],
+) -> tuple[float, ...]:
+    """Keep a correlated signal family from receiving several votes for one fact.
+
+    The soft penalty helps the optimiser choose within a family.  This hard group cap provides
+    the important invariant: learning may move weight between redundant components, but may not
+    increase their combined influence above the deliberately conservative prior allocation.
+    """
+    if not redundancy:
+        return tuple(values)
+
+    parents = list(range(len(values)))
+
+    def root(index: int) -> int:
+        while parents[index] != index:
+            parents[index] = parents[parents[index]]
+            index = parents[index]
+        return index
+
+    for first, second, _ in redundancy:
+        first_root, second_root = root(first), root(second)
+        if first_root != second_root:
+            parents[second_root] = first_root
+
+    groups: dict[int, set[int]] = {}
+    for first, second, _ in redundancy:
+        for index in (first, second):
+            groups.setdefault(root(index), set()).add(index)
+
+    adjusted = list(values)
+    excess = 0.0
+    capped_indexes: set[int] = set()
+    for indexes in groups.values():
+        cap = math.fsum(prior[index] for index in indexes)
+        total = math.fsum(adjusted[index] for index in indexes)
+        if total <= cap or total <= 0.0:
+            continue
+        scale = cap / total
+        for index in indexes:
+            adjusted[index] *= scale
+        excess += total - cap
+        capped_indexes.update(indexes)
+
+    recipients = [index for index in range(len(values)) if index not in capped_indexes]
+    if excess > 0.0 and recipients:
+        recipient_prior = math.fsum(prior[index] for index in recipients)
+        for index in recipients:
+            share = (
+                prior[index] / recipient_prior if recipient_prior > 0.0 else 1.0 / len(recipients)
+            )
+            adjusted[index] += excess * share
+    return tuple(adjusted)
+
+
+def _pearson(left: Sequence[float], right: Sequence[float]) -> float:
+    if len(left) != len(right) or len(left) < 3:
+        return 0.0
+    left_mean = math.fsum(left) / len(left)
+    right_mean = math.fsum(right) / len(right)
+    numerator = math.fsum(
+        (a - left_mean) * (b - right_mean) for a, b in zip(left, right, strict=True)
+    )
+    left_ss = math.fsum((value - left_mean) ** 2 for value in left)
+    right_ss = math.fsum((value - right_mean) ** 2 for value in right)
+    denominator = math.sqrt(left_ss * right_ss)
+    return 0.0 if denominator <= 1e-12 else numerator / denominator
+
+
+def _redundancy(
+    names: Sequence[str], observations: Sequence[tuple[Mapping[str, float], float]]
+) -> tuple[tuple[int, int, float], ...]:
+    columns = {
+        name: [_logit(probabilities.get(name, 0.5)) for probabilities, _ in observations]
+        for name in names
+    }
+    pairs: list[tuple[int, int, float]] = []
+    for first in range(len(names)):
+        for second in range(first + 1, len(names)):
+            correlation = _pearson(columns[names[first]], columns[names[second]])
+            if correlation >= _REDUNDANCY_CORRELATION:
+                pairs.append((first, second, correlation))
+    return tuple(pairs)
+
+
+def _rolling_splits(
+    observations: Sequence[tuple[Mapping[str, float], float]], folds: int
+) -> list[
+    tuple[
+        Sequence[tuple[Mapping[str, float], float]],
+        Sequence[tuple[Mapping[str, float], float]],
+    ]
+]:
+    block = len(observations) // (folds + 1)
+    if block < 2:
+        return []
+    return [
+        (
+            observations[: block * (fold + 1)],
+            observations[
+                block * (fold + 1) : len(observations) if fold == folds - 1 else block * (fold + 2)
+            ],
+        )
+        for fold in range(folds)
+    ]
 
 
 def fit_ensemble_weights(
@@ -220,12 +351,10 @@ def fit_ensemble_weights(
     prior_vector = list(baseline.for_components(names))
     gains: list[float] = []
     base_gains: list[float] = []
-    for fold in range(_FOLDS):
-        holdout = [row for index, row in enumerate(observations) if index % _FOLDS == fold]
-        training = [row for index, row in enumerate(observations) if index % _FOLDS != fold]
+    for training, holdout in _rolling_splits(observations, _FOLDS):
         if not holdout or len(training) < len(names) * 10:
             continue
-        candidate = _descend(names, training, prior_vector)
+        candidate = _descend(names, training, prior_vector, _redundancy(names, training))
         candidate_loss = _mean_log_loss(names, candidate, holdout)
         gains.append(_mean_log_loss(names, prior_vector, holdout) - candidate_loss)
         # The second benchmark: a constant forecast of the training fold's base rate. This is
@@ -261,7 +390,8 @@ def fit_ensemble_weights(
             climatology_gain=base_gain,
         )
 
-    final = _descend(names, observations, prior_vector)
+    final_redundancy = _redundancy(names, observations)
+    final = _descend(names, observations, prior_vector, final_redundancy)
     return EnsembleWeights(
         market=market,
         weights=dict(zip(names, final, strict=True)),
@@ -269,4 +399,8 @@ def fit_ensemble_weights(
         log_loss_gain=gain,
         climatology_gain=base_gain,
         is_fitted=True,
+        redundant_pairs=tuple(
+            (names[first], names[second], correlation)
+            for first, second, correlation in final_redundancy
+        ),
     )

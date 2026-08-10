@@ -179,6 +179,7 @@ def _row(name: str, prop: str, shrunk: float | None, *, game: str = "g1") -> dic
         "side": "over",
         "line": 20.5,
         "shrunk_probability": shrunk,
+        "probability_lower_bound": None if shrunk is None else shrunk - 0.01,
         "breakeven_probability": 0.577,
         "predicted_probability": 0.7,
         "system_recommendation": "candidate",
