@@ -91,6 +91,7 @@ class CandidateLeg:
     team: str | None = None
     game_id: str | None = None
     breakeven: float | None = None
+    nominal_probability: float | None = None
 
     @property
     def key(self) -> LegKey:
@@ -110,6 +111,10 @@ class CandidateLeg:
             "side": self.side,
             "line": self.line,
             "probability": self.probability,
+            "nominal_probability": self.nominal_probability,
+            "conservative_edge": (
+                None if self.breakeven is None else self.probability - self.breakeven
+            ),
             "game_id": self.game_id,
             "team": self.team,
         }
@@ -174,6 +179,23 @@ def _has_duplicate_market(legs: Sequence[CandidateLeg]) -> bool:
     return len(seen) != len(legs)
 
 
+def _respects_exposure_caps(
+    legs: Sequence[CandidateLeg], *, max_per_player: int, max_per_team: int
+) -> bool:
+    players: dict[str, int] = {}
+    teams: dict[str, int] = {}
+    for leg in legs:
+        player = leg.player_id or leg.player_name
+        players[player] = players.get(player, 0) + 1
+        if players[player] > max_per_player:
+            return False
+        if leg.team is not None:
+            teams[leg.team] = teams.get(leg.team, 0) + 1
+            if teams[leg.team] > max_per_team:
+                return False
+    return True
+
+
 def _representable(correlation: float, leg_count: int) -> float:
     """Clip a correlation to what the one-factor model can express at this leg count.
 
@@ -220,6 +242,8 @@ def construct_entries(
     max_legs: int = 5,
     pool: int = DEFAULT_SEARCH_POOL,
     max_per_game: int = DEFAULT_MAX_LEGS_PER_GAME,
+    max_per_player: int = 1,
+    max_per_team: int = 2,
     limit: int = 5,
     simulations: int = _CONFIRMATION_SIMULATIONS,
     seed: int = 0,
@@ -231,7 +255,13 @@ def construct_entries(
     answer; a search that always produces a slip is a search that has stopped being a filter.
     """
     risk = policy or RiskPolicy()
-    ranked = sorted(candidates, key=lambda leg: leg.probability, reverse=True)[: max(0, pool)]
+    ranked = sorted(
+        candidates,
+        key=lambda leg: (
+            leg.probability - leg.breakeven if leg.breakeven is not None else leg.probability - 0.5
+        ),
+        reverse=True,
+    )[: max(0, pool)]
     if len(ranked) < 2:
         return []
 
@@ -248,6 +278,12 @@ def construct_entries(
                 if _has_duplicate_market(combination):
                     continue
                 if not _respects_game_cap(combination, max_per_game=max_per_game):
+                    continue
+                if not _respects_exposure_caps(
+                    combination,
+                    max_per_player=max_per_player,
+                    max_per_team=max_per_team,
+                ):
                     continue
                 independent = independent_correct_count_pmf(
                     [leg.probability for leg in combination]

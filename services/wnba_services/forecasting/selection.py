@@ -168,6 +168,13 @@ def decide_candidate(
     maximum_disagreement: float = 0.12,
     use_uncertainty_gate: bool = False,
     confidence_level: float = 0.95,
+    availability_probability: float | None = None,
+    minutes_restriction_probability: float | None = None,
+    minutes_uncertainty_ratio: float | None = None,
+    quote_age_minutes: float | None = None,
+    require_fitted_shrinkage: bool = False,
+    enforce_operational_gates: bool = False,
+    market_source_count: int | None = None,
 ) -> CandidateDecision:
     """Choose a side and decide whether the shrunk edge clears the payout table.
 
@@ -202,6 +209,76 @@ def decide_candidate(
             shrunk,
             breakeven,
             f"availability is {injury_designation}",
+        )
+    if enforce_operational_gates and (quote_age_minutes is None or quote_age_minutes > 30.0):
+        return CandidateDecision(
+            RecommendationStatus.BLOCKED_STALE_QUOTE,
+            side,
+            raw,
+            shrunk,
+            breakeven,
+            "quote freshness is unknown"
+            if quote_age_minutes is None
+            else f"quote is {quote_age_minutes:.0f} minutes old",
+        )
+    if enforce_operational_gates and (
+        availability_probability is None or availability_probability < 0.90
+    ):
+        return CandidateDecision(
+            RecommendationStatus.BLOCKED_BY_SKEPTIC,
+            side,
+            raw,
+            shrunk,
+            breakeven,
+            "availability probability is missing"
+            if availability_probability is None
+            else f"availability probability {availability_probability:.1%} below 90%",
+        )
+    if enforce_operational_gates and (market_source_count is None or market_source_count < 2):
+        return CandidateDecision(
+            RecommendationStatus.BLOCKED_DATA_QUALITY,
+            side,
+            raw,
+            shrunk,
+            breakeven,
+            "market consensus is unavailable"
+            if market_source_count is None
+            else f"only {market_source_count} independent market source is available",
+        )
+    if (
+        enforce_operational_gates
+        and minutes_restriction_probability is not None
+        and minutes_restriction_probability > 0.20
+    ):
+        return CandidateDecision(
+            RecommendationStatus.BLOCKED_BY_SKEPTIC,
+            side,
+            raw,
+            shrunk,
+            breakeven,
+            f"minutes restriction probability {minutes_restriction_probability:.1%} above 20%",
+        )
+    if enforce_operational_gates and (
+        minutes_uncertainty_ratio is None or minutes_uncertainty_ratio > 0.20
+    ):
+        return CandidateDecision(
+            RecommendationStatus.BLOCKED_CALIBRATION,
+            side,
+            raw,
+            shrunk,
+            breakeven,
+            "minutes uncertainty is missing"
+            if minutes_uncertainty_ratio is None
+            else f"minutes uncertainty {minutes_uncertainty_ratio:.1%} above 20%",
+        )
+    if require_fitted_shrinkage and not shrinkage.is_fitted:
+        return CandidateDecision(
+            RecommendationStatus.BLOCKED_CALIBRATION,
+            side,
+            raw,
+            shrunk,
+            breakeven,
+            f"edge shrinkage has only {shrinkage.sample_size} settled episodes; 200 required",
         )
     if quality < minimum_quality:
         return CandidateDecision(
@@ -250,7 +327,8 @@ def decide_candidate(
         raw,
         shrunk,
         breakeven,
-        f"shrunk {shrunk:.3f} clears break-even {breakeven:.3f} plus {margin:.3f}",
+        f"{confidence_level:.0%} lower bound {lower_bound:.3f} clears break-even "
+        f"{breakeven:.3f} plus {margin:.3f}",
         lower_bound,
         standard_error,
     )

@@ -143,6 +143,8 @@ class EntrySuggestionRequest(BaseModel):
     source: Literal["prizepicks", "underdog"] = "prizepicks"
     max_legs: Annotated[int, Field(ge=2, le=6)] = 5
     max_per_game: Annotated[int, Field(ge=1, le=6)] = 2
+    max_per_player: Annotated[int, Field(ge=1, le=3)] = 1
+    max_per_team: Annotated[int, Field(ge=1, le=6)] = 2
     limit: Annotated[int, Field(ge=1, le=10)] = 5
     pool: Annotated[int, Field(ge=2, le=20)] = 12
     seed: Annotated[int, Field(ge=0)] = 0
@@ -623,7 +625,8 @@ def suggest_entries(request: EntrySuggestionRequest) -> dict[str, object]:
             # The shrunk probability where the gate recorded one. Falling back to the raw
             # probability would compound selection bias once per leg, so a row without a shrunk
             # value is skipped instead.
-            probability=float(str(row["shrunk_probability"])),
+            probability=float(str(row["probability_lower_bound"])),
+            nominal_probability=float(str(row["shrunk_probability"])),
             player_id=None if row.get("player_id") is None else str(row["player_id"]),
             team=None if row.get("team") is None else str(row["team"]),
             game_id=None if row.get("game_id") is None else str(row["game_id"]),
@@ -635,6 +638,7 @@ def suggest_entries(request: EntrySuggestionRequest) -> dict[str, object]:
         )
         for row in rows
         if row.get("shrunk_probability") is not None
+        and row.get("probability_lower_bound") is not None
     ]
     try:
         with connect() as conn, conn.cursor() as cur:
@@ -647,6 +651,8 @@ def suggest_entries(request: EntrySuggestionRequest) -> dict[str, object]:
         fitted=fitted,
         max_legs=request.max_legs,
         max_per_game=request.max_per_game,
+        max_per_player=request.max_per_player,
+        max_per_team=request.max_per_team,
         limit=request.limit,
         pool=request.pool,
         seed=request.seed,
@@ -820,6 +826,12 @@ def forecasts() -> dict[str, object]:
                             AS probability_lower_bound,
                           (fs.features->>'uncertainty_standard_error')::double precision
                             AS uncertainty_standard_error,
+                          fs.features->'minutes_scenarios' AS minutes_scenarios,
+                          (fs.features->>'minutes_restriction_probability')::double precision
+                            AS minutes_restriction_probability,
+                          q.system_from AS quote_seen_at,q.locks_at,
+                          opening.opening_line,mc.books,mc.consensus_line,mc.line_dispersion,
+                          precedents.similar_settled,precedents.similar_hit_rate,
                           g.scheduled_tipoff,i.designation AS injury_designation,
                           i.detail AS injury_detail,r.availability_probability,
                           r.start_probability,r.closing_lineup_probability,
@@ -869,7 +881,8 @@ def forecasts() -> dict[str, object]:
                    ) i ON true
                    LEFT JOIN LATERAL (
                      SELECT availability_probability,start_probability,
-                            closing_lineup_probability,minutes_std,model_version
+                            closing_lineup_probability,minutes_std,
+                            minutes_restriction_probability,model_version
                      FROM wnba.projected_roles
                      WHERE player_id=f.player_id AND game_id=f.game_id AND system_to IS NULL
                      ORDER BY system_from DESC LIMIT 1
@@ -899,6 +912,35 @@ def forecasts() -> dict[str, object]:
                      ORDER BY created_at DESC LIMIT 1
                    ) mo ON true
                    LEFT JOIN LATERAL (
+                     SELECT line AS opening_line FROM wnba.prop_quotes oq
+                     WHERE oq.source=q.source AND oq.player_id=q.player_id
+                       AND oq.game_id=q.game_id AND oq.prop_type=q.prop_type
+                     ORDER BY oq.system_from ASC LIMIT 1
+                   ) opening ON true
+                   LEFT JOIN LATERAL (
+                     SELECT count(*) AS books,
+                            percentile_cont(0.5) WITHIN GROUP (ORDER BY line)
+                              AS consensus_line,
+                            max(line)-min(line) AS line_dispersion
+                     FROM (
+                       SELECT DISTINCT ON (cq.source) cq.source,cq.line
+                       FROM wnba.prop_quotes cq
+                       WHERE cq.player_id=q.player_id AND cq.game_id=q.game_id
+                         AND cq.prop_type=q.prop_type AND cq.system_to IS NULL
+                         AND cq.is_available
+                       ORDER BY cq.source,cq.system_from DESC
+                     ) current_quotes
+                   ) mc ON true
+                   LEFT JOIN LATERAL (
+                     SELECT count(*) AS similar_settled,
+                            avg(CASE WHEN o.hit THEN 1.0 ELSE 0.0 END) AS similar_hit_rate
+                     FROM wnba.decision_episodes previous
+                     JOIN wnba.episode_outcomes o ON o.episode_id=previous.episode_id
+                     WHERE previous.prop_type=f.prop_type AND previous.side=d.side
+                       AND previous.line BETWEEN f.line-2 AND f.line+2
+                       AND NOT o.was_voided AND NOT o.was_push
+                   ) precedents ON true
+                   LEFT JOIN LATERAL (
                      SELECT jsonb_agg(jsonb_build_object(
                        'name',component_name,'version',component_version,'weight',weight,
                        'mean',mean,'probability_over',probability_over,
@@ -915,17 +957,43 @@ def forecasts() -> dict[str, object]:
         return {"available": False, "reason": str(exc)[:200], "forecasts": []}
     for row in rows:
         row["edge"] = _edge_over_breakeven(row)
+        lower = row.get("probability_lower_bound")
+        breakeven = row.get("breakeven_probability")
+        row["conservative_edge"] = (
+            None
+            if lower is None or breakeven is None
+            else float(str(lower)) - float(str(breakeven))
+        )
+        row["conservative_leg_value"] = (
+            None
+            if lower is None or breakeven is None or float(str(breakeven)) <= 0.0
+            else float(str(lower)) / float(str(breakeven)) - 1.0
+        )
+        row["qualified"] = str(row.get("system_recommendation")) == "candidate"
+        line = float(str(row["line"]))
+        row["line_movement"] = (
+            None if row.get("opening_line") is None else line - float(str(row["opening_line"]))
+        )
+        row["consensus_difference"] = (
+            None if row.get("consensus_line") is None else line - float(str(row["consensus_line"]))
+        )
         drivers, flags = _drivers_and_flags(row)
+        if int(str(row.get("books") or 0)) < 2:
+            flags.append("single-source market; consensus is unavailable")
+        consensus_difference = row.get("consensus_difference")
+        if consensus_difference is not None and abs(float(str(consensus_difference))) >= 1.0:
+            flags.append(f"line is {float(str(consensus_difference)):+.1f} from consensus")
         row["primary_drivers"] = drivers
-        row["risk_flags"] = flags
+        row["risk_flags"] = flags[:6]
     # Ranked by edge over the payout table's break-even, not by raw probability. The two orders
     # disagree constantly and only one of them is a ranking by value: a 0.72 on a product that
     # needs three legs correct and a 0.61 on one that needs two are not comparable quantities.
     # Rows the gate never priced (no shrunk probability yet) sort last rather than first.
     rows.sort(
         key=lambda row: (
-            row["edge"] is not None,
-            row["edge"] if row["edge"] is not None else 0.0,
+            row["qualified"],
+            row["conservative_edge"] is not None,
+            row["conservative_edge"] if row["conservative_edge"] is not None else -1.0,
             float(str(row["predicted_probability"])),
         ),
         reverse=True,

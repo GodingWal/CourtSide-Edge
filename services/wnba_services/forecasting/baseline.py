@@ -235,7 +235,11 @@ def run_baseline(*, now: datetime | None = None, seed: int = 20260803) -> Foreca
         cur.execute(
             """SELECT DISTINCT ON (q.source,q.source_quote_id) q.*,
                       coalesce(m.to_player_id,q.player_id) AS canonical_player_id,
-                      g.season_year
+                      g.season_year,
+                      (SELECT count(DISTINCT cq.source) FROM wnba.prop_quotes cq
+                       WHERE cq.player_id=q.player_id AND cq.game_id=q.game_id
+                         AND cq.prop_type=q.prop_type AND cq.system_to IS NULL
+                         AND cq.is_available) AS market_source_count
                FROM wnba.prop_quotes q
                JOIN wnba.games g ON g.game_id=q.game_id
                LEFT JOIN wnba.player_merges m
@@ -327,6 +331,10 @@ def run_baseline(*, now: datetime | None = None, seed: int = 20260803) -> Foreca
                     minutes_std=float(str(role_row["minutes_std"])),
                     start_probability=float(str(role_row["start_probability"])),
                     availability_probability=float(str(role_row["availability_probability"])),
+                    closing_lineup_probability=float(str(role_row["closing_lineup_probability"])),
+                    minutes_restriction_probability=float(
+                        str(role_row["minutes_restriction_probability"])
+                    ),
                     model_version=str(role_row["model_version"]),
                 )
             )
@@ -442,6 +450,12 @@ def run_baseline(*, now: datetime | None = None, seed: int = 20260803) -> Foreca
 
             side = "over" if forecast.calibrated_over >= forecast.calibrated_under else "under"
             selected = max(forecast.calibrated_over, forecast.calibrated_under)
+            quote_seen_at = quote.get("system_from")
+            quote_age_seconds = (
+                (at - quote_seen_at).total_seconds()
+                if isinstance(quote_seen_at, datetime)
+                else None
+            )
 
             facts = build_facts(
                 predicted_probability=selected,
@@ -458,6 +472,8 @@ def run_baseline(*, now: datetime | None = None, seed: int = 20260803) -> Foreca
                 teammate_effect_count=effect_count,
                 availability_probability=(None if role is None else role.availability_probability),
                 start_probability=adjustments.start_probability,
+                quote_age_seconds=quote_age_seconds,
+                book_count=int(str(quote.get("market_source_count", 1))),
             )
             rule_outcome = evaluate_rules(rules, facts, selected)
             # Measured drift is applied after the rules and before the gate, so a rule firing and
@@ -475,6 +491,17 @@ def run_baseline(*, now: datetime | None = None, seed: int = 20260803) -> Foreca
                 rule_blocked=rule_outcome.blocked,
                 rule_reason="; ".join(rule_outcome.block_reasons),
                 use_uncertainty_gate=True,
+                availability_probability=(None if role is None else role.availability_probability),
+                minutes_restriction_probability=(
+                    None if role is None else role.minutes_restriction_probability
+                ),
+                minutes_uncertainty_ratio=(
+                    adjustments.minutes_std / projected_minutes if projected_minutes > 0.0 else None
+                ),
+                quote_age_minutes=(None if quote_age_seconds is None else quote_age_seconds / 60.0),
+                require_fitted_shrinkage=True,
+                enforce_operational_gates=True,
+                market_source_count=int(str(quote.get("market_source_count", 1))),
             )
 
             feature_id, projection_id, episode_id = uuid4(), uuid4(), uuid4()
@@ -512,6 +539,27 @@ def run_baseline(*, now: datetime | None = None, seed: int = 20260803) -> Foreca
                             "breakeven_probability": breakeven,
                             "probability_lower_bound": decision.probability_lower_bound,
                             "uncertainty_standard_error": decision.uncertainty_standard_error,
+                            "minutes_scenarios": [
+                                {
+                                    "name": "starts",
+                                    "probability": adjustments.start_probability,
+                                    "minutes": adjustments.starter_minutes,
+                                    "minutes_std": adjustments.starter_minutes_std,
+                                },
+                                {
+                                    "name": "bench",
+                                    "probability": 1.0 - adjustments.start_probability,
+                                    "minutes": adjustments.bench_minutes,
+                                    "minutes_std": adjustments.bench_minutes_std,
+                                },
+                            ],
+                            "minutes_restriction_probability": (
+                                None if role is None else role.minutes_restriction_probability
+                            ),
+                            "quote_age_minutes": (
+                                None if quote_age_seconds is None else quote_age_seconds / 60.0
+                            ),
+                            "market_source_count": int(str(quote.get("market_source_count", 1))),
                         }
                     ),
                     [],

@@ -203,6 +203,30 @@ def test_the_game_cap_limits_exposure_to_the_least_measured_correlation() -> Non
         assert max(per_game.values()) <= 2
 
 
+def test_player_and_team_caps_prevent_one_assumption_from_dominating() -> None:
+    candidates = [
+        leg("A", "points", 0.90, player="a", team="LVA", game="g1"),
+        leg("A", "rebounds", 0.89, player="a", team="LVA", game="g1"),
+        leg("B", "assists", 0.88, player="b", team="LVA", game="g2"),
+        leg("C", "points", 0.87, player="c", team="LVA", game="g3"),
+        leg("D", "rebounds", 0.86, player="d", team="SEA", game="g4"),
+    ]
+
+    entries = construct_entries(
+        candidates,
+        prizepicks_payout_table(BUNDLED_AT),
+        max_per_player=1,
+        max_per_team=2,
+        simulations=2_000,
+    )
+
+    assert entries
+    for entry in entries:
+        players = [item.player_id for item in entry.legs]
+        assert len(players) == len(set(players))
+        assert sum(item.team == "LVA" for item in entry.legs) <= 2
+
+
 def test_an_unpriced_entry_is_declined_rather_than_ranked_on_its_midpoint() -> None:
     """Every suggestion here rests on priors, so every one of them must say so."""
     candidates = [

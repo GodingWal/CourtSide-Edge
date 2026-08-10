@@ -156,6 +156,8 @@ class RoleInputs:
     minutes_std: float | None = None
     start_probability: float | None = None
     availability_probability: float | None = None
+    closing_lineup_probability: float | None = None
+    minutes_restriction_probability: float | None = None
     model_version: str | None = None
 
 
@@ -280,6 +282,10 @@ class Adjustments:
     matchup_multiplier: float
     rest_minutes_multiplier: float
     rest_rate_multiplier: float
+    starter_minutes: float
+    starter_minutes_std: float
+    bench_minutes: float
+    bench_minutes_std: float
 
     @property
     def combined_rate_multiplier(self) -> float:
@@ -384,6 +390,10 @@ def resolve_adjustments(inputs: ScoringInputs) -> Adjustments:
         matchup_multiplier=matchup_multiplier,
         rest_minutes_multiplier=rest.minutes_multiplier,
         rest_rate_multiplier=rest.rate_multiplier,
+        starter_minutes=model.starter_mean,
+        starter_minutes_std=model.starter_std,
+        bench_minutes=model.bench_mean,
+        bench_minutes_std=model.bench_std,
     )
 
 
@@ -723,6 +733,14 @@ def score_prop(inputs: ScoringInputs) -> ScoredForecast:
             },
             "weights": dict(zip(names, resolved_weights, strict=True)),
             "weights_fitted": inputs.weights.is_fitted,
+            "redundant_component_pairs": [
+                {
+                    "component_a": first,
+                    "component_b": second,
+                    "correlation": correlation,
+                }
+                for first, second, correlation in inputs.weights.redundant_pairs
+            ],
             "calibration_shrinkage": inputs.calibration.shrinkage,
             "calibration_sample": inputs.calibration.sample_size,
             "market_informative": inputs.market is not None and inputs.market.is_informative,

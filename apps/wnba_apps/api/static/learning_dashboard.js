@@ -35,6 +35,38 @@ function renderLearningDashboard() {
     kpi("Shadow tests", running, "Never auto-promoted") +
     kpi("Human decisions", decisions, "Audited experiment outcomes");
 
+  const recommendationCounts = {};
+  (data.forecasts || []).forEach((item) => {
+    const status = item.qualified ? "qualified" : (item.system_recommendation || "unclassified");
+    recommendationCounts[status] = (recommendationCounts[status] || 0) + 1;
+  });
+  const statusOrder = ["qualified", "blocked_stale_quote", "blocked_data_quality", "blocked_by_skeptic", "blocked_calibration", "blocked_exposure", "declined_no_edge"];
+  const statusLabels = {
+    qualified: "Qualified",
+    blocked_stale_quote: "Quote freshness",
+    blocked_data_quality: "Data / market coverage",
+    blocked_by_skeptic: "Availability / restriction",
+    blocked_calibration: "Calibration / uncertainty / disagreement",
+    blocked_exposure: "Exposure policy",
+    declined_no_edge: "Insufficient lower-bound edge",
+    unclassified: "Unclassified",
+  };
+  const funnelRows = [...statusOrder, ...Object.keys(recommendationCounts).filter((key) => !statusOrder.includes(key))]
+    .filter((key) => recommendationCounts[key])
+    .map((key) => row(statusLabels[key] || key.replaceAll("_", " "), recommendationCounts[key], key === "qualified" ? "ok" : "warn"));
+  $("qualificationFunnel").innerHTML = funnelRows.join("") || empty("No current forecasts are available to classify.");
+
+  const nextEvidence = [];
+  if (recommendationCounts.blocked_stale_quote) nextEvidence.push(["Refresh quotes", `${recommendationCounts.blocked_stale_quote} forecast(s) need a quote no older than 30 minutes.`]);
+  if (recommendationCounts.blocked_data_quality) nextEvidence.push(["Expand consensus coverage", `${recommendationCounts.blocked_data_quality} forecast(s) need two independent sources or cleaner inputs.`]);
+  if (recommendationCounts.blocked_by_skeptic) nextEvidence.push(["Resolve player role", `${recommendationCounts.blocked_by_skeptic} forecast(s) have availability or minutes-restriction risk.`]);
+  if (recommendationCounts.blocked_calibration) nextEvidence.push(["Collect and diagnose evidence", `${recommendationCounts.blocked_calibration} forecast(s) lack fitted shrinkage, have unstable minutes, or have component conflict.`]);
+  if (recommendationCounts.blocked_exposure) nextEvidence.push(["Reduce concentration", `${recommendationCounts.blocked_exposure} forecast(s) exceed the player, team, or game exposure policy.`]);
+  if (recommendationCounts.declined_no_edge) nextEvidence.push(["Wait for a better line", `${recommendationCounts.declined_no_edge} forecast(s) do not clear break-even with a 95% lower bound.`]);
+  $("qualificationActions").innerHTML = nextEvidence.length
+    ? nextEvidence.map(([title, detail]) => `<div class="listitem"><b>${esc(title)}</b><p>${esc(detail)}</p></div>`).join("")
+    : empty(recommendationCounts.qualified ? "Every current forecast shown here cleared its gates." : "Load a current board to generate prioritized actions.");
+
   const attention = [];
   experiments.forEach((item) => {
     const progress = Number(item.independent_sample_size || 0);
