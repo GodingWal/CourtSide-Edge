@@ -82,6 +82,12 @@ fitted from at least 200 settled episodes. Failure of any gate produces no quali
 search uses the lower-bound probabilities—not the headline estimates—and caps exposure per
 player, team, and game before correlation-band pricing.
 
+The weekly trust fit additionally measures a coverage-versus-risk policy, conformal stat bands
+by prop and role, source reliability and paired feature ablations. These begin as shadow
+artifacts: they are visible in Learning and Replay but cannot automatically sharpen a forecast
+or promote a model. The current-slate joint simulator draws shared pace, usage, minutes and
+blowout states to estimate leg covariance without changing the champion's marginal probability.
+
 ## Known limitations
 
 - Historical prices are unusable for return calculations because decimal odds were truncated.

@@ -6,6 +6,7 @@ const baseSwitchView = switchView;
 switchView = function (name) {
   baseSwitchView(name);
   if (name === "history") $("pageTitle").textContent = "Historical box scores";
+  if (name === "replay") $("pageTitle").textContent = "Recommendation replay";
   if (location.hash !== `#/${name}`) history.pushState({ view: name }, "", `#/${name}`);
 };
 
@@ -14,6 +15,7 @@ function routeFromLocation() {
   if (document.querySelector(`#view-${requested}`)) {
     baseSwitchView(requested);
     if (requested === "history") $("pageTitle").textContent = "Historical box scores";
+    if (requested === "replay") $("pageTitle").textContent = "Recommendation replay";
   }
 }
 window.addEventListener("popstate", routeFromLocation);

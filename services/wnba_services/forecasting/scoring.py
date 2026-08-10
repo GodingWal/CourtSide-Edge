@@ -93,6 +93,17 @@ COMPONENT_NAMES: tuple[str, ...] = (
     "market_prior",
 )
 
+MARKET_FEATURE_PROFILES: dict[str, dict[str, object]] = {
+    "points": {"volume": "field_goal_attempts", "conversion": "points_per_attempt"},
+    "three_pointers": {"volume": "three_point_attempts", "conversion": "make_rate"},
+    "assists": {"volume": "minutes_and_role", "conversion": "team_shooting_conversion"},
+    "rebounds": {"volume": "missed_shot_opportunities", "conversion": "rebound_share"},
+    "points_rebounds_assists": {"joint_groups": ("points", "rebounds", "assists")},
+    "points_rebounds": {"joint_groups": ("points", "rebounds")},
+    "points_assists": {"joint_groups": ("points", "assists")},
+    "rebounds_assists": {"joint_groups": ("rebounds", "assists")},
+}
+
 # Each market as a tuple of *stat groups*. A group is summed directly (offensive and defensive
 # rebounds are one stat); separate groups are correlated random variables whose sum needs its
 # covariance propagated rather than assumed away.
@@ -744,6 +755,7 @@ def score_prop(inputs: ScoringInputs) -> ScoredForecast:
             "calibration_shrinkage": inputs.calibration.shrinkage,
             "calibration_sample": inputs.calibration.sample_size,
             "market_informative": inputs.market is not None and inputs.market.is_informative,
+            "market_feature_profile": MARKET_FEATURE_PROFILES.get(inputs.prop_type, {}),
             "prior_season_minutes": (
                 None if inputs.prior_season is None else inputs.prior_season.effective_minutes
             ),

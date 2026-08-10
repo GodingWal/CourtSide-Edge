@@ -183,6 +183,7 @@ def _row(name: str, prop: str, shrunk: float | None, *, game: str = "g1") -> dic
         "breakeven_probability": 0.577,
         "predicted_probability": 0.7,
         "system_recommendation": "candidate",
+        "qualified": True,
         "player_id": name,
         "team": "LVA",
         "game_id": game,
@@ -220,6 +221,22 @@ def test_a_forecast_without_a_shrunk_probability_is_skipped_not_backfilled(
         main,
         "forecasts",
         lambda: _board([_row("A", "points", None), _row("B", "rebounds", 0.69, game="g2")]),
+    )
+
+    response = client.post("/api/entries/suggest", json={})
+
+    assert response.json()["candidates_considered"] == 1
+
+
+def test_learned_abstention_removes_a_legacy_candidate_from_entry_search(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    abstained = _row("A", "points", 0.72)
+    abstained["qualified"] = False
+    monkeypatch.setattr(
+        main,
+        "forecasts",
+        lambda: _board([abstained, _row("B", "rebounds", 0.69, game="g2")]),
     )
 
     response = client.post("/api/entries/suggest", json={})
