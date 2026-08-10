@@ -291,6 +291,83 @@ def _edge_over_breakeven(row: dict[str, object]) -> float | None:
     return float(str(shrunk)) - float(str(breakeven))
 
 
+def _drivers_and_flags(row: dict[str, object]) -> tuple[list[str], list[str]]:
+    """Explain one forecast in the owner's language, from fields already on the row.
+
+    The platform plan asks for named primary drivers and risk flags next to every
+    projection. The ingredients were all being fetched already; they were just never
+    assembled. Both lists are derived at read time, never stored, so they can never
+    drift from the numbers they describe.
+    """
+
+    def _num(key: str) -> float | None:
+        value = row.get(key)
+        return None if value is None else float(str(value))
+
+    drivers: list[str] = []
+    flags: list[str] = []
+
+    rate = _num("teammate_rate_multiplier")
+    if rate is not None and rate >= 1.03:
+        drivers.append(f"teammate availability lifts rates {rate - 1:.0%}")
+    elif rate is not None and rate <= 0.97:
+        drivers.append(f"returning teammates trim rates {1 - rate:.0%}")
+    minutes_delta = _num("teammate_minutes_delta")
+    if minutes_delta is not None and abs(minutes_delta) >= 1.0:
+        drivers.append(f"teammate effects move minutes {minutes_delta:+.1f}")
+    pace = _num("pace_multiplier")
+    if pace is not None and pace >= 1.02:
+        drivers.append(f"pace-up matchup ({pace:.2f}x possessions)")
+    elif pace is not None and pace <= 0.98:
+        drivers.append(f"pace-down matchup ({pace:.2f}x possessions)")
+    defense = _num("defense_multiplier")
+    if defense is not None and defense >= 1.02:
+        drivers.append("opponent defense concedes this market")
+    elif defense is not None and defense <= 0.98:
+        drivers.append("opponent defense suppresses this market")
+    rest = _num("team_rest_days")
+    if rest == 0:
+        drivers.append("second night of a back-to-back")
+    elif rest is not None and rest >= 3:
+        drivers.append(f"well rested ({rest:.0f} days)")
+
+    designation = row.get("injury_designation")
+    if designation not in (None, "", "available"):
+        detail = row.get("injury_detail")
+        flags.append(f"injury report: {designation}" + (f" -- {detail}" if detail else ""))
+    availability = _num("availability_probability")
+    if availability is not None and availability < 0.9:
+        flags.append(f"availability probability {availability:.0%}")
+    start = _num("start_probability")
+    if start is not None and start < 0.75:
+        flags.append(f"starting status uncertain ({start:.0%})")
+    minutes_std = _num("projected_minutes_std")
+    if minutes_std is not None and minutes_std >= 4.0:
+        flags.append(f"volatile minutes (std {minutes_std:.1f})")
+    blowout = _num("blowout_probability")
+    if blowout is not None and blowout >= 0.35:
+        flags.append(f"blowout risk {blowout:.0%} threatens minutes")
+    quality = _num("data_quality_score")
+    if quality is not None and quality < 0.9:
+        flags.append(f"data quality {quality:.2f} below threshold")
+    disagreement = _num("model_disagreement")
+    if disagreement is not None and disagreement >= 0.08:
+        flags.append("model components disagree")
+    return drivers[:4], flags[:4]
+
+
+def _max_drawdown(profits: list[float]) -> float:
+    """Largest peak-to-trough decline of a cumulative series, in the series' units."""
+    peak = 0.0
+    worst = 0.0
+    total = 0.0
+    for profit in profits:
+        total += profit
+        peak = max(peak, total)
+        worst = min(worst, total - peak)
+    return -worst
+
+
 def _entry_correlation_for(request: PriceRequest) -> EntryCorrelation:
     """Estimate the entry's correlation from its leg descriptors and the fitted table."""
     from wnba_services.market_engine.correlation import LegKey, entry_correlation, load_correlations
@@ -635,6 +712,51 @@ def archive() -> dict[str, object]:
     }
 
 
+@app.get("/api/markets/consensus")
+def market_consensus() -> dict[str, object]:
+    """Cross-book view of the live board: median line, dispersion, per-book prices.
+
+    Two sources are not a mature market consensus, and the response says so. Even so,
+    line dispersion between the two is the earliest staleness signal the archive has:
+    a book sitting off the consensus is either slow or first, and both are information.
+    """
+    from wnba_store.db import connect
+
+    with connect() as conn, conn.cursor() as cur:
+        cur.execute(
+            """WITH latest AS (
+                 SELECT DISTINCT ON (source,player_id,game_id,prop_type)
+                        source,player_id,game_id,prop_type,line,
+                        over_american_odds,under_american_odds,system_from
+                 FROM wnba.prop_quotes
+                 WHERE system_to IS NULL AND is_available
+                   AND game_id IN (SELECT game_id FROM wnba.games
+                                   WHERE scheduled_tipoff > now() - interval '6 hours')
+                 ORDER BY source,player_id,game_id,prop_type,system_from DESC
+               )
+               SELECT l.player_id,p.full_name,l.game_id,l.prop_type,
+                      count(DISTINCT l.source) AS books,
+                      percentile_cont(0.5) WITHIN GROUP (ORDER BY l.line) AS consensus_line,
+                      max(l.line)-min(l.line) AS line_dispersion,
+                      jsonb_agg(jsonb_build_object(
+                        'source',l.source,'line',l.line,
+                        'over',l.over_american_odds,'under',l.under_american_odds,
+                        'seen',l.system_from) ORDER BY l.source) AS quotes
+               FROM latest l JOIN wnba.players p ON p.player_id=l.player_id
+               GROUP BY l.player_id,p.full_name,l.game_id,l.prop_type
+               ORDER BY books DESC, line_dispersion DESC NULLS LAST"""
+        )
+        markets = [dict(row) for row in cur.fetchall()]
+    return {
+        "available": True,
+        "note": (
+            "Median across the sources currently archived. With two books this is a "
+            "dispersion signal, not a true market consensus."
+        ),
+        "markets": markets,
+    }
+
+
 @app.get("/api/status")
 def status() -> dict[str, object]:
     """Honest build status. Every claim here is backed by a test that fails the build."""
@@ -694,6 +816,10 @@ def forecasts() -> dict[str, object]:
                           d.episode_id,d.side,d.predicted_probability,d.model_disagreement,
                           d.system_recommendation,d.shrunk_probability,d.breakeven_probability,
                           d.decision_reason,q.source,
+                          (fs.features->>'probability_lower_bound')::double precision
+                            AS probability_lower_bound,
+                          (fs.features->>'uncertainty_standard_error')::double precision
+                            AS uncertainty_standard_error,
                           g.scheduled_tipoff,i.designation AS injury_designation,
                           i.detail AS injury_detail,r.availability_probability,
                           r.start_probability,r.closing_lineup_probability,
@@ -704,6 +830,7 @@ def forecasts() -> dict[str, object]:
                           c.expected_margin,c.blowout_probability,c.team_rest_days,
                           c.opponent_rest_days,c.confidence AS matchup_confidence,
                           c.method_version AS matchup_model,fc.components,
+                          mo.minutes AS override_minutes,
                           ht.abbreviation AS home_team,at.abbreviation AS away_team,
                           lt.abbreviation AS team,
                           CASE
@@ -714,6 +841,8 @@ def forecasts() -> dict[str, object]:
                    JOIN wnba.players p ON p.player_id=f.player_id
                    JOIN wnba.decision_episodes d ON d.model_run_id=f.model_run_id
                      AND d.quote_id=f.quote_id
+                   JOIN wnba.feature_snapshots fs
+                     ON fs.feature_snapshot_id=f.feature_snapshot_id
                    JOIN wnba.prop_quotes q ON q.quote_id=f.quote_id
                    JOIN wnba.games g ON g.game_id=f.game_id
                    JOIN wnba.teams ht ON ht.team_id=g.home_team_id
@@ -762,6 +891,13 @@ def forecasts() -> dict[str, object]:
                          ORDER BY ingested_at DESC LIMIT 1)
                      ORDER BY system_from DESC LIMIT 1
                    ) c ON true
+                   -- Latest owner minutes override for this player/game, if any.
+                   LEFT JOIN LATERAL (
+                     SELECT minutes FROM wnba.minutes_overrides
+                     WHERE player_id=f.player_id AND game_id=f.game_id
+                       AND superseded_at IS NULL
+                     ORDER BY created_at DESC LIMIT 1
+                   ) mo ON true
                    LEFT JOIN LATERAL (
                      SELECT jsonb_agg(jsonb_build_object(
                        'name',component_name,'version',component_version,'weight',weight,
@@ -779,6 +915,9 @@ def forecasts() -> dict[str, object]:
         return {"available": False, "reason": str(exc)[:200], "forecasts": []}
     for row in rows:
         row["edge"] = _edge_over_breakeven(row)
+        drivers, flags = _drivers_and_flags(row)
+        row["primary_drivers"] = drivers
+        row["risk_flags"] = flags
     # Ranked by edge over the payout table's break-even, not by raw probability. The two orders
     # disagree constantly and only one of them is a ranking by value: a 0.72 on a product that
     # needs three legs correct and a 0.61 on one that needs two are not comparable quantities.
@@ -931,6 +1070,19 @@ def performance() -> dict[str, object]:
                    FROM wnba.error_attributions GROUP BY primary_error ORDER BY episodes DESC"""
             )
             error_attributions = [dict(row) for row in cur.fetchall()]
+            # Flat one-unit paper record on episodes the gate called candidates, priced at
+            # each episode's recorded break-even. Drawdown of the cumulative curve is the
+            # number a win-rate summary hides: the worst stretch the owner lived through.
+            cur.execute(
+                """SELECT o.settled_at,o.hit,d.breakeven_probability
+                   FROM wnba.episode_outcomes o
+                   JOIN wnba.decision_episodes d ON d.episode_id=o.episode_id
+                   WHERE d.system_recommendation='candidate'
+                     AND NOT o.was_voided AND NOT o.was_push
+                     AND d.breakeven_probability IS NOT NULL
+                   ORDER BY o.settled_at"""
+            )
+            candidate_record = [dict(row) for row in cur.fetchall()]
     except Exception as exc:
         return {"available": False, "reason": str(exc)[:200]}
     return {
@@ -943,6 +1095,17 @@ def performance() -> dict[str, object]:
         "model_evaluations": model_evaluations,
         "drift_incidents": drift_incidents,
         "error_attributions": error_attributions,
+        "candidate_drawdown": _max_drawdown(
+            [
+                (1.0 / float(str(r["breakeven_probability"])) - 1.0) if r["hit"] else -1.0
+                for r in candidate_record
+            ]
+        ),
+        "candidate_units": sum(
+            (1.0 / float(str(r["breakeven_probability"])) - 1.0) if r["hit"] else -1.0
+            for r in candidate_record
+        ),
+        "candidate_record_length": len(candidate_record),
     }
 
 
@@ -1224,6 +1387,7 @@ def learning_proposals() -> dict[str, object]:
 @app.get("/api/learning")
 def learning() -> dict[str, object]:
     """One read-only view of the closed learning loop and its human review queue."""
+    from wnba_services.forecasting.challengers import challenger_names
     from wnba_store.db import connect
 
     with connect() as conn, conn.cursor() as cur:
@@ -1316,6 +1480,7 @@ def learning() -> dict[str, object]:
         "rule_firings": rule_firings,
         "advisories": advisories,
         "deescalations": deescalations,
+        "challengers": list(challenger_names()),
     }
 
 
@@ -1640,6 +1805,189 @@ def readiness() -> dict[str, object]:
     return {"available": True, "evaluation": dict(evaluation), "gates": gates}
 
 
+class RecommendationDecisionRequest(BaseModel):
+    decision: Literal[
+        "accepted",
+        "rejected_bad_data",
+        "rejected_minutes",
+        "rejected_matchup",
+        "rejected_price",
+        "rejected_uncertainty",
+        "override_higher",
+        "override_lower",
+        "missing_evidence",
+        "explanation_unclear",
+    ]
+    reason: Annotated[str, Field(max_length=500)] = ""
+
+
+class MinutesOverrideRequest(BaseModel):
+    player_id: UUID
+    game_id: UUID
+    minutes: Annotated[float, Field(gt=0, le=48)]
+    reason: Annotated[str, Field(min_length=3, max_length=500)]
+
+
+@app.post("/api/recommendations/{episode_id}/decision")
+def decide_recommendation(
+    episode_id: UUID, request: RecommendationDecisionRequest
+) -> dict[str, object]:
+    """Record what the owner did with one recommendation.
+
+    The schema has required a reason for overrides longer than this endpoint has existed;
+    the API now enforces it before the database has to.
+    """
+    from wnba_store.db import connect
+
+    if request.decision in {"override_higher", "override_lower"} and len(request.reason) < 3:
+        raise HTTPException(status_code=422, detail="an override requires a recorded reason")
+    with connect() as conn, conn.cursor() as cur:
+        cur.execute(
+            """UPDATE wnba.decision_episodes
+               SET analyst_decision=%s,analyst_override_reason=%s
+               WHERE episode_id=%s RETURNING episode_id""",
+            (request.decision, request.reason or None, episode_id),
+        )
+        if cur.fetchone() is None:
+            raise HTTPException(status_code=404, detail="Unknown decision episode")
+    return {
+        "episode_id": str(episode_id),
+        "analyst_decision": request.decision,
+        "actor": "owner",
+    }
+
+
+@app.post("/api/overrides/minutes")
+def override_minutes(request: MinutesOverrideRequest) -> dict[str, object]:
+    """Record the owner's expected-minutes override for one player and game.
+
+    The override is surfaced on the board next to the model's number. It does not retrain
+    anything and it does not edit the forecast: a stored override is evidence, and evidence
+    enters the model through the challenger path, not through a back door.
+    """
+    from wnba_store.db import connect
+
+    override_id = uuid4()
+    with connect() as conn, conn.cursor() as cur:
+        cur.execute(
+            """UPDATE wnba.minutes_overrides SET superseded_at=now()
+               WHERE player_id=%s AND game_id=%s AND superseded_at IS NULL""",
+            (request.player_id, request.game_id),
+        )
+        cur.execute(
+            """INSERT INTO wnba.minutes_overrides
+               (override_id,player_id,game_id,minutes,reason,actor,created_at)
+               VALUES (%s,%s,%s,%s,%s,'owner',now())""",
+            (
+                override_id,
+                request.player_id,
+                request.game_id,
+                request.minutes,
+                request.reason,
+            ),
+        )
+    return {
+        "override_id": str(override_id),
+        "player_id": str(request.player_id),
+        "game_id": str(request.game_id),
+        "minutes": request.minutes,
+        "actor": "owner",
+    }
+
+
+@app.get("/api/learning/error-graph")
+def learning_error_graph() -> dict[str, object]:
+    """The last hundred material attributions as a causal graph plus aggregate shares.
+
+    This is the plan's development-priority table: what fraction of recent error is minutes,
+    what fraction is lineup freshness, and so on -- measured failure contribution rather than
+    whichever feature looked entertaining this week.
+    """
+    from wnba_store.db import connect
+
+    with connect() as conn, conn.cursor() as cur:
+        cur.execute(
+            """SELECT a.episode_id,a.primary_error,a.secondary_error,a.avoidable,
+                      a.confidence,a.causal_chain,a.attributed_at,
+                      d.prop_type,d.side,d.line
+               FROM wnba.error_attributions a
+               JOIN wnba.decision_episodes d ON d.episode_id=a.episode_id
+               ORDER BY a.attributed_at DESC LIMIT 100"""
+        )
+        episodes = [dict(row) for row in cur.fetchall()]
+        cur.execute(
+            """SELECT primary_error,count(*) AS episodes,
+                      round(count(*)::numeric / greatest(sum(count(*)) OVER (),1) * 100, 1)
+                        AS share_pct
+               FROM wnba.error_attributions
+               WHERE attribution_id IN (
+                 SELECT attribution_id FROM wnba.error_attributions
+                 ORDER BY attributed_at DESC LIMIT 100)
+               GROUP BY primary_error ORDER BY episodes DESC"""
+        )
+        shares = [dict(row) for row in cur.fetchall()]
+    return {
+        "available": True,
+        "window": 100,
+        "failure_shares": shares,
+        "episodes": episodes,
+    }
+
+
+@app.get("/api/learning/memory")
+def learning_memory() -> dict[str, object]:
+    """The platform's four memory types in one read (self-improvement plan section 17).
+
+    Semantic memory is the ontology itself and is not repeated here. Procedural memory is
+    the versioned checklist file. Causal memory is the hypothesis registry. Failure memory
+    is what the drift monitor and the attribution record currently know hurts. Episodic
+    memory is the precedent store the research workflow retrieves from.
+    """
+    from wnba_store.db import connect
+
+    procedures_path = Path(__file__).resolve().parents[3] / "ontology" / "procedures.yaml"
+    procedures: list[dict[str, object]] = []
+    if procedures_path.exists():
+        import yaml
+
+        procedures = list((yaml.safe_load(procedures_path.read_text()) or {}).get("procedures", []))
+    with connect() as conn, conn.cursor() as cur:
+        cur.execute(
+            """SELECT name,status,confidence,supporting_count,contradicting_count,
+                      error_category,evaluated_at
+               FROM wnba.hypotheses ORDER BY created_at DESC LIMIT 50"""
+        )
+        causal = [dict(row) for row in cur.fetchall()]
+        cur.execute(
+            """SELECT i.component_name,i.metric,i.severity,i.automatic_response,
+                      count(*) AS events
+               FROM wnba.drift_incidents i
+               WHERE i.resolved_at IS NULL
+               GROUP BY i.component_name,i.metric,i.severity,i.automatic_response
+               ORDER BY count(*) DESC LIMIT 20"""
+        )
+        drift = [dict(row) for row in cur.fetchall()]
+        cur.execute(
+            """SELECT primary_error,count(*) AS episodes
+               FROM wnba.error_attributions
+               WHERE attributed_at > now() - interval '30 days'
+               GROUP BY primary_error ORDER BY episodes DESC"""
+        )
+        recent_failures = [dict(row) for row in cur.fetchall()]
+        cur.execute("SELECT count(*) AS precedents FROM wnba.research_precedents")
+        episodic = cur.fetchone()
+    return {
+        "available": True,
+        "procedural_memory": procedures,
+        "causal_memory": causal,
+        "failure_memory": {"open_drift_incidents": drift, "recent_error_mix": recent_failures},
+        "episodic_memory": {
+            "stored_precedents": 0 if episodic is None else int(str(episodic["precedents"]))
+        },
+        "semantic_memory": "ontology/objects.yaml + links.yaml",
+    }
+
+
 # --------------------------------------------------------------------------------------
 # Learning-loop owner actions. Every one of these calls the same lifecycle function the CLI
 # wraps, under the console's authenticated owner identity. Automation never calls them: the
@@ -1651,7 +1999,7 @@ class LearningActionRequest(BaseModel):
 
 class ExperimentOpenRequest(BaseModel):
     challenger: Annotated[str, Field(min_length=1, max_length=80)]
-    primary_metric: Literal["log_loss", "brier", "mae", "line_value"] = "brier"
+    primary_metric: Literal["log_loss", "brier", "mae", "line_value"] = "log_loss"
     minimum_sample: Annotated[int, Field(ge=10, le=10_000)] = 200
 
 
@@ -1778,9 +2126,7 @@ def review_learning_proposal(
             (request.verdict, proposal_id),
         )
         if cur.fetchone() is None:
-            raise HTTPException(
-                status_code=422, detail="unknown proposal or already reviewed"
-            )
+            raise HTTPException(status_code=422, detail="unknown proposal or already reviewed")
     return {"proposal_id": str(proposal_id), "status": request.verdict}
 
 

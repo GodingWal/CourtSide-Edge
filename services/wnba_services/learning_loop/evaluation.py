@@ -84,7 +84,9 @@ def classify_error(
     ``random_variance`` and be marked unavoidable, which is how a systematic modelling bias gets
     filed as luck and generates nothing, forever.
 
-    Returns ``(primary, avoidable, confidence, secondary)``.
+    Returns ``(primary, avoidable, confidence, secondary)``. The full ranked cause list is
+    available to the caller through ``classified_causes`` -- the record of an episode keeps
+    every cause that cleared the threshold, with its score, rather than only the loudest two.
     """
     minutes_error = actual_minutes - projected_minutes
     stat_error = actual_stat - projected_stat
@@ -124,6 +126,67 @@ def classify_error(
     return "random_variance", False, 0.6, None
 
 
+def error_contribution(
+    *,
+    actual_minutes: float,
+    projected_minutes: float,
+    actual_stat: float,
+    projected_stat: float,
+) -> dict[str, float]:
+    """Decompose one stat miss into named shares, as the platform plan's attribution report.
+
+    Minutes enter the forecast multiplicatively, so the minutes share is what the minutes
+    miss alone would have produced at the projected per-minute rate; the efficiency share is
+    the residual. Shares are of absolute error, so they sum to one when both point the same
+    way and can exceed one when they offset -- which is itself information.
+    """
+    minutes_error = actual_minutes - projected_minutes
+    per_minute = projected_stat / projected_minutes if projected_minutes > 0 else 0.0
+    carried = minutes_error * per_minute
+    residual = (actual_stat - projected_stat) - carried
+    total = abs(carried) + abs(residual)
+    if total == 0:
+        return {"minutes": 0.0, "efficiency": 0.0}
+    return {
+        "minutes": round(abs(carried) / total, 3),
+        "efficiency": round(abs(residual) / total, 3),
+    }
+
+
+def _causal_chain(cur: Any, episode: dict[str, Any], *, primary: str | None) -> list[str]:
+    """Trace one attribution back through what the system knew, root cause last.
+
+    The plan's example chain -- lost recommendation, projection too high, minutes too high,
+    stale lineup source, delayed ingestion -- is the shape this produces. The first nodes
+    come from the episode's own numbers; the last comes from the data-quality incidents the
+    pipeline recorded around forecast time, which is where an engineering action attaches.
+    """
+    chain: list[str] = []
+    if primary is not None:
+        stat_error = float(str(episode["actual_stat"])) - float(str(episode["projected_mean"]))
+        direction = "low" if stat_error > 0 else "high"
+        chain.append(f"projection too {direction}")
+        minutes_error = float(str(episode["actual_minutes"])) - float(
+            str(episode["projected_minutes"])
+        )
+        if primary == "minutes_projection":
+            chain.append(f"minutes too {'low' if minutes_error > 0 else 'high'}")
+        chain.append(f"cause: {primary}")
+    source = episode.get("source")
+    forecast_at = episode.get("forecast_timestamp")
+    if source is not None and forecast_at is not None:
+        cur.execute(
+            """SELECT code,detail FROM wnba.dq_incidents
+               WHERE detected_at BETWEEN %s - interval '12 hours' AND %s + interval '12 hours'
+                 AND (source=%s OR level='critical')
+               ORDER BY detected_at DESC LIMIT 3""",
+            (forecast_at, forecast_at, str(source)),
+        )
+        for incident in cur.fetchall():
+            chain.append(f"data-quality incident: {incident['code']}")
+    return chain
+
+
 def _probability_for_side(over_probability: float, side: str) -> float:
     return over_probability if side == "over" else 1.0 - over_probability
 
@@ -148,6 +211,12 @@ def evaluate_models(*, now: datetime | None = None) -> EvaluationBatch:
                 line_value = direction * (
                     float(str(episode["closing_line"])) - float(str(episode["line"]))
                 )
+            episode["error_contribution"] = error_contribution(
+                actual_minutes=float(str(episode["actual_minutes"])),
+                projected_minutes=float(str(episode["projected_minutes"])),
+                actual_stat=float(str(episode["actual_stat"])),
+                projected_stat=float(str(episode["projected_mean"])),
+            )
             category, avoidable, confidence, secondary = classify_error(
                 projected_minutes=float(str(episode["projected_minutes"])),
                 actual_minutes=float(str(episode["actual_minutes"])),
@@ -158,11 +227,12 @@ def evaluate_models(*, now: datetime | None = None) -> EvaluationBatch:
                 predicted_probability=float(str(episode["predicted_probability"])),
                 hit=bool(episode["hit"]),
             )
+            chain = _causal_chain(cur, episode, primary=category)
             cur.execute(
                 """INSERT INTO wnba.error_attributions
                    (attribution_id,episode_id,primary_error,secondary_error,avoidable,confidence,
-                    minutes_error,stat_error,line_value,detail,attributed_at)
-                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING""",
+                    minutes_error,stat_error,line_value,detail,causal_chain,attributed_at)
+                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING""",
                 (
                     uuid4(),
                     episode["episode_id"],
@@ -174,7 +244,16 @@ def evaluate_models(*, now: datetime | None = None) -> EvaluationBatch:
                     - float(str(episode["projected_minutes"])),
                     float(str(episode["actual_stat"])) - float(str(episode["projected_mean"])),
                     line_value,
-                    Jsonb({"method": "scored-causes-v1", "human_reviewed": False}),
+                    Jsonb(
+                        {
+                            "method": "scored-causes-v2",
+                            "human_reviewed": False,
+                            "secondary_errors": ([] if secondary is None else [secondary]),
+                            "error_contribution": episode.get("error_contribution"),
+                            "causal_chain": chain,
+                        }
+                    ),
+                    chain,
                     at,
                 ),
             )

@@ -1,7 +1,34 @@
 // Owner approval actions for the learning loop. The panels stay read-only by default; every
 // button here is a named human act recorded as "owner" with an audit reason, and each one
 // calls the same lifecycle function the CLI wraps. Automation never calls these endpoints.
-const CHALLENGER_FAMILIES = ["hierarchical-bayes", "state-space-role"];
+function requestLearningReason(title, optional = false) {
+  return new Promise((resolve) => {
+    const modal = $("learningModal");
+    const input = $("learningReason");
+    $("learningModalTitle").textContent = title;
+    input.value = "";
+    input.required = !optional;
+    modal.classList.add("open");
+    input.focus();
+    const close = (value) => {
+      modal.classList.remove("open");
+      $("learningModalConfirm").onclick = null;
+      $("learningModalCancel").onclick = null;
+      resolve(value);
+    };
+    $("learningModalConfirm").onclick = () => {
+      const value = input.value.trim();
+      if (!optional && value.length < 3) {
+        input.setCustomValidity("Please record at least three characters.");
+        input.reportValidity();
+        input.setCustomValidity("");
+        return;
+      }
+      close(value);
+    };
+    $("learningModalCancel").onclick = () => close(null);
+  });
+}
 
 function learningItems(id) {
   const el = $(id);
@@ -22,20 +49,21 @@ async function learningAction(path, body, done) {
   }
 }
 
-function approveRule(id) {
-  const reason = prompt("Approval reason (recorded in the audit trail):");
-  if (!reason) return;
+async function approveRule(id) {
+  const reason = await requestLearningReason("Why should this rule become active?");
+  if (reason === null) return;
   learningAction(`/api/learning/rules/${encodeURIComponent(id)}/approve`, { reason }, "Rule activated");
 }
 
-function retireRule(id) {
-  const reason = prompt("Retirement reason (recorded in the audit trail):");
-  if (!reason) return;
+async function retireRule(id) {
+  const reason = await requestLearningReason("Why should this rule be retired?");
+  if (reason === null) return;
   learningAction(`/api/learning/rules/${encodeURIComponent(id)}/retire`, { reason }, "Rule retired");
 }
 
-function reviewProposal(id, verdict) {
-  const reason = verdict === "rejected" ? prompt("Rejection reason (optional):") || "" : "";
+async function reviewProposal(id, verdict) {
+  const reason = verdict === "rejected" ? await requestLearningReason("Why reject this proposal?", true) : "";
+  if (reason === null) return;
   learningAction(
     `/api/learning/proposals/${encodeURIComponent(id)}/review`,
     { verdict, reason },
@@ -43,21 +71,21 @@ function reviewProposal(id, verdict) {
   );
 }
 
-function promoteExperiment(id) {
-  const reason = prompt("Promotion reason (recorded in the audit trail):");
-  if (!reason) return;
+async function promoteExperiment(id) {
+  const reason = await requestLearningReason("Why should this challenger become champion?");
+  if (reason === null) return;
   learningAction(`/api/learning/experiments/${encodeURIComponent(id)}/promote`, { reason }, "Challenger promoted to champion");
 }
 
-function rollbackExperiment(id) {
-  const reason = prompt("Rollback reason (recorded in the audit trail):");
-  if (!reason) return;
+async function rollbackExperiment(id) {
+  const reason = await requestLearningReason("Why should this promotion be rolled back?");
+  if (reason === null) return;
   learningAction(`/api/learning/experiments/${encodeURIComponent(id)}/rollback`, { reason }, "Previous champion restored");
 }
 
-function abandonExperiment(id) {
-  const reason = prompt("Abandon reason (recorded in the audit trail):");
-  if (!reason) return;
+async function abandonExperiment(id) {
+  const reason = await requestLearningReason("Why are we keeping the champion?");
+  if (reason === null) return;
   learningAction(`/api/learning/experiments/${encodeURIComponent(id)}/abandon`, { reason }, "Experiment abandoned");
 }
 
@@ -66,7 +94,7 @@ function openExperiment() {
   if (!sel) return;
   learningAction(
     "/api/learning/experiments/open",
-    { challenger: sel.value, primary_metric: "brier" },
+    { challenger: sel.value, primary_metric: "log_loss" },
     "Shadow experiment opened"
   );
 }
@@ -103,6 +131,9 @@ function renderLearningActions() {
     if (x.status === "running") {
       buttons.push(`<button class="button" onclick="abandonExperiment('${x.experiment_id}')">Abandon</button>`);
     }
+    if (x.status === "evaluated" && x.verdict !== "challenger_better") {
+      buttons.push(`<button class="button" onclick="abandonExperiment('${x.experiment_id}')">Keep champion / no change</button>`);
+    }
     if (x.status === "evaluated" && x.verdict === "challenger_better" && gated && !degraded) {
       buttons.push(`<button class="primary" onclick="promoteExperiment('${x.experiment_id}')">Promote to champion</button>`);
     }
@@ -115,7 +146,7 @@ function renderLearningActions() {
   const running = new Set(
     experiments.filter((x) => x.status === "running").map((x) => x.challenger_name)
   );
-  const choices = CHALLENGER_FAMILIES.filter((name) => !running.has(name));
+  const choices = (l.challengers || []).filter((name) => !running.has(name));
   const panel = $("experiments");
   if (panel && choices.length) {
     panel.insertAdjacentHTML(

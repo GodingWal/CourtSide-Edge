@@ -71,11 +71,9 @@ def test_rule_retirement_records_the_owner(monkeypatch: pytest.MonkeyPatch) -> N
 def test_opening_an_experiment_names_the_owner(monkeypatch: pytest.MonkeyPatch) -> None:
     experiment_id = uuid4()
 
-    def _open(
-        challenger: str, *, opened_by: str, primary_metric: str, minimum_sample: int
-    ) -> UUID:
+    def _open(challenger: str, *, opened_by: str, primary_metric: str, minimum_sample: int) -> UUID:
         assert opened_by == OWNER
-        assert primary_metric == "brier"
+        assert primary_metric == "log_loss"
         assert minimum_sample == 200
         return experiment_id
 
@@ -90,9 +88,7 @@ def test_promotion_refusal_surfaces_the_gate_reason(monkeypatch: pytest.MonkeyPa
     def _refuse(experiment_id: UUID, *, approved_by: str, reason: str) -> _Promotion:
         raise ValueError("verdict is 'awaiting evidence', not 'challenger_better'")
 
-    monkeypatch.setattr(
-        "wnba_services.learning_loop.experiments.promote_challenger", _refuse
-    )
+    monkeypatch.setattr("wnba_services.learning_loop.experiments.promote_challenger", _refuse)
     response = client.post(f"/api/learning/experiments/{uuid4()}/promote", json=REASON)
     assert response.status_code == 422
     assert "challenger_better" in response.json()["detail"]
@@ -104,12 +100,8 @@ def test_rollback_records_the_owner(monkeypatch: pytest.MonkeyPatch) -> None:
     def _rollback(experiment_id: UUID, *, rolled_back_by: str, reason: str) -> _Promotion:
         return _Promotion(experiment_id, "state-space-role", "rolled_back", rolled_back_by)
 
-    monkeypatch.setattr(
-        "wnba_services.learning_loop.experiments.rollback_promotion", _rollback
-    )
-    body = client.post(
-        f"/api/learning/experiments/{experiment_id}/rollback", json=REASON
-    ).json()
+    monkeypatch.setattr("wnba_services.learning_loop.experiments.rollback_promotion", _rollback)
+    body = client.post(f"/api/learning/experiments/{experiment_id}/rollback", json=REASON).json()
     assert body["status"] == "rolled_back"
     assert body["actor"] == OWNER
 
@@ -120,12 +112,8 @@ def test_abandoning_an_experiment_records_the_owner(monkeypatch: pytest.MonkeyPa
     def _abandon(experiment_id: UUID, *, actor: str, reason: str) -> _Promotion:
         return _Promotion(experiment_id, "hierarchical-bayes", "abandoned", actor)
 
-    monkeypatch.setattr(
-        "wnba_services.learning_loop.experiments.abandon_experiment", _abandon
-    )
-    body = client.post(
-        f"/api/learning/experiments/{experiment_id}/abandon", json=REASON
-    ).json()
+    monkeypatch.setattr("wnba_services.learning_loop.experiments.abandon_experiment", _abandon)
+    body = client.post(f"/api/learning/experiments/{experiment_id}/abandon", json=REASON).json()
     assert body["status"] == "abandoned"
     assert body["actor"] == OWNER
 
@@ -164,9 +152,7 @@ class _Connection:
 
 def test_proposal_review_marks_the_verdict(monkeypatch: pytest.MonkeyPatch) -> None:
     proposal_id = uuid4()
-    monkeypatch.setattr(
-        "wnba_store.db.connect", lambda: _Connection({"proposal_id": proposal_id})
-    )
+    monkeypatch.setattr("wnba_store.db.connect", lambda: _Connection({"proposal_id": proposal_id}))
     body = client.post(
         f"/api/learning/proposals/{proposal_id}/review", json={"verdict": "approved"}
     ).json()

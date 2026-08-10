@@ -54,6 +54,7 @@ from wnba_services.forecasting.distributions import (
 )
 from wnba_services.forecasting.minutes import MAX_MINUTES
 from wnba_services.forecasting.scoring import (
+    ScoredForecast,
     ScoringInputs,
     resolve_adjustments,
     resolve_dispersion,
@@ -113,8 +114,15 @@ class Challenger(Protocol):
         """The stored description of this model, for ``wnba.model_versions.specification``."""
         ...
 
-    def predict(self, inputs: ScoringInputs) -> ChallengerPrediction:
-        """Score one prop. Pure: same inputs, same output, always."""
+    def predict(
+        self, inputs: ScoringInputs, champion: ScoredForecast | None = None
+    ) -> ChallengerPrediction:
+        """Score one prop. Pure: same inputs, same output, always.
+
+        ``champion`` is the forecast the production ensemble just produced for the same
+        prop, supplied so stacked families can learn from it. Families that are not stacks
+        ignore it; the runner always passes it.
+        """
         ...
 
 
@@ -235,7 +243,9 @@ class HierarchicalBayesChallenger:
             "analysis_only": True,
         }
 
-    def predict(self, inputs: ScoringInputs) -> ChallengerPrediction:
+    def predict(
+        self, inputs: ScoringInputs, champion: ScoredForecast | None = None
+    ) -> ChallengerPrediction:
         adjustments = resolve_adjustments(inputs)
         length = _pmf_length(inputs)
         multiplier = adjustments.combined_rate_multiplier
@@ -393,7 +403,9 @@ class StateSpaceRoleChallenger:
             "fallback": "champion_adjustments_when_history_is_short",
         }
 
-    def predict(self, inputs: ScoringInputs) -> ChallengerPrediction:
+    def predict(
+        self, inputs: ScoringInputs, champion: ScoredForecast | None = None
+    ) -> ChallengerPrediction:
         adjustments = resolve_adjustments(inputs)
         length = _pmf_length(inputs)
         multiplier = adjustments.combined_rate_multiplier
@@ -466,10 +478,22 @@ class StateSpaceRoleChallenger:
         )
 
 
-CHALLENGERS: Mapping[str, Challenger] = {
-    challenger.name: challenger
-    for challenger in (HierarchicalBayesChallenger(), StateSpaceRoleChallenger())
-}
+def _build_challengers() -> Mapping[str, Challenger]:
+    # Imported here rather than at module top: the boosted family reads this module's
+    # ChallengerPrediction, so a top-level import in both directions would be a cycle.
+    from wnba_services.forecasting.boosting import GradientBoostingChallenger
+
+    return {
+        challenger.name: challenger
+        for challenger in (
+            HierarchicalBayesChallenger(),
+            StateSpaceRoleChallenger(),
+            GradientBoostingChallenger(),
+        )
+    }
+
+
+CHALLENGERS: Mapping[str, Challenger] = _build_challengers()
 
 
 def challenger_names() -> tuple[str, ...]:

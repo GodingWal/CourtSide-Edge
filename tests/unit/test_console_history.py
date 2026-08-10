@@ -59,10 +59,20 @@ def _install(monkeypatch: pytest.MonkeyPatch, results: list[object]) -> None:
 
 def test_history_coverage_reports_each_season_plainly(monkeypatch: pytest.MonkeyPatch) -> None:
     seasons = [
-        {"season_year": 2024, "games": 273, "games_with_lines": 273,
-         "player_lines": 5201, "players": 158},
-        {"season_year": 2025, "games": 322, "games_with_lines": 322,
-         "player_lines": 6153, "players": 171},
+        {
+            "season_year": 2024,
+            "games": 273,
+            "games_with_lines": 273,
+            "player_lines": 5201,
+            "players": 158,
+        },
+        {
+            "season_year": 2025,
+            "games": 322,
+            "games_with_lines": 322,
+            "player_lines": 6153,
+            "players": 171,
+        },
     ]
     _install(monkeypatch, [seasons])
     body = client.get("/api/history").json()
@@ -80,8 +90,14 @@ def test_player_search_refuses_a_one_letter_needle(monkeypatch: pytest.MonkeyPat
 
 def test_player_search_matches_on_partial_names(monkeypatch: pytest.MonkeyPatch) -> None:
     players = [
-        {"player_id": "p1", "full_name": "A'ja Wilson", "position": "F",
-         "games": 120, "first_game": "2023-05-19", "last_game": "2026-08-05"},
+        {
+            "player_id": "p1",
+            "full_name": "A'ja Wilson",
+            "position": "F",
+            "games": 120,
+            "first_game": "2023-05-19",
+            "last_game": "2026-08-05",
+        },
     ]
     _install(monkeypatch, [players])
     body = client.get("/api/history/players?q=wilson").json()
@@ -98,12 +114,34 @@ def test_the_game_log_returns_season_averages_and_rows(monkeypatch: pytest.Monke
         monkeypatch,
         [
             {"player_id": "p1", "full_name": "A'ja Wilson", "position": "F"},
-            [{"season_year": 2026, "games": 30, "minutes": 33.1, "points": 22.4,
-              "rebounds": 9.8, "assists": 2.6, "threes": 0.4}],
-            [{"game_date": "2026-08-05", "season_year": 2026, "team": "LV",
-              "opponent": "NY", "is_home": True, "minutes": 34.0, "points": 27,
-              "rebounds": 11, "assists": 3, "threes": 1, "steals": 2, "blocks": 1,
-              "turnovers": 2}],
+            [
+                {
+                    "season_year": 2026,
+                    "games": 30,
+                    "minutes": 33.1,
+                    "points": 22.4,
+                    "rebounds": 9.8,
+                    "assists": 2.6,
+                    "threes": 0.4,
+                }
+            ],
+            [
+                {
+                    "game_date": "2026-08-05",
+                    "season_year": 2026,
+                    "team": "LV",
+                    "opponent": "NY",
+                    "is_home": True,
+                    "minutes": 34.0,
+                    "points": 27,
+                    "rebounds": 11,
+                    "assists": 3,
+                    "threes": 1,
+                    "steals": 2,
+                    "blocks": 1,
+                    "turnovers": 2,
+                }
+            ],
         ],
     )
     body = client.get("/api/history/player/p1").json()

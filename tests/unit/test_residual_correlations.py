@@ -77,14 +77,10 @@ def test_teammates_and_opponents_are_classified() -> None:
     relations = {pair.relation for pair in pairs}
     assert "same_team" in relations
     assert "opposing_team" in relations
-    same_team = {
-        (pair.prop_a, pair.prop_b) for pair in pairs if pair.relation == "same_team"
-    }
+    same_team = {(pair.prop_a, pair.prop_b) for pair in pairs if pair.relation == "same_team"}
     # Teammates pair across all nine stat combinations; same-player pairs are cross-stat only.
     assert ("points", "points") in same_team
-    same_player = {
-        (pair.prop_a, pair.prop_b) for pair in pairs if pair.relation == "same_player"
-    }
+    same_player = {(pair.prop_a, pair.prop_b) for pair in pairs if pair.relation == "same_player"}
     assert ("points", "points") not in same_player
 
 

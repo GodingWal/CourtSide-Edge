@@ -474,6 +474,7 @@ def run_baseline(*, now: datetime | None = None, seed: int = 20260803) -> Foreca
                 injury_designation=designation,
                 rule_blocked=rule_outcome.blocked,
                 rule_reason="; ".join(rule_outcome.block_reasons),
+                use_uncertainty_gate=True,
             )
 
             feature_id, projection_id, episode_id = uuid4(), uuid4(), uuid4()
@@ -509,6 +510,8 @@ def run_baseline(*, now: datetime | None = None, seed: int = 20260803) -> Foreca
                             "rules_explanation": rule_outcome.explain(),
                             "decision_reason": decision.reason,
                             "breakeven_probability": breakeven,
+                            "probability_lower_bound": decision.probability_lower_bound,
+                            "uncertainty_standard_error": decision.uncertainty_standard_error,
                         }
                     ),
                     [],
@@ -634,6 +637,7 @@ def run_baseline(*, now: datetime | None = None, seed: int = 20260803) -> Foreca
                     inputs=inputs,
                     side=decision.side,
                     at=at,
+                    champion=forecast,
                 )
 
             forecasts += 1

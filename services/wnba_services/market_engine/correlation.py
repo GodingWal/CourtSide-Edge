@@ -521,8 +521,7 @@ def residual_pair_observations(rows: Iterable[dict[str, Any]]) -> list[ResidualP
                 window = history[-RESIDUAL_BASELINE_GAMES:]
                 game_residuals = residuals.setdefault(str(row["game_id"]), {})
                 game_residuals[player_id] = {
-                    stat: stats[stat]
-                    - math.fsum(prior[stat] for prior in window) / len(window)
+                    stat: stats[stat] - math.fsum(prior[stat] for prior in window) / len(window)
                     for stat in RESIDUAL_STATS
                 }
                 teams.setdefault(str(row["game_id"]), {})[player_id] = str(row["team_id"])
@@ -547,7 +546,9 @@ def residual_pair_observations(rows: Iterable[dict[str, Any]]) -> list[ResidualP
                         rb = players[second][stat_b]
                         pairs.append(
                             ResidualPair(
-                                relation, prop_a, prop_b,
+                                relation,
+                                prop_a,
+                                prop_b,
                                 ra if (prop_a, prop_b) == (stat_a, stat_b) else rb,
                                 rb if (prop_a, prop_b) == (stat_a, stat_b) else ra,
                             )

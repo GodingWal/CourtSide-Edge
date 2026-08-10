@@ -36,7 +36,7 @@
         <section class="card grow">
           <div class="cardhead"><div><label>Live decisions</label><h2>Forecast board</h2></div><span class="mono accent" id="forecastCount">Loading</span></div>
           <div class="filters"><input id="search" placeholder="Search player or market" aria-label="Search player or market"><select id="marketFilter" aria-label="Filter by market"><option value="all">All markets</option></select><select id="teamFilter" aria-label="Filter by team"><option value="all">All teams</option></select><select id="sideFilter" aria-label="Filter by side"><option value="all">Both sides</option><option value="over">Over</option><option value="under">Under</option></select><select id="qualityFilter" aria-label="Filter by forecast quality"><option value="all">All quality</option><option value="candidate">Candidates</option></select></div>
-          <div class="tablewrap forecastwrap"><table class="forecasttable"><thead><tr><th>Player / market</th><th>Source</th><th>Line</th><th>Model</th><th>Side</th><th>Probability</th><th>Edge vs break-even</th><th>Quality</th><th></th></tr></thead><tbody id="forecastRows"><tr><td colspan="9" class="empty">Loading forecasts...</td></tr></tbody></table></div>
+          <div class="tablewrap forecastwrap"><table class="forecasttable"><thead><tr><th>Player / market</th><th>Source</th><th>Line</th><th>Model</th><th>Side</th><th>Probability</th><th>Edge vs break-even</th><th>Quality</th><th></th></tr></thead><tbody id="forecastRows"><tr><td colspan="9" class="empty">Loading forecasts...</td></tr></tbody></table></div><button class="button wide" id="loadMoreForecasts" hidden>Load 120 more</button>
         </section>
         <aside class="stack narrow"><section class="card pad" id="todayReadiness"></section><section class="card pad" id="todayHealth"></section><section class="card pad process"></section></aside>
       </div>
@@ -74,11 +74,15 @@
 
     <section class="view" id="view-learning">
       <div class="sectionintro"><div><label>Closed-loop improvement</label><h2>Learning laboratory</h2><p>Outcomes create diagnoses; diagnoses create hypotheses; approved hypotheses create challenger experiments. Nothing promotes itself.</p></div><span class="pill safe">Human approval required</span></div>
+      <div class="kpis" id="learningHealth"></div>
+      <section class="card pad attention" id="learningAttention"><div class="cardhead flush"><div><label>Prioritized intervention queue</label><h2>Needs attention</h2></div></div><div id="attentionItems"></div></section>
       <div class="pipeline"><span>Decision</span><i>→</i><span>Outcome</span><i>→</i><span>Diagnosis</span><i>→</i><span>Hypothesis</span><i>→</i><span>Experiment</span><i>→</i><span>Review</span></div>
       <div class="threecol"><section class="card pad"><div class="cardhead flush"><div><label>Prioritized</label><h2>Research proposals</h2></div></div><div id="proposals"></div></section><section class="card pad"><div class="cardhead flush"><div><label>Causal memory</label><h2>Hypotheses</h2></div></div><div id="hypotheses"></div></section><section class="card pad"><div class="cardhead flush"><div><label>Champion / challenger</label><h2>Experiments</h2></div></div><div id="experiments"></div></section></div>
       <div class="twocol"><section class="card pad"><div class="cardhead flush"><div><label>Codified judgment</label><h2>Analyst rules</h2></div></div><div id="analystRules"></div></section><section class="card pad"><div class="cardhead flush"><div><label>Observed behavior</label><h2>Rule firings</h2></div></div><div id="ruleFirings"></div></section></div>
       <div class="twocol"><section class="card pad"><div class="cardhead flush"><div><label>Owner labels</label><h2>Feedback signal</h2></div></div><div id="feedbackSummary"></div></section><section class="card pad"><div class="cardhead flush"><div><label>Measured trust</label><h2>Agent credibility</h2></div></div><div id="credibility"></div></section></div>
       <div class="twocol"><section class="card pad"><div class="cardhead flush"><div><label>Advisory only &mdash; never writes a forecast</label><h2>Model participation</h2></div></div><div id="advisories"></div></section><section class="card pad"><div class="cardhead flush"><div><label>Automatic caution</label><h2>Drift de-escalation</h2></div></div><div id="deescalations"></div></section></div>
+      <div class="twocol"><section class="card pad"><div class="cardhead flush"><div><label>Settled-outcome evidence</label><h2>Error lab</h2></div></div><div id="errorLab"></div></section><section class="card pad"><div class="cardhead flush"><div><label>Procedural, causal, failure and episodic</label><h2>Learning memory</h2></div></div><div id="memoryPanel"></div></section></div>
+      <section class="card pad"><div class="cardhead flush"><div><label>Human decisions remain separate from settled evidence</label><h2>Decision history</h2></div></div><div id="learningHistory"></div></section>
     </section>
 
     <section class="view" id="view-operations">
@@ -96,9 +100,12 @@
 </div>
 
 <div class="drawer" id="drawer" role="dialog" aria-modal="true" aria-label="Forecast audit"><button class="backdrop" id="backdrop" aria-label="Close forecast audit"></button><aside tabindex="-1"><div class="sheetgrab" aria-hidden="true"></div><button class="close" id="close" aria-label="Close forecast audit">×</button><div id="drawerBody"></div></aside></div>
+<div class="learning-modal" id="learningModal" role="dialog" aria-modal="true" aria-labelledby="learningModalTitle"><div class="learning-modal-card"><label>Audit trail</label><h2 id="learningModalTitle">Record a reason</h2><textarea id="learningReason" maxlength="500" placeholder="The evidence and reasoning behind this decision"></textarea><div class="feedback"><button class="button" id="learningModalCancel">Cancel</button><button class="primary" id="learningModalConfirm">Record decision</button></div></div></div>
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
 <script src="/static/app.js"></script>
 <script src="/static/history.js"></script>
 <script src="/static/learning_actions.js"></script>
+<script src="/static/learning_dashboard.js"></script>
+<script src="/static/site_enhancements.js"></script>
 </body>
 </html>

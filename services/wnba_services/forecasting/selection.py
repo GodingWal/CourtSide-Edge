@@ -26,6 +26,7 @@ from __future__ import annotations
 import math
 from collections.abc import Sequence
 from dataclasses import dataclass
+from statistics import NormalDist
 from typing import Any
 
 from wnba_domain.enums import RecommendationStatus
@@ -142,6 +143,8 @@ class CandidateDecision:
     shrunk_probability: float
     breakeven: float
     reason: str
+    probability_lower_bound: float | None = None
+    uncertainty_standard_error: float | None = None
 
     @property
     def edge(self) -> float:
@@ -163,6 +166,8 @@ def decide_candidate(
     margin: float = DEFAULT_MARGIN,
     minimum_quality: float = 0.85,
     maximum_disagreement: float = 0.12,
+    use_uncertainty_gate: bool = False,
+    confidence_level: float = 0.95,
 ) -> CandidateDecision:
     """Choose a side and decide whether the shrunk edge clears the payout table.
 
@@ -173,6 +178,12 @@ def decide_candidate(
     side = "over" if over_probability >= under_probability else "under"
     raw = max(over_probability, under_probability)
     shrunk = shrinkage.apply(raw)
+    sampling_variance = (
+        shrunk * (1.0 - shrunk) / shrinkage.sample_size if shrinkage.sample_size > 0 else 0.0
+    )
+    standard_error = math.sqrt(max(0.0, disagreement**2 + sampling_variance))
+    z_score = NormalDist().inv_cdf(confidence_level)
+    lower_bound = max(0.0, shrunk - z_score * standard_error)
 
     if rule_blocked:
         return CandidateDecision(
@@ -218,6 +229,20 @@ def decide_candidate(
             shrunk,
             breakeven,
             f"shrunk {shrunk:.3f} below break-even {breakeven:.3f} plus {margin:.3f}",
+            lower_bound,
+            standard_error,
+        )
+    if use_uncertainty_gate and lower_bound < breakeven + margin:
+        return CandidateDecision(
+            RecommendationStatus.DECLINED_NO_EDGE,
+            side,
+            raw,
+            shrunk,
+            breakeven,
+            f"{confidence_level:.0%} lower bound {lower_bound:.3f} below break-even "
+            f"{breakeven:.3f} plus {margin:.3f}",
+            lower_bound,
+            standard_error,
         )
     return CandidateDecision(
         RecommendationStatus.CANDIDATE,
@@ -226,4 +251,6 @@ def decide_candidate(
         shrunk,
         breakeven,
         f"shrunk {shrunk:.3f} clears break-even {breakeven:.3f} plus {margin:.3f}",
+        lower_bound,
+        standard_error,
     )

@@ -367,6 +367,14 @@ def test_shrinkage_can_take_a_forecast_below_the_gate() -> None:
     assert shrunk.status is RecommendationStatus.DECLINED_NO_EDGE
 
 
+def test_uncertainty_lower_bound_can_decline_a_nominal_edge() -> None:
+    decision = _decision(0.63, disagreement=0.05, use_uncertainty_gate=True)
+    assert decision.shrunk_probability > decision.breakeven + 0.02
+    assert decision.probability_lower_bound is not None
+    assert decision.probability_lower_bound < decision.breakeven + 0.02
+    assert decision.status is RecommendationStatus.DECLINED_NO_EDGE
+
+
 def test_the_under_side_is_selected_and_gated_symmetrically() -> None:
     decision = _decision(0.30)
     assert decision.side == "under"

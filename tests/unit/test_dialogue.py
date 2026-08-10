@@ -209,9 +209,7 @@ def test_full_turn_persists_verbatim_transcript(monkeypatch: pytest.MonkeyPatch)
     assert "assistant" in roles and "tool" in roles
     # The tool transcript carries the exact provider envelope pieces needed for replay.
     tool_payloads = [
-        json.loads(payload)
-        for role, payload in connection.cursor_obj.inserted
-        if role == "tool"
+        json.loads(payload) for role, payload in connection.cursor_obj.inserted if role == "tool"
     ]
     assert tool_payloads[0]["tool_call_id"] == "call_1"
     assert view.messages[-1].role == "assistant"
@@ -280,15 +278,11 @@ def test_final_round_forces_a_text_reply(monkeypatch: pytest.MonkeyPatch) -> Non
         service,
         "search_web",
         lambda query, limit=5: [
-            SearchResult(
-                title="news", url="https://example.com", snippet="snippet"
-            )
+            SearchResult(title="news", url="https://example.com", snippet="snippet")
         ],
     )
     client = _ToolLoopClient()
-    view = service.send_message(
-        PROJECTION_ID, "why the under?", client=client, max_tool_rounds=2
-    )
+    view = service.send_message(PROJECTION_ID, "why the under?", client=client, max_tool_rounds=2)
     assert [payload["tool_choice"] for payload in client.payloads] == [
         "auto",
         "auto",

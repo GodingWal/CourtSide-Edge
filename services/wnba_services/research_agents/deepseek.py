@@ -397,14 +397,15 @@ class DeepSeekResearchClient:
 
         def check_citations(review: SkepticReview) -> None:
             cited = {
-                evidence_id
-                for mode in review.failure_modes
-                for evidence_id in mode.evidence_ids
+                evidence_id for mode in review.failure_modes for evidence_id in mode.evidence_ids
             }
             self._reject_unknown(cited, allowed)
 
         completion = self._complete(
-            system, user, SkepticReview, max_tokens=self.skeptic_max_tokens,
+            system,
+            user,
+            SkepticReview,
+            max_tokens=self.skeptic_max_tokens,
             validate=check_citations,
         )
         review: SkepticReview = completion.value
@@ -581,9 +582,7 @@ class DeepSeekResearchClient:
         content = message.get("content") if isinstance(message, dict) else None
         return content if isinstance(content, str) and content.strip() else None
 
-    def _parse_response(
-        self, envelope: Any, model_type: type[BaseModel]
-    ) -> tuple[BaseModel, str]:
+    def _parse_response(self, envelope: Any, model_type: type[BaseModel]) -> tuple[BaseModel, str]:
         """The validated value and the raw content it was parsed from, or a refusal."""
         if not isinstance(envelope, dict):
             raise ValueError("DeepSeek returned a non-object response")

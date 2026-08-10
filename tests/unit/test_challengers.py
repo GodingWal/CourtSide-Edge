@@ -61,7 +61,12 @@ def _steady(count: int, minutes: float = 30.0, points: float = 15.0) -> tuple[Hi
     return tuple(_game(minutes, points) for _ in range(count))
 
 
-@pytest.mark.parametrize("name", challenger_names())
+# The stacked family ("gradient-boosting") is excluded here: its predict requires the
+# champion's forecast and a fitted artifact, and test_boosting.py covers its purity against
+# a real walk-forward fit.
+@pytest.mark.parametrize(
+    "name", [name for name in challenger_names() if name != "gradient-boosting"]
+)
 def test_every_challenger_is_a_pure_function_returning_a_proper_distribution(name: str) -> None:
     inputs = _inputs(_steady(20))
     challenger = challenger_by_name(name)
@@ -82,7 +87,9 @@ def test_challengers_are_not_the_champion_wearing_a_new_name() -> None:
     champion = score_prop(inputs)
 
     differences = [
-        abs(challenger.predict(inputs).over - champion.over) for challenger in CHALLENGERS.values()
+        abs(challenger.predict(inputs).over - champion.over)
+        for name, challenger in CHALLENGERS.items()
+        if name != "gradient-boosting"  # stacked: covered in test_boosting.py
     ]
 
     assert all(difference > 0.001 for difference in differences)
@@ -182,5 +189,5 @@ def test_short_history_does_not_make_the_filter_invent_a_state() -> None:
 
 
 def test_unknown_challenger_names_are_refused_by_name() -> None:
-    with pytest.raises(ValueError, match="unknown challenger 'gradient-boosting'"):
-        challenger_by_name("gradient-boosting")
+    with pytest.raises(ValueError, match="unknown challenger 'catboost-v2'"):
+        challenger_by_name("catboost-v2")
