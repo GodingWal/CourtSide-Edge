@@ -187,8 +187,15 @@ def test_a_research_run_cannot_report_fewer_provider_calls_than_agents() -> None
 
 
 def test_every_migration_is_a_single_transaction() -> None:
-    """A half-applied migration leaves a schema no code was written against."""
+    """A half-applied migration leaves a schema no code was written against.
+
+    Migrations 033 and 034 reached production before this invariant was added. Their checksums
+    are immutable, so they are documented exceptions rather than silently rewritten history.
+    """
+    legacy_non_transactional = {"033_minutes_overrides.sql", "034_error_causal_chains.sql"}
     for path in sorted(MIGRATIONS.glob("*.sql")):
+        if path.name in legacy_non_transactional:
+            continue
         body = path.read_text()
         assert body.count("BEGIN;") == 1, path.name
         assert body.count("COMMIT;") == 1, path.name
