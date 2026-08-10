@@ -46,6 +46,10 @@ from wnba_services.learning_loop.rule_lifecycle import approve_rule, retire_rule
 from wnba_services.learning_loop.rule_proposals import propose_from_measured_errors
 from wnba_services.learning_loop.rule_review import review_active_rules
 from wnba_services.learning_loop.settlement import settle_paper_episodes
+from wnba_services.learning_loop.trust_fitting import (
+    fit_trust_artifacts,
+    refresh_joint_game_simulations,
+)
 from wnba_services.market_engine.correlation import refresh_leg_correlations
 from wnba_services.monitoring.liveness import run_liveness_checks
 from wnba_services.research_agents.organization import refresh_research_memory
@@ -489,6 +493,24 @@ def learning_fit() -> None:
         f"weights={result.fitted_weights}/{result.weight_sets} "
         f"shrinkage={result.shrinkage_sets}"
     )
+
+
+@learning_app.command("fit-trust")
+def learning_fit_trust() -> None:
+    """Fit selective coverage, adaptive intervals, source trust and feature ablations."""
+    result = fit_trust_artifacts()
+    console.print(
+        f"[green]trust fitting complete[/green] episodes={result.episodes} "
+        f"policies={result.selective_policies} intervals={result.conformal_intervals} "
+        f"sources={result.source_reliability} ablations={result.feature_ablations}"
+    )
+
+
+@forecast_app.command("simulate-games")
+def forecast_simulate_games() -> None:
+    """Persist shadow joint game-state simulations for current forecasts."""
+    written = refresh_joint_game_simulations()
+    console.print(f"[green]joint simulations complete[/green] games={written}")
 
 
 @learning_app.command("evaluate")

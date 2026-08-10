@@ -317,12 +317,17 @@ def run_baseline(*, now: datetime | None = None, seed: int = 20260803) -> Foreca
             cur.execute(
                 """SELECT availability_probability,start_probability,
                           closing_lineup_probability,expected_minutes,minutes_std,
-                          minutes_restriction_probability,model_version
+                          minutes_restriction_probability,model_version,feature_summary
                    FROM wnba.projected_roles
                    WHERE player_id=%s AND game_id=%s AND system_to IS NULL""",
                 (player_id, quote["game_id"]),
             )
             role_row = cur.fetchone()
+            raw_role_summary = None if role_row is None else role_row.get("feature_summary")
+            role_summary: dict[str, Any] = (
+                raw_role_summary if isinstance(raw_role_summary, dict) else {}
+            )
+            role_state = str(role_summary.get("role_state", "unknown"))
             role = (
                 None
                 if role_row is None
@@ -520,6 +525,7 @@ def run_baseline(*, now: datetime | None = None, seed: int = 20260803) -> Foreca
                             "injury_designation": designation,
                             "injury_detail": None if injury is None else injury["detail"],
                             "role_model": None if role is None else role.model_version,
+                            "role_state": role_state,
                             "teammate_effect_count": effect_count,
                             "teammate_method": None
                             if teammate is None

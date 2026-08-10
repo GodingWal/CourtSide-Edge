@@ -7,5 +7,6 @@ Type=oneshot
 WorkingDirectory=/opt/wnba/repo
 EnvironmentFile=/opt/wnba/repo/.env
 ExecStart=/opt/wnba/repo/.venv/bin/wnba forecast run
+ExecStart=/opt/wnba/repo/.venv/bin/wnba forecast simulate-games
 TimeoutStartSec=15m
 Nice=5

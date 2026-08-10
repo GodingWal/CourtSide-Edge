@@ -613,7 +613,9 @@ def suggest_entries(request: EntrySuggestionRequest) -> dict[str, object]:
     rows: list[dict[str, object]] = [
         row
         for row in (board_rows if isinstance(board_rows, list) else [])
-        if isinstance(row, dict) and str(row.get("system_recommendation")) == "candidate"
+        if isinstance(row, dict)
+        and row.get("qualified") is True
+        and str(row.get("system_recommendation")) == "candidate"
     ]
     candidates = [
         CandidateLeg(
@@ -827,11 +829,19 @@ def forecasts() -> dict[str, object]:
                           (fs.features->>'uncertainty_standard_error')::double precision
                             AS uncertainty_standard_error,
                           fs.features->'minutes_scenarios' AS minutes_scenarios,
+                          coalesce(fs.features->>'role_state','unknown') AS role_state,
                           (fs.features->>'minutes_restriction_probability')::double precision
                             AS minutes_restriction_probability,
                           q.system_from AS quote_seen_at,q.locks_at,
                           opening.opening_line,mc.books,mc.consensus_line,mc.line_dispersion,
                           precedents.similar_settled,precedents.similar_hit_rate,
+                          sp.minimum_confidence AS selective_minimum_confidence,
+                          sp.coverage AS selective_coverage,sp.is_fitted AS selective_policy_fitted,
+                          ci.radius AS conformal_radius,ci.target_coverage AS conformal_target,
+                          ci.empirical_coverage AS conformal_coverage,
+                          ci.used_fallback AS conformal_used_fallback,
+                          sr.reliability_weight AS source_reliability,
+                          sr.sample_size AS source_reliability_sample,
                           g.scheduled_tipoff,i.designation AS injury_designation,
                           i.detail AS injury_detail,r.availability_probability,
                           r.start_probability,r.closing_lineup_probability,
@@ -941,6 +951,35 @@ def forecasts() -> dict[str, object]:
                        AND NOT o.was_voided AND NOT o.was_push
                    ) precedents ON true
                    LEFT JOIN LATERAL (
+                     SELECT minimum_confidence,coverage,is_fitted
+                     FROM wnba.selective_policy_snapshots
+                     WHERE segment IN (
+                       'prop_role:'||f.prop_type||':'||coalesce(fs.features->>'role_state','unknown'),
+                       'prop:'||f.prop_type,
+                       'all')
+                     ORDER BY CASE
+                       WHEN segment LIKE 'prop_role:%' THEN 1
+                       WHEN segment LIKE 'prop:%' THEN 2 ELSE 3 END,
+                       calculated_at DESC LIMIT 1
+                   ) sp ON true
+                   LEFT JOIN LATERAL (
+                     SELECT radius,target_coverage,empirical_coverage,used_fallback
+                     FROM wnba.conformal_interval_snapshots
+                     WHERE segment IN (
+                       'prop_role:'||f.prop_type||':'||coalesce(fs.features->>'role_state','unknown'),
+                       'prop:'||f.prop_type,
+                       'all')
+                     ORDER BY CASE
+                       WHEN segment LIKE 'prop_role:%' THEN 1
+                       WHEN segment LIKE 'prop:%' THEN 2 ELSE 3 END,
+                       calculated_at DESC LIMIT 1
+                   ) ci ON true
+                   LEFT JOIN LATERAL (
+                     SELECT reliability_weight,sample_size
+                     FROM wnba.source_reliability_snapshots
+                     WHERE source=q.source::text ORDER BY calculated_at DESC LIMIT 1
+                   ) sr ON true
+                   LEFT JOIN LATERAL (
                      SELECT jsonb_agg(jsonb_build_object(
                        'name',component_name,'version',component_version,'weight',weight,
                        'mean',mean,'probability_over',probability_over,
@@ -969,8 +1008,32 @@ def forecasts() -> dict[str, object]:
             if lower is None or breakeven is None or float(str(breakeven)) <= 0.0
             else float(str(lower)) / float(str(breakeven)) - 1.0
         )
-        row["qualified"] = str(row.get("system_recommendation")) == "candidate"
         line = float(str(row["line"]))
+        policy_fitted = bool(row.get("selective_policy_fitted"))
+        minimum_confidence = row.get("selective_minimum_confidence")
+        row["selective_policy_pass"] = not policy_fitted or (
+            minimum_confidence is not None
+            and float(str(row["confidence"])) >= float(str(minimum_confidence))
+        )
+        conformal_target = row.get("conformal_target")
+        conformal_coverage = row.get("conformal_coverage")
+        row["conformal_pass"] = conformal_target is None or (
+            conformal_coverage is not None
+            and float(str(conformal_coverage)) + 0.02 >= float(str(conformal_target))
+        )
+        row["qualified"] = (
+            str(row.get("system_recommendation")) == "candidate"
+            and row["selective_policy_pass"]
+            and row["conformal_pass"]
+        )
+        source_reliability = row.get("source_reliability")
+        source_sample = int(str(row.get("source_reliability_sample") or 0))
+        row["source_reliability_pass"] = (
+            source_reliability is None
+            or source_sample < 50
+            or float(str(source_reliability)) >= 0.40
+        )
+        row["qualified"] = row["qualified"] and row["source_reliability_pass"]
         row["line_movement"] = (
             None if row.get("opening_line") is None else line - float(str(row["opening_line"]))
         )
@@ -980,6 +1043,12 @@ def forecasts() -> dict[str, object]:
         drivers, flags = _drivers_and_flags(row)
         if int(str(row.get("books") or 0)) < 2:
             flags.append("single-source market; consensus is unavailable")
+        if not row["selective_policy_pass"]:
+            flags.append("learned selective policy abstains at this confidence")
+        if not row["conformal_pass"]:
+            flags.append("adaptive uncertainty interval is under-covering its target")
+        if not row["source_reliability_pass"]:
+            flags.append("the quote source has a measured reliability problem")
         consensus_difference = row.get("consensus_difference")
         if consensus_difference is not None and abs(float(str(consensus_difference))) >= 1.0:
             flags.append(f"line is {float(str(consensus_difference)):+.1f} from consensus")
@@ -1549,6 +1618,176 @@ def learning() -> dict[str, object]:
         "advisories": advisories,
         "deescalations": deescalations,
         "challengers": list(challenger_names()),
+    }
+
+
+@app.get("/api/learning/trust")
+def learning_trust() -> dict[str, object]:
+    """Selective coverage, uncertainty, CLV, ablation and source-trust evidence."""
+    try:
+        from wnba_store.db import connect
+
+        with connect() as conn, conn.cursor() as cur:
+            cur.execute(
+                """SELECT DISTINCT ON (segment) segment,calculated_at,sample_size,
+                          minimum_confidence,coverage,validation_log_loss,is_fitted,reason,
+                          risk_coverage
+                   FROM wnba.selective_policy_snapshots
+                   ORDER BY segment,calculated_at DESC"""
+            )
+            policies = [dict(row) for row in cur.fetchall()]
+            cur.execute(
+                """SELECT DISTINCT ON (segment) segment,calculated_at,sample_size,
+                          target_coverage,empirical_coverage,radius,used_fallback
+                   FROM wnba.conformal_interval_snapshots
+                   ORDER BY segment,calculated_at DESC"""
+            )
+            intervals = [dict(row) for row in cur.fetchall()]
+            cur.execute(
+                """SELECT DISTINCT ON (source) source,calculated_at,sample_size,
+                          reliability_weight,mean_absolute_error,median_absolute_error,
+                          freshness_rate
+                   FROM wnba.source_reliability_snapshots
+                   ORDER BY source,calculated_at DESC"""
+            )
+            sources = [dict(row) for row in cur.fetchall()]
+            cur.execute(
+                """SELECT DISTINCT ON (feature_name,prop_type) feature_name,prop_type,
+                          calculated_at,sample_size,mean_log_loss_gain,standard_error,
+                          confidence_lower,confidence_upper,adjusted_alpha,verdict
+                   FROM wnba.feature_ablation_results
+                   ORDER BY feature_name,prop_type,calculated_at DESC"""
+            )
+            ablations = [dict(row) for row in cur.fetchall()]
+            cur.execute(
+                """SELECT date_trunc('week',o.settled_at) AS week,count(*) AS episodes,
+                          avg(CASE WHEN o.closing_line IS NULL THEN NULL
+                              WHEN d.side='over' THEN o.closing_line-d.line
+                              ELSE d.line-o.closing_line END) AS mean_line_value,
+                          avg(CASE WHEN o.closing_line IS NULL THEN NULL
+                              WHEN (d.side='over' AND o.closing_line>d.line)
+                                OR (d.side='under' AND o.closing_line<d.line)
+                              THEN 1.0 ELSE 0.0 END) AS positive_rate
+                   FROM wnba.decision_episodes d JOIN wnba.episode_outcomes o USING(episode_id)
+                   GROUP BY 1 ORDER BY 1"""
+            )
+            closing_line_value = [dict(row) for row in cur.fetchall()]
+            cur.execute(
+                """SELECT d.prop_type,
+                          coalesce(fs.features->>'role_state','unknown') AS role_state,
+                          count(*) AS forecasts,avg(d.predicted_probability) AS predicted,
+                          avg(CASE WHEN o.hit THEN 1.0 ELSE 0.0 END) AS observed,
+                          avg(o.brier) AS brier,avg(d.model_disagreement) AS disagreement
+                   FROM wnba.decision_episodes d
+                   JOIN wnba.episode_outcomes o USING(episode_id)
+                   LEFT JOIN wnba.feature_snapshots fs USING(feature_snapshot_id)
+                   WHERE NOT o.was_voided AND NOT o.was_push
+                   GROUP BY 1,2 ORDER BY forecasts DESC"""
+            )
+            segments = [dict(row) for row in cur.fetchall()]
+            cur.execute(
+                """SELECT js.game_id,js.simulated_at,js.simulations,js.player_keys,
+                          js.correlation,js.scenario_summary,g.scheduled_tipoff
+                   FROM wnba.joint_game_simulations js JOIN wnba.games g USING(game_id)
+                   ORDER BY js.simulated_at DESC LIMIT 20"""
+            )
+            joint_games = [dict(row) for row in cur.fetchall()]
+    except Exception as exc:
+        return {"available": False, "reason": str(exc)[:200]}
+    return {
+        "available": True,
+        "policies": policies,
+        "intervals": intervals,
+        "sources": sources,
+        "ablations": ablations,
+        "closing_line_value": closing_line_value,
+        "segments": segments,
+        "joint_games": joint_games,
+        "automatic_promotion": False,
+    }
+
+
+@app.get("/api/replays")
+def recommendation_replays(limit: int = 50) -> dict[str, object]:
+    """Recent immutable decisions with their closing movement and outcome."""
+    from wnba_store.db import connect
+
+    bounded = max(1, min(200, limit))
+    with connect() as conn, conn.cursor() as cur:
+        cur.execute(
+            """SELECT d.episode_id,d.forecast_timestamp,d.player_id,p.full_name,d.game_id,
+                      d.prop_type,d.side,d.line,d.source,d.predicted_probability,
+                      d.shrunk_probability,d.breakeven_probability,d.system_recommendation,
+                      d.decision_reason,o.actual_stat,o.actual_minutes,o.hit,o.was_push,
+                      o.was_voided,o.closing_line,o.settled_at,
+                      CASE WHEN o.closing_line IS NULL THEN NULL
+                           WHEN d.side='over' THEN o.closing_line-d.line
+                           ELSE d.line-o.closing_line END AS line_value
+               FROM wnba.decision_episodes d JOIN wnba.players p USING(player_id)
+               LEFT JOIN wnba.episode_outcomes o USING(episode_id)
+               ORDER BY d.forecast_timestamp DESC LIMIT %s""",
+            (bounded,),
+        )
+        rows = [dict(row) for row in cur.fetchall()]
+    return {"available": True, "replays": rows}
+
+
+@app.get("/api/replays/{episode_id}")
+def recommendation_replay(episode_id: UUID) -> dict[str, object]:
+    """Reconstruct one decision from frozen inputs, then show what happened afterwards."""
+    from wnba_store.db import connect
+
+    with connect() as conn, conn.cursor() as cur:
+        cur.execute(
+            """SELECT d.*,p.full_name,g.scheduled_tipoff,fs.features,
+                      o.actual_stat,o.actual_minutes,o.did_start,o.hit,o.was_push,o.was_voided,
+                      o.closing_line,o.settled_at,f.projection_id,f.mean,f.median,f.stddev,
+                      f.distribution,f.probability_over_raw,f.probability_over,
+                      f.probability_under,f.generated_at,f.expires_at
+               FROM wnba.decision_episodes d JOIN wnba.players p USING(player_id)
+               LEFT JOIN wnba.games g USING(game_id)
+               LEFT JOIN wnba.feature_snapshots fs USING(feature_snapshot_id)
+               LEFT JOIN wnba.episode_outcomes o USING(episode_id)
+               LEFT JOIN wnba.stat_forecasts f
+                 ON f.quote_id=d.quote_id AND f.model_run_id=d.model_run_id
+               WHERE d.episode_id=%s""",
+            (episode_id,),
+        )
+        episode = cur.fetchone()
+        if episode is None:
+            raise HTTPException(status_code=404, detail="Unknown decision episode")
+        row = dict(episode)
+        projection_id = row.get("projection_id")
+        cur.execute(
+            """SELECT component_name,component_version,weight,mean,probability_over,
+                      probability_push,probability_under
+               FROM wnba.forecast_components WHERE projection_id=%s
+               ORDER BY component_name""",
+            (projection_id,),
+        )
+        components = [dict(value) for value in cur.fetchall()]
+        cur.execute(
+            """SELECT source,line,over_multiplier,under_multiplier,system_from AS observed_at,
+                      is_available,
+                      CASE WHEN system_from<=%s THEN 'available_at_decision'
+                           ELSE 'after_decision' END AS phase
+               FROM wnba.prop_quotes
+               WHERE player_id=%s AND game_id=%s AND prop_type=%s
+               ORDER BY system_from""",
+            (
+                row["forecast_timestamp"],
+                row["player_id"],
+                row["game_id"],
+                row["prop_type"],
+            ),
+        )
+        line_history = [dict(value) for value in cur.fetchall()]
+    return {
+        "available": True,
+        "episode": row,
+        "components": components,
+        "line_history": line_history,
+        "point_in_time": True,
     }
 
 

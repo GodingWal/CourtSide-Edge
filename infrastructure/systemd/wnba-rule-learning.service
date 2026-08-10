@@ -25,6 +25,8 @@ EnvironmentFile=/opt/wnba/repo/.env
 #                                          life of the deployment.
 #   fit-boosted        settled record  -> the stacked tree challenger's weekly refit,
 #                                          walk-forward validated, artifact + MAEs stored
+#   fit-trust          settled record  -> selective coverage, adaptive uncertainty, source
+#                                          reliability and paired feature ablations
 #   experiments evaluate               -> verdicts on open champion/challenger experiments;
 #                                          promotes nothing, ever.
 ExecStart=/opt/wnba/repo/.venv/bin/wnba learning propose-rules
@@ -33,6 +35,7 @@ ExecStart=/opt/wnba/repo/.venv/bin/wnba learning review-rules
 ExecStart=/opt/wnba/repo/.venv/bin/wnba learning review-hypotheses
 ExecStart=/opt/wnba/repo/.venv/bin/wnba learning propose
 ExecStart=/opt/wnba/repo/.venv/bin/wnba learning fit-boosted
+ExecStart=/opt/wnba/repo/.venv/bin/wnba learning fit-trust
 ExecStart=/opt/wnba/repo/.venv/bin/wnba learning experiments evaluate
 TimeoutStartSec=45m
 Nice=10

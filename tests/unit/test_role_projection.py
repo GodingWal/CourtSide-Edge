@@ -1,5 +1,5 @@
 import pytest
-from wnba_services.feature_engine.roles import role_projection
+from wnba_services.feature_engine.roles import classify_role_state, role_projection
 
 
 def history() -> list[dict[str, object]]:
@@ -25,3 +25,23 @@ def test_out_player_projects_zero_minutes() -> None:
     role = role_projection(history(), "out")
     assert role["availability"] == 0.0
     assert role["expected_minutes"] == 0.0
+
+
+def test_role_states_explain_rotation_scenarios() -> None:
+    assert (
+        classify_role_state(start_probability=0.95, expected_minutes=34, designation="available")
+        == "confirmed_starter"
+    )
+    assert (
+        classify_role_state(start_probability=0.2, expected_minutes=27, designation="available")
+        == "sixth_player"
+    )
+    assert (
+        classify_role_state(
+            start_probability=0.9,
+            expected_minutes=25,
+            designation="probable",
+            minutes_restriction_probability=0.4,
+        )
+        == "minutes_restriction"
+    )

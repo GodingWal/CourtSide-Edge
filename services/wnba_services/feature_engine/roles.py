@@ -22,6 +22,16 @@ AVAILABILITY = {
     "unknown": 0.5,
 }
 
+ROLE_STATES = (
+    "confirmed_starter",
+    "probable_starter",
+    "sixth_player",
+    "rotation_bench",
+    "emergency_replacement",
+    "returning_from_injury",
+    "minutes_restriction",
+)
+
 
 @dataclass(frozen=True)
 class RoleBatch:
@@ -64,6 +74,30 @@ def role_projection(history: list[dict[str, Any]], designation: str) -> dict[str
     }
 
 
+def classify_role_state(
+    *,
+    start_probability: float,
+    expected_minutes: float,
+    designation: str,
+    minutes_restriction_probability: float = 0.0,
+    recent_minutes_change: float = 0.0,
+) -> str:
+    """Turn continuous role evidence into an owner-readable scenario label."""
+    if minutes_restriction_probability >= 0.25:
+        return "minutes_restriction"
+    if designation in {"probable", "questionable", "doubtful"} and recent_minutes_change < -3.0:
+        return "returning_from_injury"
+    if recent_minutes_change >= 7.0 and start_probability < 0.55:
+        return "emergency_replacement"
+    if start_probability >= 0.85:
+        return "confirmed_starter"
+    if start_probability >= 0.55:
+        return "probable_starter"
+    if expected_minutes >= 24.0:
+        return "sixth_player"
+    return "rotation_bench"
+
+
 def project_current_roles(*, now: datetime | None = None) -> RoleBatch:
     at = now or datetime.now(UTC)
     projected = unchanged = skipped = 0
@@ -102,10 +136,25 @@ def project_current_roles(*, now: datetime | None = None) -> RoleBatch:
             injury = cur.fetchone()
             designation = "available" if injury is None else str(injury["designation"])
             role = role_projection(history, designation)
+            recent = [float(str(row["minutes"])) for row in history[-3:]]
+            prior = [float(str(row["minutes"])) for row in history[-8:-3]]
+            recent_change = (
+                sum(recent) / len(recent) - sum(prior) / len(prior) if recent and prior else 0.0
+            )
+            restriction_probability = 0.35 if designation in {"questionable", "probable"} else 0.0
+            role_state = classify_role_state(
+                start_probability=role["start_probability"],
+                expected_minutes=role["expected_minutes"],
+                designation=designation,
+                minutes_restriction_probability=restriction_probability,
+                recent_minutes_change=recent_change,
+            )
             summary = {
                 "history_games": len(history),
                 "injury_designation": designation,
                 "source_line_ids": [str(row["line_id"]) for row in history],
+                "role_state": role_state,
+                "recent_minutes_change": recent_change,
             }
             cur.execute(
                 """SELECT availability_probability,start_probability,
@@ -123,19 +172,27 @@ def project_current_roles(*, now: datetime | None = None) -> RoleBatch:
                 role["expected_minutes"],
                 role["minutes_std"],
             )
-            if current and all(
-                abs(float(str(current[key])) - value) < 1e-9
-                for key, value in zip(
-                    (
-                        "availability_probability",
-                        "start_probability",
-                        "closing_lineup_probability",
-                        "expected_minutes",
-                        "minutes_std",
-                    ),
-                    values,
-                    strict=True,
+            current_summary = None if current is None else current.get("feature_summary")
+            current_role_state = (
+                current_summary.get("role_state") if isinstance(current_summary, dict) else None
+            )
+            if (
+                current
+                and all(
+                    abs(float(str(current[key])) - value) < 1e-9
+                    for key, value in zip(
+                        (
+                            "availability_probability",
+                            "start_probability",
+                            "closing_lineup_probability",
+                            "expected_minutes",
+                            "minutes_std",
+                        ),
+                        values,
+                        strict=True,
+                    )
                 )
+                and current_role_state == role_state
             ):
                 unchanged += 1
                 continue
@@ -157,7 +214,7 @@ def project_current_roles(*, now: datetime | None = None) -> RoleBatch:
                     player_id,
                     game_id,
                     *values,
-                    0.35 if designation in {"questionable", "probable"} else 0.0,
+                    restriction_probability,
                     at,
                     at,
                     Jsonb(summary),

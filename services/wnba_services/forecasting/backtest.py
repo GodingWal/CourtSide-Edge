@@ -146,7 +146,7 @@ def _point_in_time_role(
     """The role row as it stood at ``as_of``, or ``None`` if it had not been written yet."""
     cur.execute(
         """SELECT expected_minutes,minutes_std,start_probability,availability_probability,
-                  model_version
+                  closing_lineup_probability,minutes_restriction_probability,model_version
            FROM wnba.projected_roles
            WHERE player_id=%s AND game_id=%s AND system_from<=%s
              AND (system_to IS NULL OR system_to>%s)
@@ -161,6 +161,16 @@ def _point_in_time_role(
         minutes_std=float(str(row["minutes_std"])),
         start_probability=float(str(row["start_probability"])),
         availability_probability=float(str(row["availability_probability"])),
+        closing_lineup_probability=(
+            None
+            if row.get("closing_lineup_probability") is None
+            else float(str(row["closing_lineup_probability"]))
+        ),
+        minutes_restriction_probability=(
+            None
+            if row.get("minutes_restriction_probability") is None
+            else float(str(row["minutes_restriction_probability"]))
+        ),
         model_version=str(row["model_version"]),
     )
 

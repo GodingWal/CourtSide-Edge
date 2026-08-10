@@ -20,6 +20,7 @@
       <button class="nav" data-view="learning" data-mobile="Learn"><span>06</span>Learning</button>
       <button class="nav" data-view="operations" data-mobile="Ops"><span>07</span>Operations</button>
       <button class="nav" data-view="history" data-mobile="History"><span>08</span>History</button>
+      <button class="nav" data-view="replay" data-mobile="Replay"><span>09</span>Replay</button>
     </nav>
     <div class="sidefoot"><span class="pulse"></span><div><b id="connection">Connecting</b><small>Private owner console</small></div></div>
   </aside>
@@ -78,6 +79,10 @@
         <div class="kpis" id="learningHealth"></div>
         <div class="twocol"><section class="card pad"><div class="cardhead flush"><div><label>Current recommendation funnel</label><h2>Why picks are withheld</h2><p>Every analysed forecast remains visible; only the first failed gate determines its status.</p></div></div><div id="qualificationFunnel"></div></section><section class="card pad"><div class="cardhead flush"><div><label>Highest-leverage next evidence</label><h2>What must improve</h2><p>Operational blockers are fixed with fresher or broader evidence. Model blockers require settled outcomes.</p></div></div><div id="qualificationActions"></div></section></div>
         <section class="card pad attention" id="learningAttention"><div class="cardhead flush"><div><label>Prioritized intervention queue</label><h2>Needs attention</h2></div></div><div id="attentionItems"></div></section>
+      <div class="twocol"><section class="card pad"><div class="cardhead flush"><div><label>Selective prediction</label><h2>Coverage versus risk</h2><p>How accurate the system remains as it publishes a wider share of forecasts.</p></div></div><div id="riskCoverage"></div></section><section class="card pad"><div class="cardhead flush"><div><label>Adaptive uncertainty</label><h2>Conformal coverage</h2><p>Intervals by prop and role, with pooled fallbacks explicitly marked.</p></div></div><div id="conformalCoverage"></div></section></div>
+      <div class="twocol"><section class="card pad"><div class="cardhead flush"><div><label>Market evidence</label><h2>Closing-line value</h2></div></div><div id="clvTrend"></div></section><section class="card pad"><div class="cardhead flush"><div><label>Feed quality</label><h2>Source reliability</h2></div></div><div id="sourceReliability"></div></section></div>
+      <div class="twocol"><section class="card pad"><div class="cardhead flush"><div><label>Paired walk-forward tests</label><h2>Feature ablations</h2></div></div><div id="featureAblations"></div></section><section class="card pad"><div class="cardhead flush"><div><label>Role and market segments</label><h2>Calibration matrix</h2></div></div><div id="segmentCalibration"></div></section></div>
+      <section class="card pad"><div class="cardhead flush"><div><label>Shared pace, usage, minutes and blowout states</label><h2>Joint game simulations</h2></div></div><div id="jointGames"></div></section>
       <div class="pipeline"><span>Decision</span><i>→</i><span>Outcome</span><i>→</i><span>Diagnosis</span><i>→</i><span>Hypothesis</span><i>→</i><span>Experiment</span><i>→</i><span>Review</span></div>
       <div class="threecol"><section class="card pad"><div class="cardhead flush"><div><label>Prioritized</label><h2>Research proposals</h2></div></div><div id="proposals"></div></section><section class="card pad"><div class="cardhead flush"><div><label>Causal memory</label><h2>Hypotheses</h2></div></div><div id="hypotheses"></div></section><section class="card pad"><div class="cardhead flush"><div><label>Champion / challenger</label><h2>Experiments</h2></div></div><div id="experiments"></div></section></div>
       <div class="twocol"><section class="card pad"><div class="cardhead flush"><div><label>Codified judgment</label><h2>Analyst rules</h2></div></div><div id="analystRules"></div></section><section class="card pad"><div class="cardhead flush"><div><label>Observed behavior</label><h2>Rule firings</h2></div></div><div id="ruleFirings"></div></section></div>
@@ -98,6 +103,11 @@
       <section class="card"><div class="cardhead"><div><label>Coverage</label><h2>Seasons in the archive</h2></div></div><div class="tablewrap"><table><thead><tr><th>Season</th><th>Games</th><th>With box scores</th><th>Player lines</th><th>Players</th></tr></thead><tbody id="historySeasons"></tbody></table></div></section>
       <section class="card pad" style="margin-top:17px"><div class="cardhead flush"><div><label>Game logs</label><h2>Player history</h2></div></div><div class="filters"><input id="historySearch" placeholder="Search a player (min 2 letters)" aria-label="Search player history"></div><div id="historyPlayers"></div><div id="historyDetail"></div></section>
     </section>
+
+    <section class="view" id="view-replay">
+      <div class="sectionintro"><div><label>Point-in-time audit</label><h2>Recommendation replay</h2><p>Reconstruct what the system knew, what it decided, how the line moved afterward, and how the game resolved.</p></div><span class="pill safe">Immutable evidence</span></div>
+      <div class="split replay-layout"><section class="card"><div class="cardhead"><div><label>Decision archive</label><h2>Recent recommendations</h2></div><span id="replayCount" class="mono accent">0</span></div><div id="replayList" class="replay-list"></div></section><section class="card pad" id="replayDetail"><div class="empty">Select a recommendation to replay it.</div></section></div>
+    </section>
   </main>
 </div>
 
@@ -110,5 +120,6 @@
 <script src="/static/learning_dashboard.js"></script>
 <script src="/static/site_enhancements.js"></script>
 <script src="/static/qualified_picks.js"></script>
+<script src="/static/trust_dashboard.js"></script>
 </body>
 </html>
