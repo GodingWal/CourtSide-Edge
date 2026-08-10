@@ -615,6 +615,22 @@ def experiments_abandon(
     )
 
 
+@learning_app.command("fit-boosted")
+def learning_fit_boosted() -> None:
+    """Fit the gradient-boosting challenger on the settled record, walk-forward."""
+    from wnba_services.forecasting.boosting import fit_boosted_challengers
+
+    reports = fit_boosted_challengers()
+    if not reports:
+        typer.echo("no market had enough settled history to fit")
+        return
+    for report in reports:
+        typer.echo(
+            f"{report.prop_type}: train={report.train_rows} valid={report.validation_rows} "
+            f"champion_mae={report.champion_mae} booster_mae={report.booster_mae}"
+        )
+
+
 @learning_app.command("readiness")
 def learning_readiness() -> None:
     """Evaluate every real-money gate and fail closed on provisional evidence."""

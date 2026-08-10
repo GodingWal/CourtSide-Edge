@@ -15,6 +15,7 @@ dependencies = [
     "wnba-obs",
     "wnba-services",
     "wnba-apps",
+    "lightgbm>=4.7.0",
 ]
 
 [project.scripts]

@@ -634,6 +634,7 @@ def run_baseline(*, now: datetime | None = None, seed: int = 20260803) -> Foreca
                     inputs=inputs,
                     side=decision.side,
                     at=at,
+                    champion=forecast,
                 )
 
             forecasts += 1

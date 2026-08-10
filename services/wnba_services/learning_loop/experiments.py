@@ -47,7 +47,7 @@ from wnba_services.forecasting.challengers import (
     challenger_by_name,
     challenger_names,
 )
-from wnba_services.forecasting.scoring import ScoringInputs
+from wnba_services.forecasting.scoring import ScoredForecast, ScoringInputs
 from wnba_services.learning_loop.evaluation import expected_calibration_error
 from wnba_services.learning_loop.independence import (
     dedupe_latest_per_market,
@@ -324,6 +324,7 @@ def record_shadow_predictions(
     inputs: ScoringInputs,
     side: str,
     at: datetime,
+    champion: ScoredForecast | None = None,
 ) -> int:
     """Score one episode with every running challenger and store the results.
 
@@ -342,7 +343,7 @@ def record_shadow_predictions(
         failure: str | None = None
         started = time.perf_counter()
         try:
-            prediction = challenger_by_name(name).predict(inputs)
+            prediction = challenger_by_name(name).predict(inputs, champion)
         except Exception as error:  # the failure is itself the measurement
             failure = f"{type(error).__name__}: {error}"[:500]
         latency_ms = (time.perf_counter() - started) * 1000.0

@@ -1,0 +1,31 @@
+# Procedural memory: how the platform performs its recurring analyses.
+# Semantic memory lives in objects.yaml/links.yaml (what things are); this file is how
+# work is done. The console serves it at /api/learning/memory so the checklists are visible
+# next to the loop they govern rather than buried in a wiki nobody opens.
+procedures:
+  - id: injury-review
+    name: Injury review checklist
+    steps:
+      - Pull the latest official injury report and its retrieval timestamp.
+      - Compare designation age against the market's lock time; stale past 2 hours is a flag.
+      - Check projected_roles for availability and start probability movement since the report.
+      - Check teammate_role_effects for who absorbs the missing player's minutes and rates.
+      - Never treat 'probable' as 'available'; the forecast reads probabilities, not labels.
+  - id: minutes-projection
+    name: Minutes projection workflow
+    steps:
+      - Start from the role model's expected minutes and start probability, never from averages.
+      - Apply teammate deltas only from measured teammate_role_effects, not intuition.
+      - Check minutes_std: above 4.0 the projection is a distribution, not a number.
+      - Rest and home/away stay at identity unless a measured effect re-enables them (Aug 2026
+        deep dive found no signal; issue #68 tracks the blowout/pace confound).
+      - Foul exposure is a registered hypothesis under evaluation, not a scored feature.
+  - id: market-validation
+    name: Market validation process
+      # The gate every candidate passes before it is shown as more than noise.
+    steps:
+      - Both sides priced, or the no-vig math cannot run.
+      - Quote age within threshold near lock; a stale price is a data-quality incident.
+      - Shrink the probability toward the climatology before comparing to break-even.
+      - Rank by edge over the payout table's break-even, never by raw probability.
+      - Any open gate is shown as a decline with its reasons, never silently withheld.

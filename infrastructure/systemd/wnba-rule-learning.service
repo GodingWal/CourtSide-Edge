@@ -23,6 +23,8 @@ EnvironmentFile=/opt/wnba/repo/.env
 #                                          the unit called `propose-rules`, one suffix away, and
 #                                          the proposals panel rendered its empty state for the
 #                                          life of the deployment.
+#   fit-boosted        settled record  -> the stacked tree challenger's weekly refit,
+#                                          walk-forward validated, artifact + MAEs stored
 #   experiments evaluate               -> verdicts on open champion/challenger experiments;
 #                                          promotes nothing, ever.
 ExecStart=/opt/wnba/repo/.venv/bin/wnba learning propose-rules
@@ -30,6 +32,7 @@ ExecStart=/opt/wnba/repo/.venv/bin/wnba learning backtest-rules
 ExecStart=/opt/wnba/repo/.venv/bin/wnba learning review-rules
 ExecStart=/opt/wnba/repo/.venv/bin/wnba learning review-hypotheses
 ExecStart=/opt/wnba/repo/.venv/bin/wnba learning propose
+ExecStart=/opt/wnba/repo/.venv/bin/wnba learning fit-boosted
 ExecStart=/opt/wnba/repo/.venv/bin/wnba learning experiments evaluate
 TimeoutStartSec=45m
 Nice=10
