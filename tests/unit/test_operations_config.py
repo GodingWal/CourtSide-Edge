@@ -25,8 +25,10 @@ def test_monitor_checks_last_results_not_only_active_timers() -> None:
 
 def test_deploy_smoke_runs_production_only_learning_sql() -> None:
     deploy = (ROOT / "infrastructure/deploy_courtside.sh").read_text(encoding="utf-8")
+    reset = deploy.index("systemctl reset-failed wnba-forecast.service")
+    forecast = deploy.index("systemctl start wnba-forecast.service")
     settlement = deploy.index("systemctl start wnba-settlement.service")
     trust = deploy.index("systemctl start wnba-trust-fit.service")
     simulation = deploy.index("systemctl start wnba-game-simulation.service")
     monitor = deploy.index("infrastructure/monitor_health.sh")
-    assert settlement < trust < simulation < monitor
+    assert reset < forecast < settlement < trust < simulation < monitor

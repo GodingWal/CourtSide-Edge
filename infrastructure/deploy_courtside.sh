@@ -57,8 +57,12 @@ for _attempt in {1..15}; do
 done
 curl --fail --silent --show-error --max-time 5 \
   http://127.0.0.1:8090/api/health >/dev/null
-# Exercise the production-only SQL paths immediately. These jobs are safe and idempotent; a
-# deploy that cannot settle, fit trust artifacts, or build a shadow simulation is not healthy.
+# A failed oneshot remains failed until reset even after its code is repaired. Clear only the
+# smoke-tested units, then exercise each production path immediately. These jobs are safe and
+# idempotent; a deploy that cannot forecast, settle, fit trust, or simulate is not healthy.
+systemctl reset-failed wnba-forecast.service wnba-settlement.service \
+  wnba-trust-fit.service wnba-game-simulation.service || true
+systemctl start wnba-forecast.service
 systemctl start wnba-settlement.service
 systemctl start wnba-trust-fit.service
 systemctl start wnba-game-simulation.service
