@@ -69,7 +69,8 @@ def fit_trust_artifacts(*, now: datetime | None = None) -> TrustFitBatch:
                FROM wnba.decision_episodes d
                JOIN wnba.episode_outcomes o USING(episode_id)
                JOIN wnba.prop_quotes q USING(quote_id)
-               LEFT JOIN wnba.feature_snapshots fs USING(feature_snapshot_id)
+               LEFT JOIN wnba.feature_snapshots fs
+                 ON fs.feature_snapshot_id=d.feature_snapshot_id
                WHERE NOT o.was_voided AND NOT o.was_push
                ORDER BY d.forecast_timestamp"""
         )
@@ -311,7 +312,8 @@ def refresh_joint_game_simulations(*, now: datetime | None = None, seed: int = 2
                JOIN wnba.decision_episodes d
                  ON d.quote_id=f.quote_id AND d.model_run_id=f.model_run_id
                JOIN wnba.players p ON p.player_id=f.player_id
-               LEFT JOIN wnba.feature_snapshots fs USING(feature_snapshot_id)
+               LEFT JOIN wnba.feature_snapshots fs
+                 ON fs.feature_snapshot_id=d.feature_snapshot_id
                LEFT JOIN LATERAL (
                  SELECT l.team_id FROM wnba.player_game_lines l
                  JOIN wnba.games g USING(game_id)
