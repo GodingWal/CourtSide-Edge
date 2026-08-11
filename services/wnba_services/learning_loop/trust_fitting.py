@@ -18,9 +18,9 @@ from wnba_services.learning_loop.independence import dedupe_latest_per_market
 from wnba_services.learning_loop.trust import (
     FeatureObservation,
     adaptive_conformal_band,
-    feature_ablation,
     fit_selective_policy,
     fit_source_reliability,
+    paired_feature_ablation,
     risk_coverage_curve,
 )
 
@@ -64,7 +64,7 @@ def fit_trust_artifacts(*, now: datetime | None = None) -> TrustFitBatch:
             """SELECT d.episode_id,d.player_id,d.game_id,d.prop_type,d.side,d.source,d.line,
                       d.predicted_probability,d.confidence,d.data_quality_score,
                       d.model_disagreement,d.forecast_timestamp,d.projected_mean,
-                      o.actual_stat,o.hit,q.system_from AS quote_seen_at,
+                      o.actual_stat,o.hit,o.closing_line,q.system_from AS quote_seen_at,
                       coalesce(fs.features->>'role_state','unknown') AS role_state
                FROM wnba.decision_episodes d
                JOIN wnba.episode_outcomes o USING(episode_id)
@@ -77,7 +77,7 @@ def fit_trust_artifacts(*, now: datetime | None = None) -> TrustFitBatch:
 
         segments: dict[str, list[FeatureObservation]] = defaultdict(list)
         residuals: dict[str, list[float]] = defaultdict(list)
-        source_rows: list[tuple[str, float, float, bool]] = []
+        source_rows: list[tuple[str, str, float, bool]] = []
         for row in rows:
             forecast_timestamp = row["forecast_timestamp"]
             if not isinstance(forecast_timestamp, datetime):
@@ -115,14 +115,16 @@ def fit_trust_artifacts(*, now: datetime | None = None) -> TrustFitBatch:
                 else math.inf
             )
             fresh = 0.0 <= quote_age <= 1800.0
-            source_rows.append(
-                (
-                    str(row["source"]),
-                    float(str(row["line"])),
-                    float(str(row["actual_stat"])),
-                    fresh,
+            if row["closing_line"] is not None:
+                closing = float(str(row["closing_line"]))
+                source_rows.append(
+                    (
+                        str(row["source"]),
+                        str(row["prop_type"]),
+                        abs(float(str(row["line"])) - closing) / max(1.0, abs(closing)),
+                        fresh,
+                    )
                 )
-            )
 
         policies = 0
         intervals = 0
@@ -170,7 +172,13 @@ def fit_trust_artifacts(*, now: datetime | None = None) -> TrustFitBatch:
                     band.empirical_coverage,
                     band.radius,
                     band.used_fallback,
-                    Jsonb({"method": "absolute_residual_finite_sample"}),
+                    Jsonb(
+                        {
+                            "method": "chronological_split_conformal_absolute_residual",
+                            "calibration_fraction": 0.70,
+                            "coverage_window": "future_validation",
+                        }
+                    ),
                 ),
             )
             intervals += 1
@@ -179,19 +187,26 @@ def fit_trust_artifacts(*, now: datetime | None = None) -> TrustFitBatch:
         for fit in reliability:
             cur.execute(
                 """INSERT INTO wnba.source_reliability_snapshots
-                   (snapshot_id,source,calculated_at,sample_size,reliability_weight,
+                   (snapshot_id,source,prop_type,calculated_at,sample_size,reliability_weight,
                     mean_absolute_error,median_absolute_error,freshness_rate,detail)
-                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
                 (
                     uuid4(),
                     fit.source,
+                    fit.prop_type,
                     at,
                     fit.sample_size,
                     fit.weight,
                     fit.mean_absolute_error,
                     fit.median_absolute_error,
                     fit.freshness_rate,
-                    Jsonb({"prior_error": 2.0}),
+                    Jsonb(
+                        {
+                            "prior_error": 0.10,
+                            "error_scale": "absolute line delta / max(1, closing line)",
+                            "reference": "designated closing consensus",
+                        }
+                    ),
                 ),
             )
 
@@ -223,8 +238,7 @@ def fit_trust_artifacts(*, now: datetime | None = None) -> TrustFitBatch:
         names = sorted(
             {str(row["component_name"]) for values in components.values() for row in values}
         )
-        champion_losses: list[float] = []
-        ablated_losses: dict[str, list[float]] = {name: [] for name in names}
+        paired_losses: dict[str, list[tuple[float, float]]] = {name: [] for name in names}
         independent_episodes = {
             str(row["episode_id"])
             for row in dedupe_latest_per_market(list(episode_metadata.values()))
@@ -245,13 +259,13 @@ def fit_trust_artifacts(*, now: datetime | None = None) -> TrustFitBatch:
                 )
             )
             removed = {name: _ablated_probability(values, name) for name in names}
-            if any(value is None for value in removed.values()):
-                continue
-            champion_losses.append(log_loss(full_probability, over_outcome))
+            champion_loss = log_loss(full_probability, over_outcome)
             for name, ablated_probability in removed.items():
                 if ablated_probability is not None:
-                    ablated_losses[name].append(log_loss(ablated_probability, over_outcome))
-        ablations = feature_ablation(champion_losses, ablated_losses)
+                    paired_losses[name].append(
+                        (champion_loss, log_loss(ablated_probability, over_outcome))
+                    )
+        ablations = paired_feature_ablation(paired_losses)
         for result in ablations:
             cur.execute(
                 """INSERT INTO wnba.feature_ablation_results
@@ -296,7 +310,7 @@ def refresh_joint_game_simulations(*, now: datetime | None = None, seed: int = 2
                FROM wnba.stat_forecasts f
                JOIN wnba.decision_episodes d
                  ON d.quote_id=f.quote_id AND d.model_run_id=f.model_run_id
-               JOIN wnba.players p USING(player_id)
+               JOIN wnba.players p ON p.player_id=f.player_id
                LEFT JOIN wnba.feature_snapshots fs USING(feature_snapshot_id)
                LEFT JOIN LATERAL (
                  SELECT l.team_id FROM wnba.player_game_lines l

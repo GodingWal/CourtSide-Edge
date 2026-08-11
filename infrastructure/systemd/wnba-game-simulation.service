@@ -1,0 +1,12 @@
+[Unit]
+Description=Build shadow joint WNBA game-state simulations
+After=wnba-forecast.service docker.service
+OnFailure=wnba-liveness-alert.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/wnba/repo
+EnvironmentFile=/opt/wnba/repo/.env
+ExecStart=/opt/wnba/repo/.venv/bin/wnba forecast simulate-games
+TimeoutStartSec=15m
+Nice=10

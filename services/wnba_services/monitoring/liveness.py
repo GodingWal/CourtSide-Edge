@@ -206,6 +206,39 @@ CHECKS: tuple[LivenessCheck, ...] = (
             HAVING count(*) > 0
         """,
     ),
+    LivenessCheck(
+        code="CURRENT_FORECAST_WITHOUT_JOINT_SIMULATION",
+        question="Did the shadow simulator cover the current forecast runs?",
+        severity=Severity.WARNING,
+        sql="""
+            SELECT count(DISTINCT (f.game_id,f.model_run_id))
+                   || ' current game/run group(s) have no joint simulation' AS detail
+            FROM wnba.stat_forecasts f
+            WHERE f.expires_at > now()
+              AND NOT EXISTS (
+                SELECT 1 FROM wnba.joint_game_simulations js
+                WHERE js.game_id=f.game_id AND js.model_run_id=f.model_run_id)
+            HAVING count(DISTINCT (f.game_id,f.model_run_id)) > 0
+        """,
+    ),
+    LivenessCheck(
+        code="TRUST_ARTIFACT_STALE",
+        question="Has new settled evidence gone through trust fitting?",
+        severity=Severity.CRITICAL,
+        sql="""
+            SELECT 'latest settlement ' || max(o.settled_at)::timestamp(0)
+                   || ', latest trust fit '
+                   || coalesce((SELECT max(calculated_at)::timestamp(0)::text
+                                FROM wnba.selective_policy_snapshots),'never') AS detail
+            FROM wnba.episode_outcomes o
+            WHERE NOT o.was_voided AND NOT o.was_push
+            HAVING count(*) >= 40 AND (
+              (SELECT max(calculated_at) FROM wnba.selective_policy_snapshots) IS NULL
+              OR max(o.settled_at) >
+                 (SELECT max(calculated_at) FROM wnba.selective_policy_snapshots)
+                    + interval '8 days')
+        """,
+    ),
 )
 
 

@@ -113,6 +113,7 @@ testpaths = ["tests"]
 addopts = "-q --strict-markers --strict-config"
 markers = [
     "network: hits a live external source (deselect with -m 'not network')",
+    "postgres: exercises SQL against a real temporary PostgreSQL service",
     "slow: long-running simulation or backtest",
 ]
 filterwarnings = ["error::DeprecationWarning"]

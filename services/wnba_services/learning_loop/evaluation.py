@@ -187,6 +187,11 @@ def _causal_chain(cur: Any, episode: dict[str, Any], *, primary: str | None) -> 
     return chain
 
 
+def causal_chain_payload(chain: list[str]) -> Jsonb:
+    """Adapt a causal chain as JSONB, never as PostgreSQL's text-array syntax."""
+    return Jsonb(chain)
+
+
 def _probability_for_side(over_probability: float, side: str) -> float:
     return over_probability if side == "over" else 1.0 - over_probability
 
@@ -253,7 +258,7 @@ def evaluate_models(*, now: datetime | None = None) -> EvaluationBatch:
                             "causal_chain": chain,
                         }
                     ),
-                    chain,
+                    causal_chain_payload(chain),
                     at,
                 ),
             )

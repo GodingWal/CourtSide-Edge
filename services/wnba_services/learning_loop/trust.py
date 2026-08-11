@@ -27,6 +27,7 @@ __all__ = [
     "feature_ablation",
     "fit_selective_policy",
     "fit_source_reliability",
+    "paired_feature_ablation",
     "risk_coverage_curve",
 ]
 
@@ -102,6 +103,7 @@ class ConformalBand:
 @dataclass(frozen=True)
 class SourceReliabilityFit:
     source: str
+    prop_type: str
     weight: float
     sample_size: int
     mean_absolute_error: float
@@ -240,18 +242,25 @@ def adaptive_conformal_band(
     minimum_segment_sample: int = 40,
     fallback_segment: str = "all",
 ) -> ConformalBand:
-    """Finite-sample absolute-residual interval with a pooled cold-start fallback."""
+    """Chronological split-conformal interval with a pooled cold-start fallback.
+
+    Input order is time order. The radius is selected on the earlier 70% and coverage is
+    reported only on the later 30%; measuring both on the same residuals would guarantee a
+    reassuring-looking coverage number by construction.
+    """
     if not 0.0 < target_coverage < 1.0:
         raise ValueError("target coverage must lie in (0, 1)")
     selected = list(residuals_by_segment.get(segment, ()))
     fallback = len(selected) < minimum_segment_sample
     if fallback:
         selected = list(residuals_by_segment.get(fallback_segment, ()))
-    if not selected:
+    if len(selected) < minimum_segment_sample:
         return ConformalBand(segment, prediction, prediction, 0.0, 0, target_coverage, 0.0, True)
-    absolute = [abs(value) for value in selected]
-    radius = _finite_sample_quantile(absolute, target_coverage)
-    empirical = math.fsum(value <= radius for value in absolute) / len(absolute)
+    split = max(1, min(len(selected) - 1, int(len(selected) * 0.7)))
+    calibration = [abs(value) for value in selected[:split]]
+    validation = [abs(value) for value in selected[split:]]
+    radius = _finite_sample_quantile(calibration, target_coverage)
+    empirical = math.fsum(value <= radius for value in validation) / len(validation)
     return ConformalBand(
         segment,
         max(0.0, prediction - radius),
@@ -265,14 +274,18 @@ def adaptive_conformal_band(
 
 
 def fit_source_reliability(
-    observations: Sequence[tuple[str, float, float, bool]], *, prior_error: float = 2.0
+    observations: Sequence[tuple[str, str, float, bool]], *, prior_error: float = 0.10
 ) -> tuple[SourceReliabilityFit, ...]:
-    """Fit robust source weights from (source, line, outcome, fresh) observations."""
-    grouped: dict[str, list[tuple[float, bool]]] = defaultdict(list)
-    for source, line, outcome, fresh in observations:
-        grouped[source].append((abs(line - outcome), fresh))
+    """Fit source/market weights from standardized closing error and freshness.
+
+    Raw final-stat MAE is not comparable across points and steals. Callers provide error
+    relative to the designated closing consensus, already standardized by the closing line.
+    """
+    grouped: dict[tuple[str, str], list[tuple[float, bool]]] = defaultdict(list)
+    for source, prop_type, standardized_error, fresh in observations:
+        grouped[(source, prop_type)].append((abs(standardized_error), fresh))
     fits: list[SourceReliabilityFit] = []
-    for source, values in sorted(grouped.items()):
+    for (source, prop_type), values in sorted(grouped.items()):
         errors = sorted(error for error, _ in values)
         mean = math.fsum(errors) / len(errors)
         middle = len(errors) // 2
@@ -281,8 +294,38 @@ def fit_source_reliability(
         evidence = len(values) / (len(values) + 50.0)
         relative = prior_error / max(prior_error, mean)
         weight = min(1.0, max(0.1, freshness * (evidence * relative + (1.0 - evidence) * 0.6)))
-        fits.append(SourceReliabilityFit(source, weight, len(values), mean, median, freshness))
+        fits.append(
+            SourceReliabilityFit(source, prop_type, weight, len(values), mean, median, freshness)
+        )
     return tuple(fits)
+
+
+def paired_feature_ablation(
+    paired_losses: Mapping[str, Sequence[tuple[float, float]]], *, alpha: float = 0.05
+) -> tuple[AblationResult, ...]:
+    """Compare each removable component on every episode where that component exists."""
+    names = [name for name, pairs in paired_losses.items() if pairs]
+    if not names:
+        return ()
+    adjusted = alpha / len(names)
+    z = 3.0 if adjusted < 0.01 else 2.576 if adjusted < 0.025 else 1.96
+    results: list[AblationResult] = []
+    for name in sorted(names):
+        pairs = paired_losses[name]
+        gains = [ablated - champion for champion, ablated in pairs]
+        mean = math.fsum(gains) / len(gains)
+        variance = (
+            math.fsum((value - mean) ** 2 for value in gains) / (len(gains) - 1)
+            if len(gains) > 1
+            else 0.0
+        )
+        standard_error = math.sqrt(variance / len(gains))
+        lower, upper = mean - z * standard_error, mean + z * standard_error
+        verdict = "helpful" if lower > 0.0 else "harmful" if upper < 0.0 else "inconclusive"
+        results.append(
+            AblationResult(name, len(gains), mean, standard_error, lower, upper, adjusted, verdict)
+        )
+    return tuple(results)
 
 
 def feature_ablation(

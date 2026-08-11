@@ -11,6 +11,20 @@ permissions:
 jobs:
   check:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: courtside_test
+          POSTGRES_PASSWORD: courtside_test
+          POSTGRES_DB: courtside_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U courtside_test -d courtside_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
@@ -21,4 +35,10 @@ jobs:
       - run: uv run ruff format --check .
       - run: uv run ruff check .
       - run: uv run mypy packages services apps
+      - run: uv run wnba db migrate
+        env:
+          WNBA_DATABASE_URL: postgresql://courtside_test:courtside_test@127.0.0.1:5432/courtside_test
+      - run: uv run pytest tests/postgres
+        env:
+          WNBA_DATABASE_URL: postgresql://courtside_test:courtside_test@127.0.0.1:5432/courtside_test
       - run: uv run pytest

@@ -9,6 +9,7 @@ from wnba_services.learning_loop.trust import (
     feature_ablation,
     fit_selective_policy,
     fit_source_reliability,
+    paired_feature_ablation,
     risk_coverage_curve,
 )
 
@@ -66,13 +67,31 @@ def test_adaptive_conformal_marks_pooled_fallback() -> None:
     assert band.radius == 2.0
 
 
+def test_conformal_coverage_is_measured_on_later_residuals() -> None:
+    band = adaptive_conformal_band(
+        20.0,
+        {"all": [1.0] * 70 + [8.0] * 30},
+        segment="all",
+    )
+    assert band.radius == 1.0
+    assert band.empirical_coverage == 0.0
+
+
 def test_source_reliability_rewards_fresh_accurate_sources() -> None:
     fits = fit_source_reliability(
-        [("accurate", 10.0, 10.5, True)] * 100 + [("stale", 10.0, 14.0, False)] * 100
+        [("accurate", "points", 0.02, True)] * 100 + [("stale", "points", 0.40, False)] * 100
     )
     by_source = {fit.source: fit for fit in fits}
     assert by_source["accurate"].weight > by_source["stale"].weight
-    assert by_source["accurate"].median_absolute_error == 0.5
+    assert by_source["accurate"].median_absolute_error == 0.02
+
+
+def test_source_reliability_is_separate_by_market() -> None:
+    fits = fit_source_reliability(
+        [("operator", "points", 0.02, True)] * 60 + [("operator", "steals", 0.30, True)] * 60
+    )
+    by_market = {fit.prop_type: fit for fit in fits}
+    assert by_market["points"].weight > by_market["steals"].weight
 
 
 def test_feature_ablation_is_paired_and_multiple_comparison_adjusted() -> None:
@@ -89,3 +108,15 @@ def test_feature_ablation_is_paired_and_multiple_comparison_adjusted() -> None:
 def test_ablation_refuses_unpaired_comparison() -> None:
     with pytest.raises(ValueError, match="not paired"):
         feature_ablation([0.3, 0.4], {"minutes": [0.5]})
+
+
+def test_paired_ablation_uses_each_components_available_episodes() -> None:
+    results = paired_feature_ablation(
+        {
+            "always": [(0.3, 0.5), (0.4, 0.6)],
+            "sometimes": [(0.3, 0.7)],
+        }
+    )
+    by_name = {result.feature_name: result for result in results}
+    assert by_name["always"].sample_size == 2
+    assert by_name["sometimes"].sample_size == 1

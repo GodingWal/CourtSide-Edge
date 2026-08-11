@@ -4,8 +4,9 @@
 
 Nginx terminates TLS and proxies the private console to Uvicorn on `127.0.0.1:8090`.
 PostgreSQL runs in `wnba-postgres` and is exposed only on `127.0.0.1:5432`. Systemd timers run
-market archival, injuries, roles, teammate effects, matchups, forecasts, stats, settlement,
-readiness monitoring and backups.
+market archival, injuries, roles, teammate effects, matchups, forecasts, shadow game simulation,
+stats, settlement, trust fitting, readiness monitoring and backups. Forecast and simulation are
+separate services: simulator failure must not erase an otherwise healthy forecast run.
 
 ## Daily checks
 
@@ -23,6 +24,10 @@ other route requires the owner credential.
 
 - Stale market archive: run `sudo systemctl start wnba-archiver.service`, then inspect its log.
 - Missing forecasts: verify roles/effects/matchups, then start `wnba-forecast.service`.
+- Missing covariance diagnostics: start `wnba-game-simulation.service`; do not rerun forecasts
+  unless the core forecast is also stale.
+- Stale Learning evidence: start settlement first, then `wnba-trust-fit.service`. A successful
+  settlement is not enough if trust fitting reports a JSON or SQL failure.
 - Failed migration: stop deployment, keep the old web process, and restore the pre-deploy dump.
 - DeepSeek failure: forecasts continue. Individual agents fail open -- a run completes with
   the roles that answered, and each missing one is a `fallback` row in `wnba.model_advisories`.
@@ -32,15 +37,6 @@ other route requires the owner credential.
   on validation -- read `error` before retrying. A run stuck at `running` blocks further spend
   on that projection until the provider's whole timeout budget has elapsed, after which the
   next attempt reclaims it.
-- DeepSeek failure: forecasts continue. Congestion and transport faults are already retried
-  inside the client, so a run recorded as `failed` has exhausted `DEEPSEEK_MAX_ATTEMPTS` or was
-  rejected on validation -- read `error` before retrying. A run stuck at `running` blocks further
-  spend on that projection until the provider's whole timeout budget has elapsed, after which the
-  next attempt reclaims it.
-  A single analyst failing is not a failed run: stage one keeps whatever answered, and each lost
-  role is a `fallback` row in `wnba.model_advisories` with its reason. A run fails only when
-  *every* analyst failed. Read `disposition` and `failure_reason` there before suspecting the
-  pipeline.
 - A completed run with no row in `wnba.research_verdicts` is not a bug. It means the skeptic
   failed: the analyses are kept, and no verdict is synthesised from an unreviewed file, because
   one computed without the review would report every claim as uncontested and read exactly like
