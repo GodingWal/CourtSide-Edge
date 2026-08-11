@@ -154,7 +154,11 @@ def _closing_line(cur: Any, episode: dict[str, Any]) -> ClosingLine | None:
     )
     multiplier = None
     if preferred is not None:
-        multiplier = preferred.over_multiplier or preferred.under_multiplier
+        multiplier = (
+            preferred.over_multiplier
+            if str(episode["side"]) == "over"
+            else preferred.under_multiplier
+        )
 
     return ClosingLine(
         line=consensus.line, multiplier=multiplier, source_count=consensus.source_count

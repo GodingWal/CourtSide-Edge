@@ -9,10 +9,47 @@ from fastapi.testclient import TestClient
 from wnba_apps.api.main import (
     _drivers_and_flags,
     _max_drawdown,
+    _trust_gate_results,
     app,
 )
 
 client = TestClient(app)
+
+
+def _trust_row(**overrides: object) -> dict[str, object]:
+    row: dict[str, object] = {
+        "selective_policy_fitted": True,
+        "selective_minimum_confidence": 0.8,
+        "confidence": 0.9,
+        "conformal_target": 0.9,
+        "conformal_coverage": 0.91,
+        "conformal_sample_size": 100,
+        "conformal_radius": 2.0,
+        "projected_mean": 25.0,
+        "line": 20.0,
+        "side": "over",
+    }
+    row.update(overrides)
+    return row
+
+
+def test_trust_gates_fail_closed_without_fitted_evidence() -> None:
+    result = _trust_gate_results(
+        _trust_row(
+            selective_policy_fitted=False,
+            conformal_target=None,
+            conformal_radius=None,
+        )
+    )
+    assert not result["selective_policy_pass"]
+    assert not result["conformal_pass"]
+
+
+def test_conformal_interval_must_clear_the_current_line() -> None:
+    assert _trust_gate_results(_trust_row())["conformal_pass"]
+    crossing = _trust_gate_results(_trust_row(projected_mean=21.0, conformal_radius=2.0))
+    assert crossing["conformal_evidence_pass"]
+    assert not crossing["conformal_direction_pass"]
 
 
 def test_drivers_describe_teammate_and_pace_effects() -> None:

@@ -23,8 +23,8 @@ AVAILABILITY = {
 }
 
 ROLE_STATES = (
-    "confirmed_starter",
-    "probable_starter",
+    "historical_starter_likely",
+    "historical_starter_possible",
     "sixth_player",
     "rotation_bench",
     "emergency_replacement",
@@ -83,16 +83,16 @@ def classify_role_state(
     recent_minutes_change: float = 0.0,
 ) -> str:
     """Turn continuous role evidence into an owner-readable scenario label."""
-    if minutes_restriction_probability >= 0.25:
-        return "minutes_restriction"
     if designation in {"probable", "questionable", "doubtful"} and recent_minutes_change < -3.0:
         return "returning_from_injury"
+    if minutes_restriction_probability >= 0.25:
+        return "minutes_restriction"
     if recent_minutes_change >= 7.0 and start_probability < 0.55:
         return "emergency_replacement"
     if start_probability >= 0.85:
-        return "confirmed_starter"
+        return "historical_starter_likely"
     if start_probability >= 0.55:
-        return "probable_starter"
+        return "historical_starter_possible"
     if expected_minutes >= 24.0:
         return "sixth_player"
     return "rotation_bench"
@@ -141,7 +141,13 @@ def project_current_roles(*, now: datetime | None = None) -> RoleBatch:
             recent_change = (
                 sum(recent) / len(recent) - sum(prior) / len(prior) if recent and prior else 0.0
             )
-            restriction_probability = 0.35 if designation in {"questionable", "probable"} else 0.0
+            # Injury designation alone is not evidence of a restriction. Only attach a
+            # restriction scenario when recent playing time also fell materially.
+            restriction_probability = (
+                0.35
+                if designation in {"questionable", "probable"} and recent_change <= -5.0
+                else 0.0
+            )
             role_state = classify_role_state(
                 start_probability=role["start_probability"],
                 expected_minutes=role["expected_minutes"],

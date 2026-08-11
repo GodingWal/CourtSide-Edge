@@ -57,4 +57,9 @@ for _attempt in {1..15}; do
 done
 curl --fail --silent --show-error --max-time 5 \
   http://127.0.0.1:8090/api/health >/dev/null
+# Exercise the production-only SQL paths immediately. These jobs are safe and idempotent; a
+# deploy that cannot settle, fit trust artifacts, or build a shadow simulation is not healthy.
+systemctl start wnba-settlement.service
+systemctl start wnba-trust-fit.service
+systemctl start wnba-game-simulation.service
 /bin/bash "$REPO/infrastructure/monitor_health.sh"

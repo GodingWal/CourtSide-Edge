@@ -30,7 +30,7 @@ def test_out_player_projects_zero_minutes() -> None:
 def test_role_states_explain_rotation_scenarios() -> None:
     assert (
         classify_role_state(start_probability=0.95, expected_minutes=34, designation="available")
-        == "confirmed_starter"
+        == "historical_starter_likely"
     )
     assert (
         classify_role_state(start_probability=0.2, expected_minutes=27, designation="available")
@@ -44,4 +44,14 @@ def test_role_states_explain_rotation_scenarios() -> None:
             minutes_restriction_probability=0.4,
         )
         == "minutes_restriction"
+    )
+    assert (
+        classify_role_state(
+            start_probability=0.9,
+            expected_minutes=25,
+            designation="probable",
+            minutes_restriction_probability=0.4,
+            recent_minutes_change=-6.0,
+        )
+        == "returning_from_injury"
     )

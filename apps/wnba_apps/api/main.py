@@ -293,6 +293,39 @@ def _edge_over_breakeven(row: dict[str, object]) -> float | None:
     return float(str(shrunk)) - float(str(breakeven))
 
 
+def _trust_gate_results(row: dict[str, object]) -> dict[str, bool]:
+    """Evaluate learned gates without allowing absent or thin evidence to pass."""
+    policy_fitted = row.get("selective_policy_fitted") is True
+    minimum_confidence = row.get("selective_minimum_confidence")
+    selective_pass = (
+        policy_fitted
+        and minimum_confidence is not None
+        and (float(str(row["confidence"])) >= float(str(minimum_confidence)))
+    )
+    conformal_target = row.get("conformal_target")
+    conformal_coverage = row.get("conformal_coverage")
+    conformal_sample = int(str(row.get("conformal_sample_size") or 0))
+    evidence_pass = conformal_target is not None and (
+        conformal_sample >= 40
+        and conformal_coverage is not None
+        and float(str(conformal_coverage)) + 0.02 >= float(str(conformal_target))
+    )
+    radius = row.get("conformal_radius")
+    projected_mean = float(str(row["projected_mean"]))
+    line = float(str(row["line"]))
+    direction_pass = radius is not None and (
+        (projected_mean - float(str(radius)) > line)
+        if str(row["side"]) == "over"
+        else (projected_mean + float(str(radius)) < line)
+    )
+    return {
+        "selective_policy_pass": selective_pass,
+        "conformal_evidence_pass": evidence_pass,
+        "conformal_direction_pass": direction_pass,
+        "conformal_pass": evidence_pass and direction_pass,
+    }
+
+
 def _drivers_and_flags(row: dict[str, object]) -> tuple[list[str], list[str]]:
     """Explain one forecast in the owner's language, from fields already on the row.
 
@@ -839,6 +872,7 @@ def forecasts() -> dict[str, object]:
                           sp.coverage AS selective_coverage,sp.is_fitted AS selective_policy_fitted,
                           ci.radius AS conformal_radius,ci.target_coverage AS conformal_target,
                           ci.empirical_coverage AS conformal_coverage,
+                          ci.sample_size AS conformal_sample_size,
                           ci.used_fallback AS conformal_used_fallback,
                           sr.reliability_weight AS source_reliability,
                           sr.sample_size AS source_reliability_sample,
@@ -952,18 +986,23 @@ def forecasts() -> dict[str, object]:
                    ) precedents ON true
                    LEFT JOIN LATERAL (
                      SELECT minimum_confidence,coverage,is_fitted
-                     FROM wnba.selective_policy_snapshots
+                     FROM (
+                       SELECT DISTINCT ON (segment) segment,minimum_confidence,coverage,is_fitted,
+                              calculated_at
+                       FROM wnba.selective_policy_snapshots
+                       ORDER BY segment,calculated_at DESC
+                     ) latest_policy
                      WHERE segment IN (
                        'prop_role:'||f.prop_type||':'||coalesce(fs.features->>'role_state','unknown'),
                        'prop:'||f.prop_type,
                        'all')
-                     ORDER BY CASE
+                     ORDER BY is_fitted DESC, CASE
                        WHEN segment LIKE 'prop_role:%' THEN 1
                        WHEN segment LIKE 'prop:%' THEN 2 ELSE 3 END,
                        calculated_at DESC LIMIT 1
                    ) sp ON true
                    LEFT JOIN LATERAL (
-                     SELECT radius,target_coverage,empirical_coverage,used_fallback
+                     SELECT radius,target_coverage,empirical_coverage,used_fallback,sample_size
                      FROM wnba.conformal_interval_snapshots
                      WHERE segment IN (
                        'prop_role:'||f.prop_type||':'||coalesce(fs.features->>'role_state','unknown'),
@@ -977,7 +1016,9 @@ def forecasts() -> dict[str, object]:
                    LEFT JOIN LATERAL (
                      SELECT reliability_weight,sample_size
                      FROM wnba.source_reliability_snapshots
-                     WHERE source=q.source::text ORDER BY calculated_at DESC LIMIT 1
+                     WHERE source=q.source::text AND prop_type IN (f.prop_type,'all')
+                     ORDER BY CASE WHEN prop_type=f.prop_type THEN 1 ELSE 2 END,
+                              calculated_at DESC LIMIT 1
                    ) sr ON true
                    LEFT JOIN LATERAL (
                      SELECT jsonb_agg(jsonb_build_object(
@@ -1009,18 +1050,7 @@ def forecasts() -> dict[str, object]:
             else float(str(lower)) / float(str(breakeven)) - 1.0
         )
         line = float(str(row["line"]))
-        policy_fitted = bool(row.get("selective_policy_fitted"))
-        minimum_confidence = row.get("selective_minimum_confidence")
-        row["selective_policy_pass"] = not policy_fitted or (
-            minimum_confidence is not None
-            and float(str(row["confidence"])) >= float(str(minimum_confidence))
-        )
-        conformal_target = row.get("conformal_target")
-        conformal_coverage = row.get("conformal_coverage")
-        row["conformal_pass"] = conformal_target is None or (
-            conformal_coverage is not None
-            and float(str(conformal_coverage)) + 0.02 >= float(str(conformal_target))
-        )
+        row.update(_trust_gate_results(row))
         row["qualified"] = (
             str(row.get("system_recommendation")) == "candidate"
             and row["selective_policy_pass"]
@@ -1045,8 +1075,10 @@ def forecasts() -> dict[str, object]:
             flags.append("single-source market; consensus is unavailable")
         if not row["selective_policy_pass"]:
             flags.append("learned selective policy abstains at this confidence")
-        if not row["conformal_pass"]:
-            flags.append("adaptive uncertainty interval is under-covering its target")
+        if not row["conformal_evidence_pass"]:
+            flags.append("adaptive uncertainty lacks future coverage evidence")
+        elif not row["conformal_direction_pass"]:
+            flags.append("the forecast interval crosses the offered line")
         if not row["source_reliability_pass"]:
             flags.append("the quote source has a measured reliability problem")
         consensus_difference = row.get("consensus_difference")
@@ -1644,11 +1676,11 @@ def learning_trust() -> dict[str, object]:
             )
             intervals = [dict(row) for row in cur.fetchall()]
             cur.execute(
-                """SELECT DISTINCT ON (source) source,calculated_at,sample_size,
+                """SELECT DISTINCT ON (source,prop_type) source,prop_type,calculated_at,sample_size,
                           reliability_weight,mean_absolute_error,median_absolute_error,
                           freshness_rate
                    FROM wnba.source_reliability_snapshots
-                   ORDER BY source,calculated_at DESC"""
+                   ORDER BY source,prop_type,calculated_at DESC"""
             )
             sources = [dict(row) for row in cur.fetchall()]
             cur.execute(
@@ -1660,28 +1692,54 @@ def learning_trust() -> dict[str, object]:
             )
             ablations = [dict(row) for row in cur.fetchall()]
             cur.execute(
-                """SELECT date_trunc('week',o.settled_at) AS week,count(*) AS episodes,
-                          avg(CASE WHEN o.closing_line IS NULL THEN NULL
-                              WHEN d.side='over' THEN o.closing_line-d.line
-                              ELSE d.line-o.closing_line END) AS mean_line_value,
-                          avg(CASE WHEN o.closing_line IS NULL THEN NULL
-                              WHEN (d.side='over' AND o.closing_line>d.line)
-                                OR (d.side='under' AND o.closing_line<d.line)
+                """WITH latest_market AS (
+                     SELECT d.*,o.settled_at,o.closing_line,
+                            row_number() OVER (
+                              PARTITION BY d.player_id,d.game_id,d.prop_type
+                              ORDER BY d.forecast_timestamp DESC) AS market_rank
+                     FROM wnba.decision_episodes d
+                     JOIN wnba.episode_outcomes o USING(episode_id)
+                     WHERE NOT o.was_voided AND NOT o.was_push
+                   )
+                   SELECT date_trunc('week',settled_at) AS week,count(*) AS episodes,
+                          count(DISTINCT game_id) AS independent_games,
+                          avg(CASE WHEN d.closing_line IS NULL THEN NULL
+                              WHEN d.side='over' THEN d.closing_line-d.line
+                              ELSE d.line-d.closing_line END) AS mean_line_value,
+                          avg(CASE WHEN closing_line IS NULL THEN NULL
+                              WHEN side='over' THEN (closing_line-line)/greatest(1,abs(line))
+                              ELSE (line-closing_line)/greatest(1,abs(line)) END)
+                              AS mean_normalized_line_value,
+                          avg(CASE WHEN d.closing_line IS NULL THEN NULL
+                              WHEN (d.side='over' AND d.closing_line>d.line)
+                                OR (d.side='under' AND d.closing_line<d.line)
                               THEN 1.0 ELSE 0.0 END) AS positive_rate
-                   FROM wnba.decision_episodes d JOIN wnba.episode_outcomes o USING(episode_id)
-                   GROUP BY 1 ORDER BY 1"""
+                   FROM latest_market d
+                   WHERE market_rank=1 GROUP BY 1 ORDER BY 1"""
             )
             closing_line_value = [dict(row) for row in cur.fetchall()]
             cur.execute(
-                """SELECT d.prop_type,
-                          coalesce(fs.features->>'role_state','unknown') AS role_state,
+                """WITH latest_market AS (
+                     SELECT d.*,o.hit,o.brier,o.was_voided,o.was_push,fs.features,
+                            row_number() OVER (
+                              PARTITION BY d.player_id,d.game_id,d.prop_type
+                              ORDER BY d.forecast_timestamp DESC) AS market_rank
+                     FROM wnba.decision_episodes d
+                     JOIN wnba.episode_outcomes o USING(episode_id)
+                     LEFT JOIN wnba.feature_snapshots fs USING(feature_snapshot_id)
+                   )
+                   SELECT d.prop_type,
+                          coalesce(d.features->>'role_state','unknown') AS role_state,
                           count(*) AS forecasts,avg(d.predicted_probability) AS predicted,
-                          avg(CASE WHEN o.hit THEN 1.0 ELSE 0.0 END) AS observed,
-                          avg(o.brier) AS brier,avg(d.model_disagreement) AS disagreement
-                   FROM wnba.decision_episodes d
-                   JOIN wnba.episode_outcomes o USING(episode_id)
-                   LEFT JOIN wnba.feature_snapshots fs USING(feature_snapshot_id)
-                   WHERE NOT o.was_voided AND NOT o.was_push
+                          avg(CASE WHEN d.hit THEN 1.0 ELSE 0.0 END) AS observed,
+                          avg(d.brier) AS brier,avg(d.model_disagreement) AS disagreement,
+                          count(DISTINCT d.game_id) AS independent_games,
+                          count(*) / greatest(1.0,
+                            1.0 + (count(*)::double precision /
+                              greatest(1,count(DISTINCT d.game_id)) - 1.0) * 0.30)
+                            AS effective_sample_size
+                   FROM latest_market d
+                   WHERE d.market_rank=1 AND NOT d.was_voided AND NOT d.was_push
                    GROUP BY 1,2 ORDER BY forecasts DESC"""
             )
             segments = [dict(row) for row in cur.fetchall()]
@@ -1692,8 +1750,22 @@ def learning_trust() -> dict[str, object]:
                    ORDER BY js.simulated_at DESC LIMIT 20"""
             )
             joint_games = [dict(row) for row in cur.fetchall()]
+            cur.execute(
+                """SELECT count(*) AS raw_episodes,
+                          count(DISTINCT (d.player_id,d.game_id,d.prop_type))
+                            AS independent_markets,
+                          count(DISTINCT d.game_id) AS independent_games,
+                          max(o.settled_at) AS latest_settlement,
+                          (SELECT max(generated_at) FROM wnba.stat_forecasts) AS latest_forecast
+                   FROM wnba.decision_episodes d
+                   JOIN wnba.episode_outcomes o USING(episode_id)
+                   WHERE NOT o.was_voided AND NOT o.was_push"""
+            )
+            evidence_summary = dict(cur.fetchone() or {})
     except Exception as exc:
         return {"available": False, "reason": str(exc)[:200]}
+    pooled_policy = next((item for item in policies if item.get("segment") == "all"), None)
+    pooled_interval = next((item for item in intervals if item.get("segment") == "all"), None)
     return {
         "available": True,
         "policies": policies,
@@ -1703,6 +1775,54 @@ def learning_trust() -> dict[str, object]:
         "closing_line_value": closing_line_value,
         "segments": segments,
         "joint_games": joint_games,
+        "evidence_summary": evidence_summary,
+        "artifact_status": [
+            {
+                "name": "selective policy",
+                "calculated_at": None
+                if pooled_policy is None
+                else pooled_policy.get("calculated_at"),
+                "sample_size": 0 if pooled_policy is None else pooled_policy.get("sample_size", 0),
+                "minimum_sample": 200,
+                "ready": any(bool(item.get("is_fitted")) for item in policies),
+            },
+            {
+                "name": "conformal coverage",
+                "calculated_at": None
+                if pooled_interval is None
+                else pooled_interval.get("calculated_at"),
+                "sample_size": 0
+                if pooled_interval is None
+                else pooled_interval.get("sample_size", 0),
+                "minimum_sample": 40,
+                "ready": any(
+                    int(str(item.get("sample_size") or 0)) >= 40
+                    and float(str(item.get("empirical_coverage") or 0)) + 0.02
+                    >= float(str(item.get("target_coverage") or 1))
+                    for item in intervals
+                ),
+            },
+            {
+                "name": "source reliability",
+                "calculated_at": None if not sources else sources[0].get("calculated_at"),
+                "sample_size": max(
+                    (int(str(item.get("sample_size") or 0)) for item in sources), default=0
+                ),
+                "minimum_sample": 50,
+                "ready": any(int(str(item.get("sample_size") or 0)) >= 50 for item in sources),
+            },
+            {
+                "name": "joint simulation",
+                "calculated_at": None if not joint_games else joint_games[0].get("simulated_at"),
+                "sample_size": 0 if not joint_games else joint_games[0].get("simulations", 0),
+                "minimum_sample": 10_000,
+                "ready": bool(joint_games),
+            },
+        ],
+        "independence_note": (
+            "Learning metrics retain one latest actionable forecast per player, game and market; "
+            "effective sample size additionally discounts shared game state."
+        ),
         "automatic_promotion": False,
     }
 
@@ -1782,11 +1902,81 @@ def recommendation_replay(episode_id: UUID) -> dict[str, object]:
             ),
         )
         line_history = [dict(value) for value in cur.fetchall()]
+        raw_features = row.get("features")
+        features: dict[str, object] = raw_features if isinstance(raw_features, dict) else {}
+        role_state = str(features.get("role_state", "unknown"))
+        segments = (
+            f"prop_role:{row['prop_type']}:{role_state}",
+            f"prop:{row['prop_type']}",
+            "all",
+        )
+        cur.execute(
+            """SELECT segment,minimum_confidence,coverage,is_fitted,calculated_at
+               FROM (
+                 SELECT DISTINCT ON (segment) segment,minimum_confidence,coverage,is_fitted,
+                        calculated_at
+                 FROM wnba.selective_policy_snapshots
+                 WHERE segment=ANY(%s) AND calculated_at<=%s
+                 ORDER BY segment,calculated_at DESC
+               ) latest_policy
+               ORDER BY is_fitted DESC,
+                        array_position(%s::text[],segment),calculated_at DESC LIMIT 1""",
+            (list(segments), row["forecast_timestamp"], list(segments)),
+        )
+        policy = dict(cur.fetchone() or {})
+        cur.execute(
+            """SELECT segment,sample_size,target_coverage,empirical_coverage,radius,
+                      used_fallback,calculated_at
+               FROM wnba.conformal_interval_snapshots
+               WHERE segment=ANY(%s) AND calculated_at<=%s
+               ORDER BY array_position(%s::text[],segment),calculated_at DESC LIMIT 1""",
+            (list(segments), row["forecast_timestamp"], list(segments)),
+        )
+        interval = dict(cur.fetchone() or {})
+        cur.execute(
+            """SELECT prop_type,sample_size,reliability_weight,calculated_at
+               FROM wnba.source_reliability_snapshots
+               WHERE source=%s AND prop_type IN (%s,'all') AND calculated_at<=%s
+               ORDER BY CASE WHEN prop_type=%s THEN 1 ELSE 2 END,calculated_at DESC LIMIT 1""",
+            (
+                str(row["source"]),
+                str(row["prop_type"]),
+                row["forecast_timestamp"],
+                str(row["prop_type"]),
+            ),
+        )
+        source_fit = dict(cur.fetchone() or {})
+        qualification_input = dict(row)
+        qualification_input.update(
+            {
+                "selective_policy_fitted": policy.get("is_fitted"),
+                "selective_minimum_confidence": policy.get("minimum_confidence"),
+                "conformal_target": interval.get("target_coverage"),
+                "conformal_coverage": interval.get("empirical_coverage"),
+                "conformal_sample_size": interval.get("sample_size"),
+                "conformal_radius": interval.get("radius"),
+            }
+        )
+        qualification = _trust_gate_results(qualification_input)
+        source_sample = int(str(source_fit.get("sample_size") or 0))
+        source_weight = source_fit.get("reliability_weight")
+        qualification["source_reliability_pass"] = (
+            source_weight is None or source_sample < 50 or float(str(source_weight)) >= 0.40
+        )
+        qualification["qualified"] = str(row.get("system_recommendation")) == "candidate" and all(
+            qualification.values()
+        )
     return {
         "available": True,
         "episode": row,
         "components": components,
         "line_history": line_history,
+        "qualification": qualification,
+        "qualification_evidence": {
+            "policy": policy,
+            "interval": interval,
+            "source": source_fit,
+        },
         "point_in_time": True,
     }
 

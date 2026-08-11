@@ -1,0 +1,12 @@
+[Unit]
+Description=Fit conservative trust artifacts from settled WNBA decisions
+After=wnba-settlement.service docker.service
+OnFailure=wnba-liveness-alert.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/wnba/repo
+EnvironmentFile=/opt/wnba/repo/.env
+ExecStart=/opt/wnba/repo/.venv/bin/wnba learning fit-trust
+TimeoutStartSec=20m
+Nice=10

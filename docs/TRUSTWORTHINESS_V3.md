@@ -38,11 +38,13 @@ immutable quotes + roles + box scores
 - **Selective policy:** evaluates log loss and calibration at increasing publication coverage.
   It selects the widest held-out coverage satisfying declared risk limits. Thin or unsuccessful
   fits abstain.
-- **Adaptive conformal intervals:** finite-sample absolute-residual intervals segmented by prop
-  and role. Segments below the evidence floor explicitly fall back to the pooled interval.
-- **Role states:** continuous minutes/start evidence is also labelled as confirmed starter,
-  probable starter, sixth player, rotation bench, emergency replacement, returning from injury,
-  or minutes restriction. The continuous probabilities remain authoritative.
+- **Adaptive conformal intervals:** the earliest 70% of each time-ordered sample sets the
+  absolute-residual radius and the later 30% measures future coverage. Segments below the
+  evidence floor explicitly fall back to the pooled interval; a pooled sample below 40 abstains.
+- **Role states:** continuous minutes/start evidence is labelled as historical starter likely,
+  historical starter possible, sixth player, rotation bench, emergency replacement, returning
+  from injury, or minutes restriction. These are model states, not claims about a confirmed
+  lineup; the continuous probabilities remain authoritative.
 - **Market profiles:** points and threes separate volume from conversion; combination markets
   propagate component covariance; the profile used is recorded in the feature snapshot.
 - **Opponent effects:** the existing schedule-adjusted offence/defence fit remains shrunk toward
@@ -52,8 +54,9 @@ immutable quotes + roles + box scores
   marginals.
 - **Feature ablation:** removes each ensemble component from the same settled episodes and uses
   paired log-loss differences with a Bonferroni-adjusted interval.
-- **Source reliability:** robust line error, freshness and sample size determine a bounded source
-  weight. An unmeasured source retains a conservative prior rather than zero trust.
+- **Source reliability:** robust normalized distance from the later closing consensus, freshness
+  and sample size determine a bounded source-and-prop weight. An unmeasured source retains a
+  conservative prior rather than zero trust.
 - **Replay:** reconstructs frozen features and component votes, separates quotes available at the
   decision from later movement, and appends the outcome without rewriting the decision.
 
@@ -65,9 +68,9 @@ immutable quotes + roles + box scores
 - The game simulator is intentionally parsimonious. It estimates dependence with shared latent
   state and leaves the champion's discrete marginal distribution intact. A possession-level
   event model should replace it only when licensed event data has sufficient historical depth.
-- Source reliability uses distance to the realised stat because pick'em prices are incomplete.
-  Once trustworthy two-sided prices exist, price-based CLV should become the primary source
-  target.
+- Source reliability uses distance to the later closing consensus because pick'em prices are
+  incomplete. It measures market agreement, not whether the final stat happened to land nearby.
+  Once trustworthy two-sided prices exist, price-based CLV should become the primary target.
 - Feature ablation measures predictive contribution, not causal importance. Correlated features
   may substitute for one another; the redundancy cap and paired experiment matrix must be read
   together.

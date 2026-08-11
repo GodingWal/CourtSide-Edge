@@ -39,6 +39,8 @@ def test_every_observed_silent_failure_has_a_check() -> None:
     assert "QUOTED_GAME_WITHOUT_FORECASTS" in codes, "the forecaster skipping everything"
     assert "MARKET_ARCHIVE_STALE" in codes, "the archive is the one thing that cannot be rebuilt"
     assert "SETTLED_GAME_WITH_UNSCORED_EPISODES" in codes, "settlement stalling invisibly"
+    assert "CURRENT_FORECAST_WITHOUT_JOINT_SIMULATION" in codes, "shadow simulation failures"
+    assert "TRUST_ARTIFACT_STALE" in codes, "settled evidence never reaching trust fitting"
 
 
 def test_checks_that_stop_recommendations_are_marked_blocking() -> None:

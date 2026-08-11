@@ -78,15 +78,19 @@ was applied to an unshrunk edge.
 A production-qualified pick must also have a quote no more than 30 minutes old, at least two
 independent market sources, at least 90% availability probability, minutes uncertainty no more
 than 20% of projected minutes, no material minutes-restriction risk, and a shrinkage estimate
-fitted from at least 200 settled episodes. Failure of any gate produces no qualified pick. Entry
-search uses the lower-bound probabilities—not the headline estimates—and caps exposure per
-player, team, and game before correlation-band pricing.
+fitted from at least 200 settled episodes. It must pass a fitted selective policy and a conformal
+band with at least 40 time-ordered observations, future coverage within two percentage points of
+target, and the entire band on the recommended side of the current line. Failure of any gate
+produces no qualified pick. Entry search uses the lower-bound probabilities—not the headline
+estimates—and caps exposure per player, team, and game before correlation-band pricing.
 
-The weekly trust fit additionally measures a coverage-versus-risk policy, conformal stat bands
-by prop and role, source reliability and paired feature ablations. These begin as shadow
-artifacts: they are visible in Learning and Replay but cannot automatically sharpen a forecast
-or promote a model. The current-slate joint simulator draws shared pace, usage, minutes and
-blowout states to estimate leg covariance without changing the champion's marginal probability.
+The weekly trust fit additionally measures a coverage-versus-risk policy, chronologically
+validated conformal stat bands by prop and role, closing-consensus source reliability by prop,
+and paired feature ablations. Learning and Replay expose their point-in-time evidence; the
+policy and interval act only as fail-closed publication gates and cannot sharpen a probability
+or promote a model. The separately scheduled current-slate simulator draws shared pace, usage,
+minutes and blowout states to estimate leg covariance without changing the champion's marginal
+probability or preventing the core forecast from completing.
 
 ## Known limitations
 

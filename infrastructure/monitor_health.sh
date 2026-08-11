@@ -16,9 +16,20 @@ curl --fail --silent --show-error --max-time 15 \
     https://courtside-edge.com/api/health >/dev/null || failures+=(api_health)
 
 for unit in wnba-archiver.timer wnba-injuries.timer wnba-roles.timer wnba-effects.timer \
-    wnba-matchups.timer wnba-forecast.timer wnba-stats.timer wnba-settlement.timer \
+    wnba-matchups.timer wnba-forecast.timer wnba-game-simulation.timer \
+    wnba-stats.timer wnba-settlement.timer \
     wnba-backup.timer wnba-liveness.timer wnba-rule-learning.timer wnba-pat-research.timer; do
     systemctl is-active --quiet "$unit" || failures+=("$unit")
+done
+
+# An active timer says only that systemd will try again. It says nothing about whether the last
+# attempt worked. These are the stages whose failure makes the console stale or its evidence
+# incomplete; report their most recent result explicitly.
+for service in wnba-archiver.service wnba-forecast.service wnba-game-simulation.service \
+    wnba-stats.service wnba-settlement.service wnba-rule-learning.service \
+    wnba-trust-fit.service; do
+    result=$(systemctl show "$service" --property=Result --value)
+    [[ "$result" == "success" ]] || failures+=("${service}:${result:-never_run}")
 done
 
 latest=$(find "$BACKUP_DIR" -maxdepth 1 -type f -name 'wnba-*.dump' -printf '%T@\n' \
