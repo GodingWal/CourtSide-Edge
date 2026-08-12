@@ -61,6 +61,14 @@ def test_resolved_incidents_are_not_rendered_as_active_errors() -> None:
     assert ".listitem.resolved-incident" in styles
 
 
+def test_pick_screenshot_uses_the_file_picker_instead_of_forcing_a_camera() -> None:
+    page = (ROOT / "apps/wnba_apps/api/static/index.html").read_text(encoding="utf-8")
+    screenshot_input = page.split('id="pickScreenshot"', 1)[1].split(">", 1)[0]
+    assert 'type="file"' in screenshot_input
+    assert 'accept="image/png,image/jpeg,image/webp"' in screenshot_input
+    assert "capture=" not in screenshot_input
+
+
 def test_deploy_smoke_runs_production_only_learning_sql() -> None:
     deploy = (ROOT / "infrastructure/deploy_courtside.sh").read_text(encoding="utf-8")
     reset = deploy.index("systemctl reset-failed wnba-forecast.service")
