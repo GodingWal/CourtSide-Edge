@@ -50,6 +50,7 @@ from wnba_services.learning_loop.trust_fitting import (
     fit_trust_artifacts,
     refresh_joint_game_simulations,
 )
+from wnba_services.learning_loop.unsupported_settlement import void_unsupported_episodes
 from wnba_services.market_engine.correlation import refresh_leg_correlations
 from wnba_services.monitoring.liveness import run_liveness_checks
 from wnba_services.research_agents.organization import refresh_research_memory
@@ -404,6 +405,13 @@ def learning_settle_outcomes() -> None:
         f"[green]outcome settlement complete[/green] settled={result.settled} "
         f"voided={result.voided} pushed={result.pushed} unsupported={result.unsupported}"
     )
+
+
+@learning_app.command("void-unsupported")
+def learning_void_unsupported() -> None:
+    """Terminally void final-game markets the canonical box score cannot score."""
+    result = void_unsupported_episodes()
+    console.print(f"[green]unsupported cleanup complete[/green] voided={result.voided}")
 
 
 @learning_app.command("settle-picks")

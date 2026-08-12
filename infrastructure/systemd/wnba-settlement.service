@@ -9,6 +9,11 @@ EnvironmentFile=/opt/wnba/repo/.env
 # Separate processes release full-history working memory between stages and make the failed
 # command visible in systemd. Ordering remains strict: every stage reads the committed output
 # of the one before it.
+ExecStart=/opt/wnba/repo/.venv/bin/wnba learning void-unsupported
+ExecStart=/opt/wnba/repo/.venv/bin/wnba learning settle-outcomes
+ExecStart=/opt/wnba/repo/.venv/bin/wnba learning settle-outcomes
+ExecStart=/opt/wnba/repo/.venv/bin/wnba learning settle-outcomes
+ExecStart=/opt/wnba/repo/.venv/bin/wnba learning settle-outcomes
 ExecStart=/opt/wnba/repo/.venv/bin/wnba learning settle-outcomes
 ExecStart=/opt/wnba/repo/.venv/bin/wnba learning evaluate
 ExecStart=/opt/wnba/repo/.venv/bin/wnba learning fit

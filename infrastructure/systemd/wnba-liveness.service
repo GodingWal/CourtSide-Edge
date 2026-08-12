@@ -7,7 +7,6 @@ OnFailure=wnba-liveness-alert.service
 Type=oneshot
 WorkingDirectory=/opt/wnba/repo
 EnvironmentFile=/opt/wnba/repo/.env
-Environment=PATH=/root/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 # Exits non-zero when a check fails, which is what triggers OnFailure above. This is the
 # only unit in the deployment where a non-zero exit is the intended signal rather than a bug.
-ExecStart=/root/.local/bin/uv run wnba monitor liveness
+ExecStart=/opt/wnba/repo/.venv/bin/wnba monitor liveness
