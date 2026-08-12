@@ -2,15 +2,20 @@
 
 from __future__ import annotations
 
+import base64
+from pathlib import Path
 from uuid import uuid4
 
 import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from wnba_apps.api.main import (
+    PickScreenshotRequest,
     _drivers_and_flags,
     _max_drawdown,
     _trust_gate_results,
     app,
+    parse_pick_screenshot,
 )
 
 client = TestClient(app)
@@ -188,3 +193,25 @@ def test_minutes_override_rejects_impossible_minutes() -> None:
         },
     )
     assert response.status_code == 422
+
+
+def test_screenshot_storage_failure_returns_an_actionable_error(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("WNBA_UPLOAD_DIR", str(tmp_path))
+
+    def fail_write(_path: Path, _content: bytes) -> int:
+        raise PermissionError("private server path must not leak")
+
+    monkeypatch.setattr(Path, "write_bytes", fail_write)
+    request = PickScreenshotRequest(
+        filename="slip.png",
+        content_type="image/png",
+        data_base64=base64.b64encode(b"\x89PNG" + b"0" * 20).decode(),
+    )
+
+    with pytest.raises(HTTPException) as caught:
+        parse_pick_screenshot(request)
+
+    assert caught.value.status_code == 503
+    assert caught.value.detail == "Screenshot storage is temporarily unavailable; try again shortly"

@@ -2244,9 +2244,17 @@ def parse_pick_screenshot(request: PickScreenshotRequest) -> dict[str, object]:
         request.content_type
     ]
     upload_dir = Path(os.getenv("WNBA_UPLOAD_DIR", "/var/lib/wnba/uploads"))
-    upload_dir.mkdir(parents=True, exist_ok=True)
-    image_path = upload_dir / f"{upload_id}.{extension}"
-    image_path.write_bytes(content)
+    try:
+        upload_dir.mkdir(parents=True, exist_ok=True)
+        image_path = upload_dir / f"{upload_id}.{extension}"
+        image_path.write_bytes(content)
+    except OSError as exc:
+        # Do not leak the server path or operating-system detail to the browser. This used to
+        # escape as an HTML 500 response, which the JSON client then rendered as a vague error.
+        raise HTTPException(
+            status_code=503,
+            detail="Screenshot storage is temporarily unavailable; try again shortly",
+        ) from exc
     try:
         completed = subprocess.run(
             ["tesseract", str(image_path), "stdout", "--psm", "6"],
