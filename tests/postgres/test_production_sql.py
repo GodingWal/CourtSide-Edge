@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pytest
 from wnba_apps.api.main import learning_trust
+from wnba_services.forecasting.fitting import fit_model_parameters
 from wnba_services.learning_loop.evaluation import causal_chain_payload, evaluate_models
 from wnba_services.learning_loop.trust_fitting import refresh_joint_game_simulations
 from wnba_store.db import connect
@@ -13,6 +14,7 @@ def test_production_read_paths_parse_against_the_migrated_schema() -> None:
     # Empty tables are enough to catch ambiguous joins, missing columns, and malformed CTEs.
     assert refresh_joint_game_simulations() == 0
     assert evaluate_models().evaluations == 0
+    assert fit_model_parameters().episodes == 0
     payload = learning_trust()
     assert payload["available"] is True
 

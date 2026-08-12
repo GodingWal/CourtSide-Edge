@@ -28,6 +28,9 @@ other route requires the owner credential.
   unless the core forecast is also stale.
 - Stale Learning evidence: start settlement first, then `wnba-trust-fit.service`. A successful
   settlement is not enough if trust fitting reports a JSON or SQL failure.
+- Settlement attributes at most 2,000 previously unattributed episodes per run and fits only the
+  latest forecast per player/game/market. A large historical backlog should drain over repeated
+  runs without loading refresh duplicates into memory.
 - Failed migration: stop deployment, keep the old web process, and restore the pre-deploy dump.
 - DeepSeek failure: forecasts continue. Individual agents fail open -- a run completes with
   the roles that answered, and each missing one is a `fallback` row in `wnba.model_advisories`.

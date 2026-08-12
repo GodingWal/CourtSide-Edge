@@ -202,11 +202,17 @@ def evaluate_models(*, now: datetime | None = None) -> EvaluationBatch:
     evaluation_count = bucket_count = attribution_count = incident_count = 0
     with connect() as conn, conn.cursor() as cur:
         cur.execute(
-            """SELECT d.*,o.*,mr.model_version_id
+            """SELECT d.episode_id,d.side,d.line,d.projected_mean,d.projected_minutes,
+                      d.predicted_probability,d.data_quality_score,d.source,d.forecast_timestamp,
+                      o.actual_stat,o.actual_minutes,o.hit,o.closing_line
                FROM wnba.decision_episodes d
                JOIN wnba.episode_outcomes o ON o.episode_id=d.episode_id
-               JOIN wnba.model_runs mr ON mr.model_run_id=d.model_run_id
-               WHERE NOT o.was_voided AND NOT o.was_push"""
+               WHERE NOT o.was_voided AND NOT o.was_push
+                 AND NOT EXISTS (
+                   SELECT 1 FROM wnba.error_attributions ea
+                   WHERE ea.episode_id=d.episode_id)
+               ORDER BY d.forecast_timestamp
+               LIMIT 2000"""
         )
         episodes = cur.fetchall()
         for episode in episodes:
@@ -264,23 +270,44 @@ def evaluate_models(*, now: datetime | None = None) -> EvaluationBatch:
             )
             attribution_count += cur.rowcount
 
-        model_ids = {UUID(str(row["model_version_id"])) for row in episodes}
+        cur.execute(
+            """SELECT DISTINCT mr.model_version_id
+               FROM wnba.decision_episodes d
+               JOIN wnba.episode_outcomes o ON o.episode_id=d.episode_id
+               JOIN wnba.model_runs mr ON mr.model_run_id=d.model_run_id
+               WHERE NOT o.was_voided AND NOT o.was_push"""
+        )
+        model_ids = {UUID(str(row["model_version_id"])) for row in cur.fetchall()}
         for model_id in model_ids:
-            model_episodes = [
-                row for row in episodes if UUID(str(row["model_version_id"])) == model_id
-            ]
+            cur.execute(
+                """SELECT DISTINCT ON (d.player_id,d.game_id,d.prop_type)
+                          d.predicted_probability,d.side,o.hit,d.episode_id,d.line,
+                          d.projected_mean,o.actual_stat,o.closing_line,d.player_id,d.game_id,
+                          d.prop_type,d.forecast_timestamp
+                   FROM wnba.decision_episodes d
+                   JOIN wnba.episode_outcomes o ON o.episode_id=d.episode_id
+                   JOIN wnba.model_runs mr ON mr.model_run_id=d.model_run_id
+                   WHERE mr.model_version_id=%s AND NOT o.was_voided AND NOT o.was_push
+                   ORDER BY d.player_id,d.game_id,d.prop_type,d.forecast_timestamp DESC""",
+                (model_id,),
+            )
+            model_episodes = cur.fetchall()
             series: dict[str, list[dict[str, Any]]] = {"ensemble": model_episodes}
             cur.execute(
-                """SELECT fc.*,d.side,o.hit,o.brier AS ensemble_brier,o.log_loss AS ensemble_log,
-                          d.episode_id,d.line,d.projected_mean,o.actual_stat,o.closing_line,
-                          d.player_id,d.game_id,d.prop_type,d.forecast_timestamp
+                """SELECT DISTINCT ON (
+                          fc.component_name,d.player_id,d.game_id,d.prop_type)
+                          fc.component_name,fc.probability_over,d.side,o.hit,d.episode_id,d.line,
+                          d.projected_mean,o.actual_stat,o.closing_line,d.player_id,d.game_id,
+                          d.prop_type,d.forecast_timestamp
                    FROM wnba.forecast_components fc
                    JOIN wnba.stat_forecasts f ON f.projection_id=fc.projection_id
                    JOIN wnba.decision_episodes d ON d.quote_id=f.quote_id
                      AND d.model_run_id=f.model_run_id
                    JOIN wnba.episode_outcomes o ON o.episode_id=d.episode_id
                    JOIN wnba.model_runs mr ON mr.model_run_id=d.model_run_id
-                   WHERE mr.model_version_id=%s AND NOT o.was_voided AND NOT o.was_push""",
+                   WHERE mr.model_version_id=%s AND NOT o.was_voided AND NOT o.was_push
+                   ORDER BY fc.component_name,d.player_id,d.game_id,d.prop_type,
+                            d.forecast_timestamp DESC""",
                 (model_id,),
             )
             for row in cur.fetchall():
