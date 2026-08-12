@@ -68,7 +68,8 @@ def fit_model_parameters(*, now: datetime | None = None) -> FittingBatch:
         # a push is an outcome that resolved neither way; fitting parameters to either would be
         # teaching the model from events that carry no information about forecast quality.
         cur.execute(
-            """SELECT d.prop_type,d.side,o.hit,d.predicted_probability,
+            """SELECT DISTINCT ON (d.player_id,d.game_id,d.prop_type)
+                      d.prop_type,d.side,o.hit,d.predicted_probability,
                       coalesce(f.probability_over_raw,f.probability_over) AS raw_over,
                       d.line,d.projected_mean,o.actual_stat,
                       d.episode_id,d.player_id,d.game_id,d.forecast_timestamp
@@ -77,7 +78,7 @@ def fit_model_parameters(*, now: datetime | None = None) -> FittingBatch:
                LEFT JOIN wnba.stat_forecasts f
                  ON f.quote_id=d.quote_id AND f.model_run_id=d.model_run_id
                WHERE NOT o.was_voided AND NOT o.was_push
-               ORDER BY d.forecast_timestamp"""
+               ORDER BY d.player_id,d.game_id,d.prop_type,d.forecast_timestamp DESC"""
         )
         # Fitting on every revision of a market would weight that market by how many times the
         # board happened to move, and would let a handful of heavily-re-forecast games dominate
@@ -110,14 +111,18 @@ def fit_model_parameters(*, now: datetime | None = None) -> FittingBatch:
             bias_points.setdefault(DEFAULT_MARKET, []).append(bias_point)
 
         cur.execute(
-            """SELECT d.prop_type,d.side,o.hit,d.episode_id,d.player_id,d.game_id,
+            """SELECT DISTINCT ON (
+                      fc.component_name,d.player_id,d.game_id,d.prop_type)
+                      d.prop_type,d.side,o.hit,d.episode_id,d.player_id,d.game_id,
                       d.forecast_timestamp,fc.component_name,fc.probability_over
                FROM wnba.forecast_components fc
                JOIN wnba.stat_forecasts f ON f.projection_id=fc.projection_id
                JOIN wnba.decision_episodes d
                  ON d.quote_id=f.quote_id AND d.model_run_id=f.model_run_id
                JOIN wnba.episode_outcomes o ON o.episode_id=d.episode_id
-               WHERE NOT o.was_voided AND NOT o.was_push"""
+               WHERE NOT o.was_voided AND NOT o.was_push
+               ORDER BY fc.component_name,d.player_id,d.game_id,d.prop_type,
+                        d.forecast_timestamp DESC"""
         )
         # Components arrive one row per (episode, component); fold them back into one record per
         # episode, then collapse repeated forecasts of the same market exactly as above. Skipping

@@ -32,3 +32,11 @@ def test_deploy_smoke_runs_production_only_learning_sql() -> None:
     simulation = deploy.index("systemctl start wnba-game-simulation.service")
     monitor = deploy.index("infrastructure/monitor_health.sh")
     assert reset < forecast < settlement < trust < simulation < monitor
+
+
+def test_deploy_reexecutes_once_when_it_updates_itself() -> None:
+    deploy = (ROOT / "infrastructure/deploy_courtside.sh").read_text(encoding="utf-8")
+    assert "COURTSIDE_DEPLOY_REEXEC:-0" in deploy
+    assert "git diff --quiet" in deploy
+    assert 'exec /bin/bash "$REPO/infrastructure/deploy_courtside.sh"' in deploy
+    assert deploy.index("backup_postgres.sh") < deploy.index("git fetch origin main")

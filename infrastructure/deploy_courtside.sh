@@ -4,9 +4,19 @@ set -euo pipefail
 REPO=/opt/wnba/repo
 cd "$REPO"
 
-/bin/bash "$REPO/infrastructure/backup_postgres.sh"
+if [[ "${COURTSIDE_DEPLOY_REEXEC:-0}" != "1" ]]; then
+  /bin/bash "$REPO/infrastructure/backup_postgres.sh"
+fi
+previous_revision=$(git rev-parse HEAD)
 git fetch origin main
 git merge --ff-only origin/main
+# Bash may have read the old script before the merge replaced it. Re-exec once so deployment
+# changes in the release govern that same release; the guard prevents a duplicate backup/loop.
+if [[ "${COURTSIDE_DEPLOY_REEXEC:-0}" != "1" ]] && \
+    ! git diff --quiet "$previous_revision" HEAD -- infrastructure/deploy_courtside.sh; then
+  export COURTSIDE_DEPLOY_REEXEC=1
+  exec /bin/bash "$REPO/infrastructure/deploy_courtside.sh"
+fi
 
 # uv must live on a system path, not in root's home directory. Install it once with:
 #   curl -LsSf https://astral.sh/uv/install.sh | UV_INSTALL_DIR=/usr/local/bin sh
