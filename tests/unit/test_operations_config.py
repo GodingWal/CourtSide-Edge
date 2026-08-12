@@ -111,3 +111,15 @@ def test_deploy_moves_the_old_deepseek_default_to_flash_without_overwriting_cust
 def test_deploy_provisions_writable_screenshot_storage_for_the_web_user() -> None:
     deploy = (ROOT / "infrastructure/deploy_courtside.sh").read_text(encoding="utf-8")
     assert "install -d -o wnba -g wnba -m 0750 /var/lib/wnba/uploads" in deploy
+
+
+def test_proxy_accepts_the_advertised_screenshot_limit_and_deploys_safely() -> None:
+    policy = (ROOT / "infrastructure/nginx/courtside-upload.conf").read_text(encoding="utf-8")
+    deploy = (ROOT / "infrastructure/deploy_courtside.sh").read_text(encoding="utf-8")
+    app = (ROOT / "apps/wnba_apps/api/static/app.js").read_text(encoding="utf-8")
+    assert "client_max_body_size 14m;" in policy
+    assert "/etc/nginx/conf.d/courtside-upload.conf" in deploy
+    assert "nginx -t" in deploy
+    assert "systemctl reload nginx" in deploy
+    assert "sites-available" not in deploy
+    assert 'type.includes("application/json")' in app
