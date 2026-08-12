@@ -5,7 +5,7 @@ const pct=v=>v==null?"—":`${(Number(v)*100).toFixed(1)}%`, fixed=(v,n=3)=>v==n
 const pp=v=>v==null?"—":`${v>=0?"+":""}${(Number(v)*100).toFixed(1)}pp`;
 const ago=v=>{if(!v)return"Never";const s=Math.max(0,(Date.now()-new Date(v))/1000);return s<60?`${Math.round(s)} sec ago`:s<3600?`${Math.round(s/60)} min ago`:s<86400?`${Math.round(s/3600)} hr ago`:`${Math.round(s/86400)} days ago`};
 let data={forecasts:[],picks:{picks:[]},archive:{},operations:{},performance:{},backtest:{},readiness:{},validation:{},learning:{},injuries:{},timeline:{}},pickDraft=[],pickDraftSource="manual";
-async function api(path,opts){const r=await fetch(path,opts),b=await r.json();if(!r.ok)throw new Error(b.detail||"Request failed");return b}
+async function api(path,opts){const r=await fetch(path,opts),type=r.headers.get("content-type")||"",b=type.includes("application/json")?await r.json():{detail:(await r.text()).replace(/<[^>]*>/g," ").replace(/\s+/g," ").trim()};if(!r.ok)throw new Error(b.detail||`Request failed (${r.status})`);return b}
 function toast(message){$("toast").textContent=message;$("toast").classList.add("show");setTimeout(()=>$("toast").classList.remove("show"),2600)}
 function kpi(label,value,foot){return `<div class="kpi"><span>${esc(label)}</span><b>${esc(value)}</b><small>${esc(foot)}</small></div>`}
 function row(label,value,state=""){return `<div class="metricrow"><span>${esc(label)}</span><b class="${state}">${esc(value)}</b></div>`}

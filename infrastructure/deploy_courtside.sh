@@ -63,6 +63,13 @@ install -m 0644 "$REPO"/infrastructure/systemd/*.service /etc/systemd/system/
 install -m 0644 "$REPO"/infrastructure/systemd/*.timer /etc/systemd/system/
 systemctl daemon-reload
 
+# Install only the upload-size policy as an http-level include. The host's TLS virtual-host file
+# is managed with its certificates and must not be overwritten by an application deployment.
+install -m 0644 "$REPO/infrastructure/nginx/courtside-upload.conf" \
+  /etc/nginx/conf.d/courtside-upload.conf
+nginx -t
+systemctl reload nginx
+
 # Enable every timer shipped by the repo. A fresh host rebuilt with this script must come
 # up complete; enabling only a subset leaves the monitor permanently red.
 for timer_file in "$REPO"/infrastructure/systemd/wnba-*.timer; do
