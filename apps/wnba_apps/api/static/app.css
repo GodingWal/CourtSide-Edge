@@ -55,3 +55,15 @@ body{font-size:15px;padding-bottom:env(safe-area-inset-bottom);-webkit-text-size
 .no-action h3{margin:0 0 6px}.no-action p{margin:0 0 10px;color:var(--muted)}
 @media(max-width:700px){.evidence-strip{grid-template-columns:1fr 1fr}.reason-columns{grid-template-columns:1fr}.qualified-grid{grid-template-columns:1fr}}
 .trust-status{margin-bottom:17px}.evidence-summary{display:grid;grid-template-columns:repeat(4,1fr);gap:9px}.evidence-summary>div,.artifact{padding:12px;border:1px solid var(--line);border-radius:10px;background:var(--panel2)}.evidence-summary span,.evidence-summary small,.artifact span,.artifact small{display:block;color:var(--muted);font-size:10px}.evidence-summary b{display:block;margin:5px 0;font:800 17px var(--mono)}.artifact-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:9px;margin-top:9px}.artifact b{display:block;margin:4px 0;color:var(--amber)}.artifact.ready b{color:var(--lime)}.replay-filters{display:grid;grid-template-columns:1fr 130px}.replay-filters input{min-width:0}.listitem.resolved-incident{opacity:.62}@media(max-width:760px){.evidence-summary,.artifact-grid{grid-template-columns:1fr 1fr}}
+
+/* The analysis board is the primary desktop task. Keep its controls inside the card, preserve
+   readable columns, and move the status rail below before it starts stealing table space. */
+.today-layout{align-items:start}
+.today-layout .filters{display:grid;grid-template-columns:minmax(190px,2fr) repeat(4,minmax(112px,1fr))}
+.today-layout .filters input,.today-layout .filters select{width:100%;min-width:0}
+.forecasttable{min-width:940px;table-layout:fixed}
+.forecasttable th:first-child{width:18%}.forecasttable th:nth-child(2){width:11%}.forecasttable th:nth-child(3),.forecasttable th:nth-child(4){width:8%}.forecasttable th:nth-child(5){width:9%}.forecasttable th:nth-child(6){width:14%}.forecasttable th:nth-child(7){width:13%}.forecasttable th:nth-child(8){width:11%}.forecasttable th:last-child{width:13%}
+.forecasttable td{overflow-wrap:anywhere}.forecasttable .status{line-height:1.25;white-space:normal}.forecast-actions{display:flex;gap:6px;flex-wrap:wrap}.forecast-actions .inspect{white-space:nowrap}
+@media(max-width:1450px) and (min-width:1101px){.app{grid-template-columns:200px minmax(0,1fr)}main{padding-inline:20px}.today-layout{grid-template-columns:minmax(0,1fr)}.today-layout>.narrow{grid-template-columns:repeat(3,minmax(0,1fr))}}
+@media(max-width:1100px) and (min-width:761px){.today-layout .filters{grid-template-columns:minmax(190px,2fr) repeat(2,minmax(130px,1fr))}.today-layout .filters select:last-child{grid-column:auto}.forecasttable{min-width:900px}}
+@media(max-width:760px){.today-layout .filters{grid-template-columns:1fr 1fr}.forecasttable{min-width:0;table-layout:auto}.forecast-actions{justify-content:flex-end}}

@@ -2,6 +2,20 @@
 let forecastPageSize = 120;
 let lastSuccessfulRefresh = null;
 
+const forecastStatusLabels = {
+  candidate: "Candidate",
+  blocked_stale_quote: "Stale quote",
+  blocked_data_quality: "Data quality",
+  blocked_by_skeptic: "Role risk",
+  blocked_calibration: "Calibration",
+  blocked_exposure: "Exposure",
+  declined_no_edge: "No edge",
+};
+
+function forecastStatusLabel(status) {
+  return forecastStatusLabels[status] || String(status || "Unclassified").replaceAll("_", " ");
+}
+
 const baseSwitchView = switchView;
 switchView = function (name) {
   baseSwitchView(name);
@@ -39,7 +53,7 @@ renderForecasts = function () {
     (quality === "all" || (quality === "qualified" ? item.qualified === true : item.system_recommendation === quality))
   );
   const visible = filtered.slice(0, forecastPageSize);
-  $("forecastRows").innerHTML = visible.map((item) => `<tr><td><div class="player">${esc(item.full_name)}</div><div class="market">${esc(item.prop_type.replaceAll("_", " "))}${item.team ? ` · ${esc(item.team)}${item.opponent ? ` vs ${esc(item.opponent)}` : ""}` : ""}</div></td><td>${esc(item.source)}</td><td class="mono">${item.line}</td><td class="mono">${fixed(item.mean, 1)}</td><td><span class="side ${item.side}">${item.side}</span></td><td><b class="mono">${pct(item.predicted_probability)}</b><div class="market">shrunk ${pct(item.shrunk_probability)}</div></td><td><b class="mono ${item.edge > 0 ? "ok" : item.edge != null ? "bad" : ""}">${pp(item.edge)}</b><div class="market">break-even ${pct(item.breakeven_probability)}</div></td><td><span class="status ${item.system_recommendation}">${esc(item.system_recommendation)}</span></td><td><button class="inspect" onclick="addForecastPick('${item.projection_id}')">+ Pick</button> <button class="inspect" onclick="openAudit('${item.projection_id}')">Audit</button></td></tr>`).join("") || `<tr><td colspan="9">${empty("No forecasts match these filters.")}</td></tr>`;
+  $("forecastRows").innerHTML = visible.map((item) => `<tr><td><div class="player">${esc(item.full_name)}</div><div class="market">${esc(item.prop_type.replaceAll("_", " "))}${item.team ? ` · ${esc(item.team)}${item.opponent ? ` vs ${esc(item.opponent)}` : ""}` : ""}</div></td><td>${esc(item.source)}</td><td class="mono">${item.line}</td><td class="mono">${fixed(item.mean, 1)}</td><td><span class="side ${item.side}">${item.side}</span></td><td><b class="mono">${pct(item.predicted_probability)}</b><div class="market">shrunk ${pct(item.shrunk_probability)}</div></td><td><b class="mono ${item.edge > 0 ? "ok" : item.edge != null ? "bad" : ""}">${pp(item.edge)}</b><div class="market">break-even ${pct(item.breakeven_probability)}</div></td><td><span class="status ${item.system_recommendation}" title="${esc(item.system_recommendation)}">${esc(forecastStatusLabel(item.system_recommendation))}</span></td><td><div class="forecast-actions"><button class="inspect" onclick="addForecastPick('${item.projection_id}')">+ Pick</button><button class="inspect" onclick="openAudit('${item.projection_id}')">Audit</button></div></td></tr>`).join("") || `<tr><td colspan="9">${empty("No forecasts match these filters.")}</td></tr>`;
   $("forecastCount").textContent = filtered.length > forecastPageSize
     ? `${Math.min(forecastPageSize, filtered.length)} of ${filtered.length} matches`
     : `${filtered.length} / ${original.length}`;
@@ -53,6 +67,8 @@ $("loadMoreForecasts").onclick = () => {
 [$("search"), $("marketFilter"), $("teamFilter"), $("sideFilter"), $("qualityFilter")].forEach((element) => {
   element.addEventListener(element.tagName === "INPUT" ? "input" : "change", () => {
     forecastPageSize = 120;
+    $(".forecastwrap").scrollTop = 0;
+    renderForecasts();
   });
 });
 
