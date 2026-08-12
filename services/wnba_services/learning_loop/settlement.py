@@ -183,13 +183,16 @@ def settle_paper_episodes(*, now: datetime | None = None) -> SettlementBatch:
     settled = voided = pushed = unsupported = 0
     with connect() as conn, conn.cursor() as cur:
         cur.execute(
-            """SELECT d.*,oq.player_id AS quote_player_id,oq.locks_at
+            """SELECT d.episode_id,d.forecast_timestamp,d.player_id,d.game_id,d.prop_type,
+                      d.side,d.line,d.source,d.predicted_probability,
+                      oq.player_id AS quote_player_id,oq.locks_at
                FROM wnba.decision_episodes d
                JOIN wnba.games g ON g.game_id=d.game_id AND g.status='final'
                JOIN wnba.prop_quotes oq ON oq.quote_id=d.quote_id
                LEFT JOIN wnba.episode_outcomes o ON o.episode_id=d.episode_id
                WHERE d.is_paper AND o.episode_id IS NULL
-               ORDER BY d.forecast_timestamp"""
+               ORDER BY d.forecast_timestamp
+               LIMIT 2000"""
         )
         for episode in cur.fetchall():
             columns = STAT_COLUMNS.get(str(episode["prop_type"]))

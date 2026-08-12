@@ -26,3 +26,11 @@ def test_model_evaluation_deduplicates_refreshes_inside_postgres() -> None:
 def test_parameter_fitting_deduplicates_before_fetching() -> None:
     source = (ROOT / "services/wnba_services/forecasting/fitting.py").read_text(encoding="utf-8")
     assert source.count("SELECT DISTINCT ON") >= 2
+
+
+def test_unresolved_outcome_backfill_is_bounded_and_lean() -> None:
+    source = (ROOT / "services/wnba_services/learning_loop/settlement.py").read_text(
+        encoding="utf-8"
+    )
+    assert "LIMIT 2000" in source
+    assert "SELECT d.*" not in source

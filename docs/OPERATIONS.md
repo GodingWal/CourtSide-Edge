@@ -30,7 +30,9 @@ other route requires the owner credential.
   settlement is not enough if trust fitting reports a JSON or SQL failure.
 - Settlement attributes at most 2,000 previously unattributed episodes per run and fits only the
   latest forecast per player/game/market. A large historical backlog should drain over repeated
-  runs without loading refresh duplicates into memory.
+  runs without loading refresh duplicates into memory. Systemd runs outcome settlement,
+  evaluation, parameter fitting, pick settlement and correlation fitting as separate ordered
+  processes so memory is released between phases and the failed command is identifiable.
 - Failed migration: stop deployment, keep the old web process, and restore the pre-deploy dump.
 - DeepSeek failure: forecasts continue. Individual agents fail open -- a run completes with
   the roles that answered, and each missing one is a `fallback` row in `wnba.model_advisories`.
