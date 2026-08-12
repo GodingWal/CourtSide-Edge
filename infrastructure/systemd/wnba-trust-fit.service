@@ -5,6 +5,7 @@ OnFailure=wnba-liveness-alert.service
 
 [Service]
 Type=oneshot
+RemainAfterExit=yes
 WorkingDirectory=/opt/wnba/repo
 EnvironmentFile=/opt/wnba/repo/.env
 ExecStart=/opt/wnba/repo/.venv/bin/wnba learning fit-trust

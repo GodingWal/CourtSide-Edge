@@ -23,6 +23,11 @@ def test_monitor_checks_last_results_not_only_active_timers() -> None:
     for unit in ("wnba-settlement.service", "wnba-trust-fit.service"):
         assert unit in monitor
 
+    trust_unit = (ROOT / "infrastructure/systemd/wnba-trust-fit.service").read_text(
+        encoding="utf-8"
+    )
+    assert "RemainAfterExit=yes" in trust_unit
+
 
 def test_settlement_releases_memory_between_ordered_phases() -> None:
     service = (ROOT / "infrastructure/systemd/wnba-settlement.service").read_text(encoding="utf-8")
