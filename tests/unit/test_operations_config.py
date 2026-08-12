@@ -48,7 +48,17 @@ def test_settlement_releases_memory_between_ordered_phases() -> None:
 def test_liveness_uses_the_deployed_virtual_environment() -> None:
     service = (ROOT / "infrastructure/systemd/wnba-liveness.service").read_text(encoding="utf-8")
     assert "ExecStart=/opt/wnba/repo/.venv/bin/wnba monitor liveness" in service
+    assert "ExecStartPost=/usr/bin/rm -f /var/lib/wnba/last_liveness_failure" in service
     assert "/root/" not in service
+
+
+def test_resolved_incidents_are_not_rendered_as_active_errors() -> None:
+    app = (ROOT / "apps/wnba_apps/api/static/app.js").read_text(encoding="utf-8")
+    styles = (ROOT / "apps/wnba_apps/api/static/app.css").read_text(encoding="utf-8")
+    assert "Boolean(a.resolved_at)-Boolean(b.resolved_at)" in app
+    assert "x.resolved_at?'ok':x.blocks_recommendations?'bad':'warn'" in app
+    assert "resolved-incident" in app
+    assert ".listitem.resolved-incident" in styles
 
 
 def test_deploy_smoke_runs_production_only_learning_sql() -> None:
