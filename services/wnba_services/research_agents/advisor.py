@@ -284,7 +284,7 @@ class Advisor:
         detail: dict[str, Any] | None = None,
     ) -> None:
         self.outcomes.append(AdvisoryOutcome(task, subject, disposition, failure_reason))
-        model = os.getenv("DEEPSEEK_MODEL", "deepseek-v4-pro") if self._enabled else "none"
+        model = os.getenv("DEEPSEEK_MODEL", "deepseek-v4-flash") if self._enabled else "none"
         # Cost travels with the call, read off the client's most recent one. A client that was
         # never constructed reports nothing rather than zero: "no key configured" and "a call
         # that cost nothing" are different facts, and a zero would merge them.

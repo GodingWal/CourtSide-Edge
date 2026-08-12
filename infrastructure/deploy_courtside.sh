@@ -48,6 +48,13 @@ install -d -o wnba -g wnba -m 0750 /var/cache/wnba
 chgrp wnba "$REPO/.env"
 chmod 0640 "$REPO/.env"
 
+# V4 Flash is the cost-controlled default for every research/advisory call. Upgrade the former
+# production default in place, while preserving any deliberately configured third-party or
+# future model identifier.
+if grep -qx 'DEEPSEEK_MODEL=deepseek-v4-pro' "$REPO/.env"; then
+  sed -i 's/^DEEPSEEK_MODEL=deepseek-v4-pro$/DEEPSEEK_MODEL=deepseek-v4-flash/' "$REPO/.env"
+fi
+
 install -m 0644 "$REPO"/infrastructure/systemd/*.service /etc/systemd/system/
 install -m 0644 "$REPO"/infrastructure/systemd/*.timer /etc/systemd/system/
 systemctl daemon-reload

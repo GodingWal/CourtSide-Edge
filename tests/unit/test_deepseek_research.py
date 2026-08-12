@@ -22,6 +22,12 @@ from wnba_services.research_agents.deepseek import (
 )
 
 
+def test_cost_controlled_default_uses_v4_flash(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("DEEPSEEK_MODEL", raising=False)
+
+    assert DeepSeekResearchClient().model == "deepseek-v4-flash"
+
+
 def response(
     content: dict[str, object],
     *,

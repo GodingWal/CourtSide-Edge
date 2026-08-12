@@ -217,7 +217,7 @@ class DeepSeekResearchClient:
             base_url or os.getenv("DEEPSEEK_BASE_URL") or "https://api.deepseek.com"
         )
         self.base_url = configured_base_url.rstrip("/")
-        self.model = model or os.getenv("DEEPSEEK_MODEL", "deepseek-v4-pro")
+        self.model = model or os.getenv("DEEPSEEK_MODEL", "deepseek-v4-flash")
         self.timeout_seconds = timeout_seconds or float(os.getenv("DEEPSEEK_TIMEOUT_SECONDS", "60"))
         self.max_attempts = max(1, max_attempts or int(os.getenv("DEEPSEEK_MAX_ATTEMPTS", "3")))
         self.backoff_seconds = backoff_seconds or float(
