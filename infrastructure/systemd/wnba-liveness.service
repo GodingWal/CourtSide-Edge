@@ -10,3 +10,7 @@ EnvironmentFile=/opt/wnba/repo/.env
 # Exits non-zero when a check fails, which is what triggers OnFailure above. This is the
 # only unit in the deployment where a non-zero exit is the intended signal rather than a bug.
 ExecStart=/opt/wnba/repo/.venv/bin/wnba monitor liveness
+# OnFailure writes this snapshot for out-of-band diagnosis. It represents the current state,
+# not an append-only incident log (that history already lives in wnba.dq_incidents), so a
+# successful run must remove the obsolete failure snapshot.
+ExecStartPost=/usr/bin/rm -f /var/lib/wnba/last_liveness_failure
