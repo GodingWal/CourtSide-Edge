@@ -253,7 +253,7 @@ def _parse_pick_text(text: str, source: str) -> PickSlipDraft:
         ],
     }
     payload = {
-        "model": os.getenv("DEEPSEEK_MODEL", "deepseek-v4-pro"),
+        "model": os.getenv("DEEPSEEK_MODEL", "deepseek-v4-flash"),
         "messages": [
             {
                 "role": "system",
@@ -311,12 +311,21 @@ def _trust_gate_results(row: dict[str, object]) -> dict[str, bool]:
         and float(str(conformal_coverage)) + 0.02 >= float(str(conformal_target))
     )
     radius = row.get("conformal_radius")
-    projected_mean = float(str(row["projected_mean"]))
+    # Decision replay rows use ``projected_mean`` while the live forecast board selects the
+    # same value from stat_forecasts as ``mean``. Trust qualification is shared by both
+    # surfaces, so accept either contract and fail the direction gate closed when neither is
+    # present instead of crashing the entire board after its database query succeeds.
+    projected_value = row.get("projected_mean", row.get("mean"))
+    projected_mean = None if projected_value is None else float(str(projected_value))
     line = float(str(row["line"]))
-    direction_pass = radius is not None and (
-        (projected_mean - float(str(radius)) > line)
-        if str(row["side"]) == "over"
-        else (projected_mean + float(str(radius)) < line)
+    direction_pass = (
+        radius is not None
+        and projected_mean is not None
+        and (
+            (projected_mean - float(str(radius)) > line)
+            if str(row["side"]) == "over"
+            else (projected_mean + float(str(radius)) < line)
+        )
     )
     return {
         "selective_policy_pass": selective_pass,

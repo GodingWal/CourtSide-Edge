@@ -52,6 +52,23 @@ def test_conformal_interval_must_clear_the_current_line() -> None:
     assert not crossing["conformal_direction_pass"]
 
 
+def test_live_forecast_mean_can_be_qualified_without_replay_alias() -> None:
+    live_row = _trust_row()
+    live_row["mean"] = live_row.pop("projected_mean")
+
+    assert _trust_gate_results(live_row)["conformal_pass"]
+
+
+def test_missing_projection_fails_closed_without_crashing_the_board() -> None:
+    row = _trust_row()
+    del row["projected_mean"]
+
+    result = _trust_gate_results(row)
+
+    assert result["conformal_evidence_pass"]
+    assert not result["conformal_direction_pass"]
+
+
 def test_drivers_describe_teammate_and_pace_effects() -> None:
     row = {
         "teammate_rate_multiplier": 1.06,

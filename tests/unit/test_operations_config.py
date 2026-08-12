@@ -78,3 +78,9 @@ def test_deploy_reexecutes_once_when_it_updates_itself() -> None:
     assert "git diff --quiet" in deploy
     assert 'exec /bin/bash "$REPO/infrastructure/deploy_courtside.sh"' in deploy
     assert deploy.index("backup_postgres.sh") < deploy.index("git fetch origin main")
+
+
+def test_deploy_moves_the_old_deepseek_default_to_flash_without_overwriting_custom_models() -> None:
+    deploy = (ROOT / "infrastructure/deploy_courtside.sh").read_text(encoding="utf-8")
+    assert "grep -qx 'DEEPSEEK_MODEL=deepseek-v4-pro'" in deploy
+    assert "DEEPSEEK_MODEL=deepseek-v4-flash" in deploy
