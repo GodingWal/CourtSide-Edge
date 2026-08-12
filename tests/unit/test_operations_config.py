@@ -69,6 +69,20 @@ def test_pick_screenshot_uses_the_file_picker_instead_of_forcing_a_camera() -> N
     assert "capture=" not in screenshot_input
 
 
+def test_analysis_board_has_responsive_controls_and_resets_filtered_scroll() -> None:
+    page = (ROOT / "apps/wnba_apps/api/static/index.html").read_text(encoding="utf-8")
+    styles = (ROOT / "apps/wnba_apps/api/static/app.css").read_text(encoding="utf-8")
+    enhancements = (ROOT / "apps/wnba_apps/api/static/site_enhancements.js").read_text(
+        encoding="utf-8"
+    )
+    assert 'class="split today-layout"' in page
+    assert ".today-layout .filters{display:grid" in styles
+    assert "@media(max-width:1450px) and (min-width:1101px)" in styles
+    assert ".forecasttable{min-width:940px" in styles
+    assert '$(".forecastwrap").scrollTop = 0' in enhancements
+    assert "forecastStatusLabel" in enhancements
+
+
 def test_deploy_smoke_runs_production_only_learning_sql() -> None:
     deploy = (ROOT / "infrastructure/deploy_courtside.sh").read_text(encoding="utf-8")
     reset = deploy.index("systemctl reset-failed wnba-forecast.service")

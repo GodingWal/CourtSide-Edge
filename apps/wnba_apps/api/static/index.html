@@ -34,7 +34,7 @@
     <section class="view active" id="view-today">
       <div class="kpis" id="todayKpis"></div>
       <section class="card pad qualified-section"><div class="cardhead flush"><div><label>Evidence-qualified only</label><h2>Qualified picks</h2><p>Ranked by the probability lower bound after freshness, availability, minutes, calibration, and payout gates. An empty board is a valid recommendation.</p></div><span class="pill safe" id="qualifiedCount">0 qualified</span></div><div class="qualified-grid" id="qualifiedPicks"></div></section>
-      <div class="split">
+      <div class="split today-layout">
         <section class="card grow">
           <div class="cardhead"><div><label>All model output</label><h2>Analysis board</h2></div><span class="mono accent" id="forecastCount">Loading</span></div>
           <div class="filters"><input id="search" placeholder="Search player or market" aria-label="Search player or market"><select id="marketFilter" aria-label="Filter by market"><option value="all">All markets</option></select><select id="teamFilter" aria-label="Filter by team"><option value="all">All teams</option></select><select id="sideFilter" aria-label="Filter by side"><option value="all">Both sides</option><option value="over">Over</option><option value="under">Under</option></select><select id="qualityFilter" aria-label="Filter by forecast quality"><option value="all">All quality</option><option value="qualified">Qualified only</option><option value="candidate">Legacy candidates</option></select></div>
