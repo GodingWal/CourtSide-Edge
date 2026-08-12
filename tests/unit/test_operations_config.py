@@ -106,3 +106,8 @@ def test_deploy_moves_the_old_deepseek_default_to_flash_without_overwriting_cust
     deploy = (ROOT / "infrastructure/deploy_courtside.sh").read_text(encoding="utf-8")
     assert "grep -qx 'DEEPSEEK_MODEL=deepseek-v4-pro'" in deploy
     assert "DEEPSEEK_MODEL=deepseek-v4-flash" in deploy
+
+
+def test_deploy_provisions_writable_screenshot_storage_for_the_web_user() -> None:
+    deploy = (ROOT / "infrastructure/deploy_courtside.sh").read_text(encoding="utf-8")
+    assert "install -d -o wnba -g wnba -m 0750 /var/lib/wnba/uploads" in deploy

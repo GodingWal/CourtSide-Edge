@@ -45,6 +45,10 @@ getent group wnba >/dev/null || groupadd --system wnba
 id wnba >/dev/null 2>&1 || \
   useradd --system --gid wnba --home-dir /var/lib/wnba --shell /usr/sbin/nologin wnba
 install -d -o wnba -g wnba -m 0750 /var/cache/wnba
+# The web process must persist uploaded slip screenshots before OCR. The directory may predate
+# the service account (or have been created by a root-operated bootstrap), so install -d also
+# repairs ownership and mode on every deploy.
+install -d -o wnba -g wnba -m 0750 /var/lib/wnba/uploads
 chgrp wnba "$REPO/.env"
 chmod 0640 "$REPO/.env"
 
