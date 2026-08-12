@@ -29,7 +29,12 @@ for service in wnba-archiver.service wnba-forecast.service wnba-game-simulation.
     wnba-stats.service wnba-settlement.service wnba-rule-learning.service \
     wnba-trust-fit.service; do
     result=$(systemctl show "$service" --property=Result --value)
-    [[ "$result" == "success" ]] || failures+=("${service}:${result:-never_run}")
+    started=$(systemctl show "$service" --property=ExecMainStartTimestampMonotonic --value)
+    if [[ -z "$started" || "$started" == "0" ]]; then
+        failures+=("${service}:never_run")
+    elif [[ "$result" != "success" ]]; then
+        failures+=("${service}:${result:-unknown}")
+    fi
 done
 
 latest=$(find "$BACKUP_DIR" -maxdepth 1 -type f -name 'wnba-*.dump' -printf '%T@\n' \

@@ -72,8 +72,8 @@ curl --fail --silent --show-error --max-time 5 \
 # idempotent; a deploy that cannot forecast, settle, fit trust, or simulate is not healthy.
 systemctl reset-failed wnba-forecast.service wnba-settlement.service \
   wnba-trust-fit.service wnba-game-simulation.service || true
-systemctl start wnba-forecast.service
-systemctl start wnba-settlement.service
-systemctl start wnba-trust-fit.service
-systemctl start wnba-game-simulation.service
+systemctl restart wnba-forecast.service
+systemctl restart wnba-settlement.service
+systemctl restart wnba-trust-fit.service
+systemctl restart wnba-game-simulation.service
 /bin/bash "$REPO/infrastructure/monitor_health.sh"
