@@ -41,6 +41,14 @@ def test_settlement_releases_memory_between_ordered_phases() -> None:
     positions = [service.index(command) for command in commands]
     assert positions == sorted(positions)
     assert "learning settle\n" not in service
+    assert service.count("learning settle-outcomes") == 5
+    assert service.index("learning void-unsupported") < positions[0]
+
+
+def test_liveness_uses_the_deployed_virtual_environment() -> None:
+    service = (ROOT / "infrastructure/systemd/wnba-liveness.service").read_text(encoding="utf-8")
+    assert "ExecStart=/opt/wnba/repo/.venv/bin/wnba monitor liveness" in service
+    assert "/root/" not in service
 
 
 def test_deploy_smoke_runs_production_only_learning_sql() -> None:

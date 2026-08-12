@@ -76,4 +76,6 @@ systemctl restart wnba-forecast.service
 systemctl restart wnba-settlement.service
 systemctl restart wnba-trust-fit.service
 systemctl restart wnba-game-simulation.service
+systemctl reset-failed wnba-liveness.service || true
+systemctl restart wnba-liveness.service
 /bin/bash "$REPO/infrastructure/monitor_health.sh"
