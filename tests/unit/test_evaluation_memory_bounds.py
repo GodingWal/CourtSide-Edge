@@ -34,3 +34,15 @@ def test_unresolved_outcome_backfill_is_bounded_and_lean() -> None:
     )
     assert "LIMIT 2000" in source
     assert "SELECT d.*" not in source
+
+
+def test_correlation_self_join_deduplicates_refreshes_first() -> None:
+    source = (ROOT / "services/wnba_services/market_engine/correlation.py").read_text(
+        encoding="utf-8"
+    )
+    start = source.index("def _settled_pair_observations")
+    end = source.index("def _cleared", start)
+    query = source[start:end]
+    assert "WITH settled AS" in query
+    assert "SELECT DISTINCT ON (d.player_id,d.game_id,d.prop_type)" in query
+    assert "b.episode_id>a.episode_id" not in query

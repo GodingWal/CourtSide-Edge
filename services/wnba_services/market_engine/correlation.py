@@ -355,26 +355,24 @@ def _settled_pair_observations(cur: Any) -> list[PairObservation]:
     resolved carries no information about how two legs move together.
     """
     cur.execute(
-        """SELECT a.prop_type AS prop_a,b.prop_type AS prop_b,
+        """WITH settled AS (
+             SELECT DISTINCT ON (d.player_id,d.game_id,d.prop_type)
+                    d.player_id,d.game_id,d.prop_type,d.side,o.hit,l.team_id,
+                    d.forecast_timestamp
+             FROM wnba.decision_episodes d
+             JOIN wnba.episode_outcomes o ON o.episode_id=d.episode_id
+             LEFT JOIN wnba.player_game_lines l
+               ON l.player_id=d.player_id AND l.game_id=d.game_id AND l.system_to IS NULL
+             WHERE NOT o.was_voided AND NOT o.was_push
+             ORDER BY d.player_id,d.game_id,d.prop_type,d.forecast_timestamp DESC
+           )
+           SELECT a.prop_type AS prop_a,b.prop_type AS prop_b,
                   a.side AS side_a,b.side AS side_b,a.hit AS hit_a,b.hit AS hit_b,
                   a.player_id AS player_a,b.player_id AS player_b,
                   a.team_id AS team_a,b.team_id AS team_b
-           FROM (SELECT d.episode_id,d.player_id,d.game_id,d.prop_type,d.side,o.hit,
-                        l.team_id
-                 FROM wnba.decision_episodes d
-                 JOIN wnba.episode_outcomes o ON o.episode_id=d.episode_id
-                 LEFT JOIN wnba.player_game_lines l
-                   ON l.player_id=d.player_id AND l.game_id=d.game_id AND l.system_to IS NULL
-                 WHERE NOT o.was_voided AND NOT o.was_push) a
-           JOIN (SELECT d.episode_id,d.player_id,d.game_id,d.prop_type,d.side,o.hit,
-                        l.team_id
-                 FROM wnba.decision_episodes d
-                 JOIN wnba.episode_outcomes o ON o.episode_id=d.episode_id
-                 LEFT JOIN wnba.player_game_lines l
-                   ON l.player_id=d.player_id AND l.game_id=d.game_id AND l.system_to IS NULL
-                 WHERE NOT o.was_voided AND NOT o.was_push) b
-             ON b.game_id=a.game_id AND b.episode_id>a.episode_id
-           WHERE NOT (a.player_id=b.player_id AND a.prop_type=b.prop_type)"""
+           FROM settled a
+           JOIN settled b ON b.game_id=a.game_id
+             AND (b.player_id,b.prop_type)>(a.player_id,a.prop_type)"""
     )
     observations: list[PairObservation] = []
     for row in cur.fetchall():
