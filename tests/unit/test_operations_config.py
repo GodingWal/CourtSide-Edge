@@ -19,6 +19,7 @@ def test_monitor_checks_last_results_not_only_active_timers() -> None:
     monitor = (ROOT / "infrastructure/monitor_health.sh").read_text(encoding="utf-8")
     assert "wnba-game-simulation.timer" in monitor
     assert 'systemctl show "$service" --property=Result' in monitor
+    assert "ExecMainStartTimestampMonotonic" in monitor
     for unit in ("wnba-settlement.service", "wnba-trust-fit.service"):
         assert unit in monitor
 
@@ -40,10 +41,10 @@ def test_settlement_releases_memory_between_ordered_phases() -> None:
 def test_deploy_smoke_runs_production_only_learning_sql() -> None:
     deploy = (ROOT / "infrastructure/deploy_courtside.sh").read_text(encoding="utf-8")
     reset = deploy.index("systemctl reset-failed wnba-forecast.service")
-    forecast = deploy.index("systemctl start wnba-forecast.service")
-    settlement = deploy.index("systemctl start wnba-settlement.service")
-    trust = deploy.index("systemctl start wnba-trust-fit.service")
-    simulation = deploy.index("systemctl start wnba-game-simulation.service")
+    forecast = deploy.index("systemctl restart wnba-forecast.service")
+    settlement = deploy.index("systemctl restart wnba-settlement.service")
+    trust = deploy.index("systemctl restart wnba-trust-fit.service")
+    simulation = deploy.index("systemctl restart wnba-game-simulation.service")
     monitor = deploy.index("infrastructure/monitor_health.sh")
     assert reset < forecast < settlement < trust < simulation < monitor
 
