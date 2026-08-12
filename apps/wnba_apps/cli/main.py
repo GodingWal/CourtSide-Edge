@@ -396,6 +396,36 @@ def learning_settle() -> None:
     )
 
 
+@learning_app.command("settle-outcomes")
+def learning_settle_outcomes() -> None:
+    """Settle a bounded batch of raw paper episodes and exit to release memory."""
+    result = settle_paper_episodes()
+    console.print(
+        f"[green]outcome settlement complete[/green] settled={result.settled} "
+        f"voided={result.voided} pushed={result.pushed} unsupported={result.unsupported}"
+    )
+
+
+@learning_app.command("settle-picks")
+def learning_settle_picks() -> None:
+    """Settle owner-confirmed pick legs from scored paper episodes."""
+    result = settle_pick_slips()
+    console.print(
+        f"[green]pick settlement complete[/green] legs={result.legs_settled} "
+        f"slips={result.slips_settled} unmatched={result.legs_unmatched}"
+    )
+
+
+@learning_app.command("fit-correlations")
+def learning_fit_correlations() -> None:
+    """Refit leg dependence after outcome settlement."""
+    result = refresh_leg_correlations()
+    console.print(
+        f"[green]correlation fitting complete[/green] "
+        f"fitted={result.fitted} written={result.written}"
+    )
+
+
 @learning_app.command("propose-rules")
 def learning_propose_rules() -> None:
     """Turn repeated measured errors into candidate rules and hypotheses. Nothing goes live."""

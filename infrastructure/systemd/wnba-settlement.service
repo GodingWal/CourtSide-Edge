@@ -6,6 +6,13 @@ After=wnba-stats.service docker.service
 Type=oneshot
 WorkingDirectory=/opt/wnba/repo
 EnvironmentFile=/opt/wnba/repo/.env
-ExecStart=/opt/wnba/repo/.venv/bin/wnba learning settle
+# Separate processes release full-history working memory between stages and make the failed
+# command visible in systemd. Ordering remains strict: every stage reads the committed output
+# of the one before it.
+ExecStart=/opt/wnba/repo/.venv/bin/wnba learning settle-outcomes
+ExecStart=/opt/wnba/repo/.venv/bin/wnba learning evaluate
+ExecStart=/opt/wnba/repo/.venv/bin/wnba learning fit
+ExecStart=/opt/wnba/repo/.venv/bin/wnba learning settle-picks
+ExecStart=/opt/wnba/repo/.venv/bin/wnba learning fit-correlations
 TimeoutStartSec=15m
 Nice=5

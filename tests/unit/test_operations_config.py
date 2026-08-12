@@ -23,6 +23,20 @@ def test_monitor_checks_last_results_not_only_active_timers() -> None:
         assert unit in monitor
 
 
+def test_settlement_releases_memory_between_ordered_phases() -> None:
+    service = (ROOT / "infrastructure/systemd/wnba-settlement.service").read_text(encoding="utf-8")
+    commands = (
+        "learning settle-outcomes",
+        "learning evaluate",
+        "learning fit",
+        "learning settle-picks",
+        "learning fit-correlations",
+    )
+    positions = [service.index(command) for command in commands]
+    assert positions == sorted(positions)
+    assert "learning settle\n" not in service
+
+
 def test_deploy_smoke_runs_production_only_learning_sql() -> None:
     deploy = (ROOT / "infrastructure/deploy_courtside.sh").read_text(encoding="utf-8")
     reset = deploy.index("systemctl reset-failed wnba-forecast.service")
